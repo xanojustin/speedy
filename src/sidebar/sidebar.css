@@ -67,29 +67,21 @@
   font-size: 16px;
 }
 
-/* Project rows: section-header colors. */
+/* Project rows: plain rows; weight alone sets them apart from their threads. */
 .project {
   position: relative;
 }
 
 .project-header {
   padding-left: 4px;
-  background: var(--vscode-sideBarSectionHeader-background);
-  color: var(--vscode-sideBarSectionHeader-foreground, inherit);
-  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.project:first-child .project-header {
-  border-top-color: transparent;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .project-name {
   flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-transform: uppercase;
 }
 
 .project-missing {
@@ -122,53 +114,55 @@
   display: flex;
 }
 
-/* Groups: user-named sections that projects are filed under. Each has a color (--group-color)
-   drawn as a stripe down its left edge and a tint on its header; groups are spaced and ruled apart. */
+/* Groups: quiet uppercase labels separated by whitespace, with the group's color as a small dot.
+   The chevron shows on hover, or while collapsed. */
 .group {
   position: relative;
-  margin-top: 10px;
-  padding-top: 6px;
-  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-widget-border, transparent));
+  margin-top: 14px;
 }
 
 .group:first-child {
-  margin-top: 0;
-  border-top-color: transparent;
-}
-
-.group::before {
-  content: "";
-  position: absolute;
-  top: 6px;
-  bottom: 0;
-  left: 0;
-  width: 3px;
-  background: var(--group-color);
-  pointer-events: none;
+  margin-top: 4px;
 }
 
 .group-header {
-  height: 26px;
-  line-height: 26px;
-  padding-left: 6px;
-  background: color-mix(in srgb, var(--group-color) 14%, transparent);
-  font-size: 13px;
+  padding-left: 4px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
   font-weight: 600;
-}
-
-.group-header:hover {
-  background: color-mix(in srgb, var(--group-color) 22%, transparent);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .group-header .twistie {
-  color: var(--group-color);
+  visibility: hidden;
+}
+
+.group-header:hover .twistie,
+.group-header:focus-visible .twistie,
+.group-header[aria-expanded="false"] .twistie {
+  visibility: visible;
 }
 
 .group-name {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.group-header .rename-input {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.group-dot {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--group-color);
 }
 
 .group-projects .project-header {
@@ -256,6 +250,22 @@
   color: var(--vscode-input-foreground);
   font-size: 13px;
   outline: none;
+}
+
+/* Placeholder under a project with no live threads; clicking it starts one. */
+.thread-empty {
+  width: 100%;
+  padding-left: 22px;
+  border: none;
+  background: none;
+  color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
+  font-size: 12px;
+  font-style: italic;
+  text-align: left;
+}
+
+.group-projects .thread-empty {
+  padding-left: 30px;
 }
 
 /* Archived section. */

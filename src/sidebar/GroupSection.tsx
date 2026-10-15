@@ -60,6 +60,7 @@ export function GroupSection({ group, empty, renaming, onStartRename, onRenameDo
             {group.name}
           </span>
         )}
+        <span className="group-dot" aria-hidden />
       </div>
       {expanded && (
         <div className="group-projects">

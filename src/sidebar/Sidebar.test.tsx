@@ -139,7 +139,21 @@ describe("Sidebar", () => {
     fireEvent.contextMenu(threadRow("app thread 2"));
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
     await waitFor(() => expect(within(sidebar()).queryByText("app thread 2")).toBeNull());
-    expect(within(sidebar()).getByRole("button", { name: /Archived \(1\)/ })).toBeInTheDocument();
+    // Archived threads stay out of the tree until asked for.
+    expect(within(sidebar()).queryByRole("button", { name: /Archived/ })).toBeNull();
+    fireEvent.contextMenu(projectHeader("app"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show Archived (1)" }));
+    expect(within(sidebar()).getByText("app thread 2")).toBeInTheDocument();
+    fireEvent.click(within(sidebar()).getByRole("button", { name: /Archived \(1\)/ }));
+    expect(within(sidebar()).queryByText("app thread 2")).toBeNull();
+  });
+
+  it("shows a placeholder under a project with no live threads, which starts a new one", async () => {
+    resetBackend(stateWith([project("app", [{ archived: true }])], null));
+    await renderApp();
+    fireEvent.click(within(sidebar()).getByRole("button", { name: "No threads" }));
+    await waitFor(() => expect(within(sidebar()).queryByRole("button", { name: "No threads" })).toBeNull());
+    expect(lastSaved()!.projects[0].threads.filter((t) => !t.archived)).toHaveLength(1);
   });
 
   it("creates a thread from the project's + button and the context menu", async () => {

@@ -155,7 +155,8 @@ describe("Close thread (Cmd+W)", () => {
     expect(lastSaved()!.projects[0].threads[0].archived).toBe(true);
     expect(chatRegion()).toHaveAttribute("data-thread-id", "app-t2");
 
-    fireEvent.click(screen.getByRole("button", { name: /Archived \(1\)/ }));
+    fireEvent.contextMenu(screen.getByText("app").closest(".project-header")!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show Archived (1)" }));
     fireEvent.click(screen.getByRole("button", { name: "Restore app thread 1" }));
     expect(threadRow("app thread 1")).toHaveAttribute("aria-selected", "true");
     expect(lastSaved()!.projects[0].threads[0].archived).toBe(false);

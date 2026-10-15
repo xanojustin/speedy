@@ -27,6 +27,14 @@ export function Sidebar({ unread }: SidebarProps) {
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [historyFor, setHistoryFor] = useState<string | null>(null);
+  const [archivedFor, setArchivedFor] = useState<ReadonlySet<string>>(new Set());
+  const setArchivedOpen = (projectId: string, open: boolean) =>
+    setArchivedFor((prev) => {
+      const next = new Set(prev);
+      if (open) next.add(projectId);
+      else next.delete(projectId);
+      return next;
+    });
   const treeRef = useRef<HTMLDivElement>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
 
@@ -47,9 +55,19 @@ export function Sidebar({ unread }: SidebarProps) {
   const onProjectMenu = (e: MouseEvent, project: Project) => {
     const { setProjectGroup } = useAppStore.getState();
     const grouped = groups.some((g) => g.id === project.groupId);
+    const archivedCount = project.threads.filter((t) => t.archived).length;
+    const archivedShown = archivedFor.has(project.id);
     openMenu(e, [
       { label: "New Thread", onSelect: () => newThread(project.id) },
       { label: "Show Past Conversations", onSelect: () => setHistoryFor(project.id) },
+      ...(archivedCount
+        ? [
+            {
+              label: archivedShown ? "Hide Archived" : `Show Archived (${archivedCount})`,
+              onSelect: () => setArchivedOpen(project.id, !archivedShown),
+            },
+          ]
+        : []),
       "separator",
       ...groups
         .filter((g) => g.id !== project.groupId)
@@ -123,6 +141,8 @@ export function Sidebar({ unread }: SidebarProps) {
       setRenamingId={setRenamingId}
       historyOpen={historyFor === p.id}
       setHistoryOpen={(open) => setHistoryFor(open ? p.id : null)}
+      archivedOpen={archivedFor.has(p.id)}
+      setArchivedOpen={(open) => setArchivedOpen(p.id, open)}
       onProjectMenu={onProjectMenu}
       onThreadMenu={onThreadMenu}
       onProjectPointerDown={onProjectPointerDown}

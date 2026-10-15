@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent, type PointerEvent } from "react";
+import { useEffect, useRef, type MouseEvent, type PointerEvent } from "react";
 import { SessionList } from "../history/SessionList";
 import type { Project } from "../ipc/types";
 import { useAppStore } from "../store/appStore";
@@ -14,6 +14,9 @@ interface Props {
   setRenamingId: (id: string | null) => void;
   historyOpen: boolean;
   setHistoryOpen: (open: boolean) => void;
+  /** Archived threads are listed only on request (the project's context menu). */
+  archivedOpen: boolean;
+  setArchivedOpen: (open: boolean) => void;
   onProjectMenu: (e: MouseEvent, project: Project) => void;
   onThreadMenu: (e: MouseEvent, threadId: string) => void;
   onProjectPointerDown: (e: PointerEvent, projectId: string) => void;
@@ -21,11 +24,10 @@ interface Props {
 }
 
 export function ProjectRow(props: Props) {
-  const { project, selectedThreadId, missing, unread, renamingId, setRenamingId, historyOpen, setHistoryOpen } = props;
+  const { project, selectedThreadId, missing, unread, renamingId, setRenamingId, historyOpen, setHistoryOpen, archivedOpen, setArchivedOpen } = props;
   const setProjectCollapsed = useAppStore((s) => s.setProjectCollapsed);
   const restoreThread = useAppStore((s) => s.restoreThread);
   const moveThread = useAppStore((s) => s.moveThread);
-  const [archivedOpen, setArchivedOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   const live = project.threads.filter((t) => !t.archived);
@@ -101,6 +103,11 @@ export function ProjectRow(props: Props) {
       {expanded && (
         <>
           <div ref={listRef} className="thread-list" role="group">
+            {live.length === 0 && (
+              <button type="button" className="thread-empty sidebar-row" title="Start a new thread" onClick={() => props.onNewThread(project.id)}>
+                No threads
+              </button>
+            )}
             {live.map((t) => (
               <ThreadRow
                 key={t.id}
@@ -115,19 +122,19 @@ export function ProjectRow(props: Props) {
               />
             ))}
           </div>
-          {archived.length > 0 && (
+          {archivedOpen && archived.length > 0 && (
             <div className="archived-section">
               <button
                 type="button"
                 className="archived-toggle sidebar-row"
-                aria-expanded={archivedOpen}
-                onClick={() => setArchivedOpen(!archivedOpen)}
+                aria-expanded
+                title="Hide archived threads"
+                onClick={() => setArchivedOpen(false)}
               >
-                <span className={`codicon codicon-chevron-${archivedOpen ? "down" : "right"} twistie`} aria-hidden />
+                <span className="codicon codicon-chevron-down twistie" aria-hidden />
                 <span>Archived ({archived.length})</span>
               </button>
-              {archivedOpen &&
-                archived.map((t) => (
+              {archived.map((t) => (
                   <div key={t.id} className="archived-row sidebar-row" data-thread-id={t.id}>
                     <span className="codicon codicon-archive" aria-hidden />
                     <span className="thread-title" title={t.title}>
