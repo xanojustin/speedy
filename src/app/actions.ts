@@ -2,6 +2,7 @@
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { claudeStop, pathsExist, ptyHasForegroundChild } from "../ipc/commands";
 import { findThread, useAppStore } from "../store/appStore";
+import { forgetStarted } from "../store/runtime";
 import { getRuntime } from "../store/threadStore";
 import { disposeTerminal } from "../terminal/TerminalPane";
 
@@ -49,6 +50,8 @@ async function stopThread(threadId: string): Promise<void> {
   } catch (err) {
     console.warn(`claude_stop(${threadId}) failed`, err);
   }
+  // A restored thread must call claude_start again to leave Stopped.
+  forgetStarted(threadId);
   try {
     await disposeTerminal(threadId);
   } catch (err) {

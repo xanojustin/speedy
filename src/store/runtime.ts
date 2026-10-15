@@ -49,25 +49,43 @@ function handleEvent(threadId: string, ev: ClaudeEvent) {
 /** Where a rewind fork starts: resume `resumeSessionId` truncated at `resumeSessionAt`, as a new session (U11). */
 export type ForkFrom = Required<Pick<StartOptions, "resumeSessionId" | "resumeSessionAt" | "forkSession">>;
 
-/** Spawns (or rebinds to) the thread's claude process once. Idempotent. `fork` applies to the first spawn only. */
+/**
+ * Drops the cached start so the next `ensureStarted` calls `claude_start` again: that is the only
+ * way the Rust actor leaves Stopped (archive, project removal, then restore or resume).
+ */
+export function forgetStarted(threadId: string) {
+  started.delete(threadId);
+}
+
+/**
+ * Spawns (or rebinds to) the thread's claude process once per run. Idempotent until the thread
+ * stops (see `forgetStarted`). `fork` applies to the first spawn only.
+ */
 export function ensureStarted(threadId: string, fork?: ForkFrom): Promise<void> {
   const existing = started.get(threadId);
   if (existing) return existing;
   const found = findThread(useAppStore.getState(), threadId);
   if (!found) return Promise.reject(new Error(`unknown thread ${threadId}`));
   const { project, thread } = found;
-  const p = claudeStart(
+  // Only this run's own stop or failure may clear its cache entry, not a later run's.
+  const isCurrent = () => started.get(threadId) === p;
+  const p: Promise<void> = claudeStart(
     threadId,
     { cwd: project.path, resumeSessionId: thread.sessionId, model: thread.model, permissionMode: thread.permissionMode, ...fork },
-    (ev) => handleEvent(threadId, ev),
+    (ev) => {
+      if (ev.kind === "status" && ev.status === "stopped" && isCurrent()) started.delete(threadId);
+      handleEvent(threadId, ev);
+    },
   ).then(
     (status: ThreadStatus) => {
-      // Channel events may already have moved the status on; only fill in the initial one.
-      if (getRuntime(threadId).status === "not_started") dispatch(threadId, { kind: "local_status", status });
+      // Channel events may already have moved the status on; only fill in the initial one
+      // (or replace the previous run's "stopped" on a restart).
+      const cur = getRuntime(threadId).status;
+      if (cur === "not_started" || cur === "stopped") dispatch(threadId, { kind: "local_status", status });
       if (status === "idle") flushQueue(threadId);
     },
     (err: unknown) => {
-      started.delete(threadId);
+      if (isCurrent()) started.delete(threadId);
       dispatch(threadId, { kind: "local_status", status: "errored", detail: String(err) });
       throw err;
     },

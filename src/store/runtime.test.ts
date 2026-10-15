@@ -137,6 +137,25 @@ describe("runtime bridge", () => {
     emit({ kind: "message", seq: 2, raw: { type: "assistant", parent_tool_use_id: null, message: { id: "m", content: [{ type: "text", text: "bg" }] } } });
     expect(rt(threadId).blocks).toHaveLength(1);
   });
+
+  it("restarts a stopped thread on the next send and delivers the message queued while stopped", async () => {
+    await ensureStarted(threadId);
+    emit(status("idle", 1));
+    emit(status("stopped", 2)); // archived: claude_stop moved the actor to Stopped
+    await flush();
+    expect(rt(threadId).status).toBe("stopped");
+
+    await sendUserMessage(threadId, [{ type: "text", text: "after restore" }]);
+    expect(calls("claude_start")).toHaveLength(2);
+    expect(calls("claude_start")[1][1]).toMatchObject({ threadId, options: { resumeSessionId: "old-session" } });
+    expect(calls("claude_send_user")).toHaveLength(0);
+    expect(rt(threadId).queue).toHaveLength(1);
+
+    emit(status("idle", 3));
+    await flush();
+    expect(calls("claude_send_user").map((c) => c[1].content)).toEqual([[{ type: "text", text: "after restore" }]]);
+    expect(rt(threadId).queue).toHaveLength(0);
+  });
 });
 
 describe("runtime bridge with per-frame batching", () => {

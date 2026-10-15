@@ -1,7 +1,7 @@
 // Model output is untrusted and this webview can reach a PTY. Markdown is lexed with `marked`
 // (the extension's library) and rendered to React elements, never to an HTML string: raw HTML
 // shows as literal text, only http(s) links are live, and they open through `open_path`.
-import { memo, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Lexer, type Token, type Tokens } from "marked";
 import { openPath } from "../../ipc/commands";
 import { highlight } from "./highlight";
@@ -32,23 +32,43 @@ export function SafeLink({ href, title, children }: { href: string | null; title
   );
 }
 
+/** Highlight at most this often while a code block streams (leading + trailing). */
+const HIGHLIGHT_THROTTLE_MS = 100;
+
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
-  const [html, setHtml] = useState<string | null>(null);
+  // The last highlight stays up until a newer one resolves, so streaming never flashes plain text.
+  const [hl, setHl] = useState<{ html: string; lang: string | undefined } | null>(null);
   const [copied, setCopied] = useState(false);
+  const runs = useRef({ started: 0, applied: 0, lastRun: -Infinity, mounted: true });
   useEffect(() => {
-    let live = true;
-    setHtml(null);
-    // Debounce while streaming so each delta doesn't re-highlight.
-    const t = setTimeout(() => {
-      void highlight(code, lang).then((h) => {
-        if (live) setHtml(h);
-      });
-    }, 60);
+    const r = runs.current;
+    r.mounted = true;
     return () => {
-      live = false;
-      clearTimeout(t);
+      r.mounted = false;
     };
+  }, []);
+  useEffect(() => {
+    const r = runs.current;
+    const run = () => {
+      r.lastRun = Date.now();
+      const id = ++r.started;
+      void highlight(code, lang).then((h) => {
+        // Drop results that resolve after unmount or after a newer run's result was applied.
+        if (!r.mounted || id < r.applied) return;
+        r.applied = id;
+        setHl(h ? { html: h, lang } : null);
+      });
+    };
+    const wait = r.lastRun + HIGHLIGHT_THROTTLE_MS - Date.now();
+    if (wait <= 0) {
+      run();
+      return;
+    }
+    const t = setTimeout(run, wait);
+    return () => clearTimeout(t);
   }, [code, lang]);
+  // Never show a highlight made for a different language.
+  const html = hl && hl.lang === lang ? hl.html : null;
 
   const copy = () => {
     void navigator.clipboard?.writeText(code).then(() => {
