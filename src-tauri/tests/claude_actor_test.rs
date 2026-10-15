@@ -812,3 +812,116 @@ exit 3"#
     let argv2 = fake.lines("argv.2");
     assert_eq!(&argv2[BASE_FLAGS.len()..], ["--resume", "fork-1"]);
 }
+
+fn flag_value(argv: &[String], name: &str) -> Option<String> {
+    argv.iter().position(|a| a == name).and_then(|i| argv.get(i + 1).cloned())
+}
+
+/// Review #2: a respawn after a crash keeps the mode/model the user switched to
+/// mid-session; a failed switch is not applied.
+#[tokio::test(flavor = "multi_thread")]
+async fn crash_respawn_keeps_live_permission_mode_and_model_changes() {
+    let fake = Fake::new(&[
+        &format!(
+            r#"{INIT}
+expect "subtype":"set_permission_mode"
+emit {{"type":"control_response","response":{{"subtype":"success","request_id":"@ID@","response":{{}}}}}}
+expect "subtype":"set_model"
+emit {{"type":"control_response","response":{{"subtype":"success","request_id":"@ID@","response":{{}}}}}}
+expect "subtype":"set_permission_mode"
+emit {{"type":"control_response","response":{{"subtype":"error","request_id":"@ID@","error":"nope"}}}}
+exit 3"#
+        ),
+        &format!("{INIT}\nidle"),
+    ]);
+    let options =
+        StartOptions { model: Some("opus".into()), permission_mode: Some("acceptEdits".into()), ..fake.options() };
+    let (actor, mut ev) = fake.start_with(options, Map::new());
+    ev.wait_status(ThreadStatus::Idle).await;
+    let mode = actor.control(json!({"subtype": "set_permission_mode", "mode": "default"}), None).await;
+    assert!(mode.is_ok(), "{mode:?}");
+    let model = actor.control(json!({"subtype": "set_model", "model": "haiku"}), None).await;
+    assert!(model.is_ok(), "{model:?}");
+    let refused = actor.control(json!({"subtype": "set_permission_mode", "mode": "bypassPermissions"}), None).await;
+    assert!(refused.is_err());
+    ev.wait_status(ThreadStatus::Crashed).await;
+    ev.wait_status(ThreadStatus::Idle).await;
+
+    let argv1 = fake.lines("argv.1");
+    assert_eq!(flag_value(&argv1, "--permission-mode").as_deref(), Some("acceptEdits"));
+    let argv2 = fake.lines("argv.2");
+    assert_eq!(flag_value(&argv2, "--permission-mode").as_deref(), Some("default"), "{argv2:?}");
+    assert_eq!(flag_value(&argv2, "--model").as_deref(), Some("haiku"), "{argv2:?}");
+}
+
+/// Review #2: an allow whose `updatedPermissions` switches mode is kept across a respawn.
+#[tokio::test(flavor = "multi_thread")]
+async fn crash_respawn_keeps_a_mode_set_by_a_permission_allow() {
+    let fake = Fake::new(&[
+        &format!(
+            r#"{INIT}
+expect "type":"user"
+emit {{"type":"control_request","request_id":"perm-m","request":{{"subtype":"can_use_tool","tool_name":"Bash","input":{{"command":"ls"}}}}}}
+expect "request_id":"perm-m"
+exit 3"#
+        ),
+        &format!("{INIT}\nidle"),
+    ]);
+    let options = StartOptions { permission_mode: Some("default".into()), ..fake.options() };
+    let (actor, mut ev) = fake.start_with(options, Map::new());
+    ev.wait_status(ThreadStatus::Idle).await;
+    actor.send_user(text("go")).await.unwrap();
+    ev.wait_status(ThreadStatus::AwaitingUser).await;
+    let allow = json!({
+        "behavior": "allow",
+        "updatedInput": {"command": "ls"},
+        "updatedPermissions": [{"type": "setMode", "mode": "acceptEdits", "destination": "session"}]
+    });
+    assert!(actor.respond_permission("perm-m", allow).await.unwrap().sent);
+    ev.wait_status(ThreadStatus::Crashed).await;
+    ev.wait_status(ThreadStatus::Idle).await;
+    let argv2 = fake.lines("argv.2");
+    assert_eq!(flag_value(&argv2, "--permission-mode").as_deref(), Some("acceptEdits"), "{argv2:?}");
+}
+
+/// Review #7: once a stale diff could not be re-diffed, every further allow stays
+/// blocked (not just the first) and nothing reaches the CLI.
+#[tokio::test(flavor = "multi_thread")]
+async fn allow_keeps_blocking_while_a_stale_diff_cannot_be_rediffed() {
+    // replace_all of "a" with 1000 bytes: fine on "b\n", a >64 MiB blow-up once
+    // the file holds 70k "a"s, so the re-diff yields nothing.
+    let new_string = "x".repeat(1000);
+    let fake = Fake::new(&[&format!(
+        r#"{INIT}
+expect "type":"user"
+emit {{"type":"control_request","request_id":"req-s","request":{{"subtype":"can_use_tool","tool_name":"Edit","input":{{"file_path":"a.txt","old_string":"a","new_string":"{new_string}","replace_all":true}}}}}}
+idle"#
+    )]);
+    std::fs::write(fake.cwd.join("a.txt"), "b\n").unwrap();
+    let (actor, mut ev) = fake.start();
+    ev.wait_status(ThreadStatus::Idle).await;
+    actor.send_user(text("edit it")).await.unwrap();
+    let req = ev.wait_for("permission", |e| matches!(e, ClaudeEvent::PermissionRequest { .. })).await;
+    let ClaudeEvent::PermissionRequest { diff: Some(shown), .. } = req else { panic!("Edit request carries a diff") };
+    assert_eq!(shown.len(), 1);
+
+    std::fs::write(fake.cwd.join("a.txt"), "a".repeat(70_000)).unwrap();
+    let allow = json!({"behavior": "allow", "updatedInput": {"file_path": "a.txt", "old_string": "a", "new_string": new_string, "replace_all": true}});
+    for attempt in 1..=3 {
+        let outcome = actor.respond_permission("req-s", allow.clone()).await.unwrap();
+        assert!(!outcome.sent, "allow #{attempt} must stay blocked");
+        assert_eq!(outcome.refreshed_diff, Some(vec![]), "allow #{attempt}");
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(fake.stdin(1).iter().all(|v| v["type"] != "control_response"), "nothing written while blocked");
+    assert_eq!(actor.status(), ThreadStatus::AwaitingUser);
+
+    // A deny still goes through.
+    assert!(actor.respond_permission("req-s", json!({"behavior": "deny", "message": "no"})).await.unwrap().sent);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        fake.stdin(1)
+            .iter()
+            .any(|v| v["response"]["request_id"] == "req-s" && v["response"]["response"]["behavior"] == "deny")
+    );
+}

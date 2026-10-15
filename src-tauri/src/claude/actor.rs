@@ -78,8 +78,43 @@ struct State {
     stopping: bool,
     auto_respawned_at: Option<Instant>,
     pending_permissions: HashMap<String, PendingPermission>,
-    pending_controls: HashMap<String, oneshot::Sender<Result<Value, String>>>,
+    pending_controls: HashMap<String, PendingControl>,
     stderr_tail: Vec<u8>,
+}
+
+struct PendingControl {
+    /// Kept so a successful mode/model switch can be recorded for respawns.
+    request: Value,
+    tx: oneshot::Sender<Result<Value, String>>,
+}
+
+/// Records a live mode/model switch the CLI accepted, so a respawn or retry
+/// relaunches with it instead of reverting to the launch options.
+fn record_control_success(options: &mut StartOptions, request: &Value) {
+    match request["subtype"].as_str() {
+        Some("set_permission_mode") => {
+            if let Some(mode) = request["mode"].as_str() {
+                options.permission_mode = Some(mode.to_owned());
+            }
+        }
+        // No model means "back to the default", i.e. no `--model` flag.
+        Some("set_model") => options.model = request["model"].as_str().map(str::to_owned),
+        _ => {}
+    }
+}
+
+/// The last `setMode` in an allow's `updatedPermissions`, if any.
+fn mode_set_by(response: &Value) -> Option<String> {
+    if response["behavior"] != "allow" {
+        return None;
+    }
+    response["updatedPermissions"]
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|u| u["type"] == "setMode")
+        .and_then(|u| u["mode"].as_str())
+        .map(str::to_owned)
 }
 
 /// A `can_use_tool` request whose diff is still to be computed off the reader task.
@@ -169,19 +204,40 @@ impl ClaudeActor {
         };
         if response["behavior"] == "allow"
             && let Some(shown) = shown
-            && let Some(fresh) = diff::refresh_if_stale(&tool_name, &input, Path::new(&cwd), &shown)
         {
-            if let Some(p) = inner.state.lock().pending_permissions.get_mut(request_id) {
-                p.diff = Some(fresh.clone());
+            let cwd = Path::new(&cwd);
+            let fresh = if shown.is_empty() {
+                // A stale diff that could not be re-diffed: keep blocking until a
+                // real diff has been shown (KTD5 fails closed every time, not once).
+                Some(diff::diff_for_tool(&tool_name, &input, cwd).unwrap_or_default())
+            } else {
+                diff::refresh_if_stale(&tool_name, &input, cwd, &shown)
+            };
+            if let Some(fresh) = fresh {
+                if let Some(p) = inner.state.lock().pending_permissions.get_mut(request_id) {
+                    p.diff = Some(fresh.clone());
+                }
+                return Ok(PermissionOutcome { sent: false, refreshed_diff: Some(fresh) });
             }
-            return Ok(PermissionOutcome { sent: false, refreshed_diff: Some(fresh) });
         }
-        {
+        let new_mode = mode_set_by(&response);
+        let prior_mode = {
             let mut st = inner.state.lock();
             st.pending_permissions.remove(request_id);
             inner.resume_working_if_answered(&mut st);
+            // Recorded before the write so a crash right after it can't respawn with
+            // the old mode; undone below if the write never reaches the CLI.
+            new_mode.as_ref().map(|mode| st.options.permission_mode.replace(mode.clone()))
+        };
+        if let Err(e) = inner.write(&protocol::control_success(request_id, response)).await {
+            if let (Some(prior), Some(mode)) = (prior_mode, new_mode) {
+                let mut st = inner.state.lock();
+                if st.options.permission_mode.as_deref() == Some(mode.as_str()) {
+                    st.options.permission_mode = prior;
+                }
+            }
+            return Err(e);
         }
-        inner.write(&protocol::control_success(request_id, response)).await?;
         Ok(PermissionOutcome { sent: true, refreshed_diff: None })
     }
 
@@ -498,9 +554,21 @@ impl Inner {
         let request_id = env.request_id.map(str::to_owned);
         match env.kind {
             Some("control_response") => {
-                let tx = request_id.and_then(|id| self.state.lock().pending_controls.remove(&id));
-                if let Some(tx) = tx {
-                    let _ = tx.send(protocol::control_response_result(&msg));
+                let result = protocol::control_response_result(&msg);
+                let pending = {
+                    let mut st = self.state.lock();
+                    let pending = request_id.and_then(|id| st.pending_controls.remove(&id));
+                    // Recorded here, before the reader moves on, so an exit right
+                    // after the ack can't respawn with the old mode/model.
+                    if let Some(p) = &pending
+                        && result.is_ok()
+                    {
+                        record_control_success(&mut st.options, &p.request);
+                    }
+                    pending
+                };
+                if let Some(p) = pending {
+                    let _ = p.tx.send(result);
                 }
             }
             Some("control_request") => {
@@ -638,8 +706,9 @@ impl Inner {
         let id = uuid::Uuid::new_v4().to_string();
         let subtype = request["subtype"].as_str().unwrap_or("unknown").to_owned();
         let (tx, rx) = oneshot::channel();
-        self.state.lock().pending_controls.insert(id.clone(), tx);
-        if let Err(e) = self.write(&protocol::control_request(&id, request)).await {
+        let line = protocol::control_request(&id, request.clone());
+        self.state.lock().pending_controls.insert(id.clone(), PendingControl { request, tx });
+        if let Err(e) = self.write(&line).await {
             self.state.lock().pending_controls.remove(&id);
             return Err(e);
         }
