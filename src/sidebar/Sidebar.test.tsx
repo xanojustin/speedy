@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/plugin-dialog", async () => (await import("../app/testing/t
 
 import { App } from "../app/App";
 import { backend, callsTo, lastSaved, project, stateWith } from "../app/testing/tauriMock";
-import { resetBackend } from "../app/testing/reset";
+import { resetBackend, runtime } from "../app/testing/reset";
 import type { ThreadStatus } from "../ipc/types";
 import { useAppStore } from "../store/appStore";
 import { useThreadStore } from "../store/threadStore";
@@ -45,7 +45,7 @@ describe("Sidebar", () => {
     ];
     resetBackend(stateWith([project("app", statuses.map(() => ({})))], null));
     useThreadStore.setState({
-      threads: Object.fromEntries(statuses.map(([status], i) => [`app-t${i + 1}`, { status }])),
+      threads: Object.fromEntries(statuses.map(([status], i) => [`app-t${i + 1}`, runtime(status)])),
     });
     await renderApp();
 
@@ -59,7 +59,7 @@ describe("Sidebar", () => {
 
   it("treats a thread with no runtime yet as not started, and shows the reserved unread glyph", () => {
     useAppStore.setState({ ...stateWith([project("app", [{}, {}])], null), loaded: true });
-    useThreadStore.setState({ threads: { "app-t2": { status: "idle" } } });
+    useThreadStore.setState({ threads: { "app-t2": runtime("idle") } });
     render(<Sidebar unread={new Set(["app-t2"])} />);
     expect(within(threadRow("app thread 1")).getByRole("img")).toHaveAccessibleName("Not started");
     const unread = within(threadRow("app thread 2")).getByRole("img");

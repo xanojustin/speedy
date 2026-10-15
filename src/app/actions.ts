@@ -3,7 +3,7 @@ import { ask, open } from "@tauri-apps/plugin-dialog";
 import { claudeStop, pathsExist, ptyHasForegroundChild } from "../ipc/commands";
 import { findThread, useAppStore } from "../store/appStore";
 import { useThreadStore } from "../store/threadStore";
-import * as terminalModule from "../terminal/TerminalPane";
+import { disposeTerminal } from "../terminal/TerminalPane";
 
 /** Opens the folder picker and adds the chosen folder (R2). */
 export async function addProjectViaPicker(): Promise<void> {
@@ -30,14 +30,6 @@ export function newThread(projectId?: string): void {
   const target = projectId ?? findThread(s, s.selectedThreadId)?.project.id ?? s.projects[0]?.id;
   if (target) s.createThread(target);
   else void addProjectViaPicker();
-}
-
-// INTEGRATION POINT (U7): the terminal unit exports `disposeTerminal(threadId)` from
-// src/terminal/TerminalPane.tsx. Until it exists this is a no-op; once merged it can become
-// a plain named import.
-async function disposeTerminal(threadId: string): Promise<void> {
-  const dispose = (terminalModule as Record<string, unknown>).disposeTerminal;
-  if (typeof dispose === "function") await (dispose as (id: string) => unknown)(threadId);
 }
 
 /** True when closing would kill live work: the agent is Working or the shell runs a foreground job. */

@@ -10,11 +10,12 @@ import { useAppStore } from "../store/appStore";
 import { useThreadStore } from "../store/threadStore";
 import { App } from "./App";
 import { backend, callsTo, dialog, emitMenu, lastSaved, project, stateWith } from "./testing/tauriMock";
-import { resetBackend } from "./testing/reset";
+import { resetBackend, runtime } from "./testing/reset";
 
 const chatRegion = () => document.querySelector<HTMLElement>(".chat-region");
 const terminalRegion = () => document.querySelector<HTMLElement>(".terminal-region");
-const threadRow = (title: string) => screen.getByText(title).closest<HTMLElement>("[role=treeitem]")!;
+const threadRow = (title: string) =>
+  within(screen.getByRole("navigation", { name: "Projects" })).getByText(title).closest<HTMLElement>("[role=treeitem]")!;
 
 async function renderApp() {
   const utils = render(<App />);
@@ -48,8 +49,8 @@ describe("Layout", () => {
 
   it("shows only the selected thread's chat and terminal and leaves other threads' runtime alone", async () => {
     resetBackend(stateWith([project("app", [{}, {}])], "app-t1"));
-    const a = { status: "working" as const };
-    useThreadStore.setState({ threads: { "app-t1": a, "app-t2": { status: "idle" } } });
+    const a = runtime("working");
+    useThreadStore.setState({ threads: { "app-t1": a, "app-t2": runtime("idle") } });
     await renderApp();
     expect(chatRegion()).toHaveAttribute("data-thread-id", "app-t1");
     expect(terminalRegion()).toHaveAttribute("data-thread-id", "app-t1");
@@ -117,14 +118,14 @@ describe("Layout", () => {
 describe("Close thread (Cmd+W)", () => {
   it("asks before closing a Working thread and keeps it when cancelled", async () => {
     resetBackend(stateWith([project("app", [{}, {}])], "app-t1"));
-    useThreadStore.setState({ threads: { "app-t1": { status: "working" } } });
+    useThreadStore.setState({ threads: { "app-t1": runtime("working") } });
     dialog.ask.mockResolvedValue(false);
     await renderApp();
 
     act(() => emitMenu("close_thread"));
     await waitFor(() => expect(dialog.ask).toHaveBeenCalledTimes(1));
     expect(callsTo("claude_stop")).toHaveLength(0);
-    expect(screen.getByText("app thread 1")).toBeInTheDocument();
+    expect(threadRow("app thread 1")).toBeInTheDocument();
 
     dialog.ask.mockResolvedValue(true);
     act(() => emitMenu("close_thread"));
@@ -142,7 +143,7 @@ describe("Close thread (Cmd+W)", () => {
 
   it("archives an idle thread immediately, stops it, and restores it from Archived", async () => {
     resetBackend(stateWith([project("app", [{}, {}])], "app-t1"));
-    useThreadStore.setState({ threads: { "app-t1": { status: "idle" } } });
+    useThreadStore.setState({ threads: { "app-t1": runtime("idle") } });
     await renderApp();
 
     act(() => emitMenu("close_thread"));
