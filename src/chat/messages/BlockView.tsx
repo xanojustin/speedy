@@ -11,12 +11,12 @@ export interface UserStamp {
   date: string | null;
 }
 
-function UserMessage({ block, stamp }: { block: Extract<ViewBlock, { kind: "user" }>; stamp: UserStamp | null }) {
+function UserMessage({ block, stamp, threadId }: { block: Extract<ViewBlock, { kind: "user" }>; stamp: UserStamp | null; threadId?: string }) {
   return (
     <div className="block user-message-container" data-block-kind="user" data-uuid={block.uuid ?? undefined}>
       {stamp?.date && <div className="date-line">{stamp.date}</div>}
       {stamp && <div className="message-stamp">{stamp.time}</div>}
-      {block.uuid && <RewindAction uuid={block.uuid} />}
+      {block.uuid && threadId && <RewindAction threadId={threadId} uuid={block.uuid} />}
       {block.images > 0 && (
         <div className="user-attachments">
           <span className="attachment-chip">
@@ -48,10 +48,34 @@ function Thinking({ block, pos }: { block: Extract<ViewBlock, { kind: "thinking"
   );
 }
 
-export const BlockView = memo(function BlockView({ block, pos, stamp }: { block: ViewBlock; pos: TimelinePos; stamp?: UserStamp | null }) {
+interface BlockViewProps {
+  block: ViewBlock;
+  pos: TimelinePos;
+  stamp?: UserStamp | null;
+  /** The thread whose transcript holds the block (enables a user message's rewind action). */
+  threadId?: string;
+}
+
+/**
+ * `pos` and `stamp` are rebuilt by the parent on every transcript update; comparing their fields
+ * (and the block by reference: the reducer keeps untouched blocks referentially stable) lets every
+ * row but the changed one skip rendering while a message streams.
+ */
+function sameProps(a: BlockViewProps, b: BlockViewProps): boolean {
+  return (
+    a.block === b.block &&
+    a.threadId === b.threadId &&
+    a.pos.prev === b.pos.prev &&
+    a.pos.next === b.pos.next &&
+    a.stamp?.time === b.stamp?.time &&
+    a.stamp?.date === b.stamp?.date
+  );
+}
+
+export const BlockView = memo(function BlockView({ block, pos, stamp, threadId }: BlockViewProps) {
   switch (block.kind) {
     case "user":
-      return <UserMessage block={block} stamp={stamp ?? null} />;
+      return <UserMessage block={block} stamp={stamp ?? null} threadId={threadId} />;
     case "text":
       return (
         <div className={`block assistant-text ${timelineClass(pos)}`} data-block-kind="text">
@@ -78,7 +102,7 @@ export const BlockView = memo(function BlockView({ block, pos, stamp }: { block:
         </div>
       );
   }
-});
+}, sameProps);
 
 /** Non-virtualized list, used for subagent children nested inside a Task card. */
 export function BlockList({ blocks }: { blocks: ViewBlock[] }) {

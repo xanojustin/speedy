@@ -74,7 +74,7 @@ const threads = () => useAppStore.getState().projects[0].threads;
 const forkStarts = () => calls("claude_start").filter((c) => (c[1] as { threadId: string }).threadId !== threadId);
 
 function openAction(uuid: string, option: string) {
-  render(<BlockView block={userBlock(uuid)} pos={NO_POS} stamp={null} />);
+  render(<BlockView block={userBlock(uuid)} pos={NO_POS} stamp={null} threadId={threadId} />);
   fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
   fireEvent.click(screen.getByRole("menuitem", { name: option }));
 }

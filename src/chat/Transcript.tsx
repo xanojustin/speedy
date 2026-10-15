@@ -21,15 +21,33 @@ const STICK_THRESHOLD = 40;
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const dateFmt = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" });
 
+interface StampParts {
+  ts: number;
+  time: string;
+  day: string;
+  date: string;
+}
+/** Formatted parts per user block; blocks are immutable, so this survives every transcript update. */
+const stampCache = new WeakMap<ViewBlock, StampParts>();
+
+function stampParts(b: ViewBlock, ts: number): StampParts {
+  let parts = stampCache.get(b);
+  if (!parts || parts.ts !== ts) {
+    const d = new Date(ts);
+    parts = { ts, time: timeFmt.format(d), day: d.toDateString(), date: dateFmt.format(d) };
+    stampCache.set(b, parts);
+  }
+  return parts;
+}
+
 function userStamps(blocks: ViewBlock[], enabled: boolean): Map<string, UserStamp> {
   const out = new Map<string, UserStamp>();
   if (!enabled) return out;
   let lastDay: string | null = null;
   for (const b of blocks) {
     if (b.kind !== "user" || b.ts == null) continue;
-    const d = new Date(b.ts);
-    const day = d.toDateString();
-    out.set(b.id, { time: timeFmt.format(d), date: lastDay !== null && day !== lastDay ? dateFmt.format(d) : null });
+    const { time, day, date } = stampParts(b, b.ts);
+    out.set(b.id, { time, date: lastDay !== null && day !== lastDay ? date : null });
     lastDay = day;
   }
   return out;
@@ -43,13 +61,17 @@ export function Transcript({ threadId }: { threadId: string }) {
 
   const stamps = useMemo(() => userStamps(rt.blocks, settings.showMessageTimestamps), [rt.blocks, settings.showMessageTimestamps]);
 
+  const blockRows = useMemo<Row[]>(
+    () => rt.blocks.map((block, index) => ({ key: block.id, type: "block", block, index, stamp: stamps.get(block.id) ?? null })),
+    [rt.blocks, stamps],
+  );
   const rows = useMemo<Row[]>(() => {
-    const out: Row[] = rt.blocks.map((block, index) => ({ key: block.id, type: "block", block, index, stamp: stamps.get(block.id) ?? null }));
+    const out: Row[] = blockRows.slice();
     for (const p of rt.pendingPermissions) out.push({ key: `perm:${p.requestId}`, type: "permission", requestId: p.requestId });
     if (showsErrorCard(rt)) out.push({ key: "error-card", type: "error-card" });
     if (rt.status === "working") out.push({ key: "spinner", type: "spinner" });
     return out;
-  }, [rt, stamps]);
+  }, [rt, blockRows]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -87,7 +109,8 @@ export function Transcript({ threadId }: { threadId: string }) {
   const render = (row: Row): ReactNode => {
     switch (row.type) {
       case "block":
-        return <BlockView block={row.block} pos={timelinePos(rt.blocks, row.index)} stamp={row.stamp} />;
+        // BlockView's memo compares pos/stamp by field, so rows whose block didn't change skip rendering.
+        return <BlockView block={row.block} pos={timelinePos(rt.blocks, row.index)} stamp={row.stamp} threadId={threadId} />;
       case "permission":
         return <PermissionCard threadId={threadId} requestId={row.requestId} />;
       case "error-card":

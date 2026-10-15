@@ -220,6 +220,20 @@ const SILENT_SYSTEM = new Set([
 
 type Path = number[];
 
+/**
+ * Seeding builds a whole transcript from scratch before anyone can see it, so it reduces into
+ * mutable arrays (no per-line copies) and keeps id indexes instead of walking the tree per line.
+ * Invariants while a draft is active: blocks are only appended or replaced in place (never removed
+ * or reordered), nothing is streaming, and every array was created by this seed.
+ */
+interface SeedDraft {
+  /** tool id -> path of the newest tool block with that id. */
+  toolPaths: Map<string, Path>;
+  /** messageId -> number of text/thinking blocks with that messageId. */
+  textCounts: Map<string, number>;
+}
+let draft: SeedDraft | null = null;
+
 /** Finds a block by predicate, searching newest-first and into tool children. */
 function locate(blocks: ViewBlock[], pred: (b: ViewBlock) => boolean): Path | null {
   for (let i = blocks.length - 1; i >= 0; i--) {
@@ -233,27 +247,51 @@ function locate(blocks: ViewBlock[], pred: (b: ViewBlock) => boolean): Path | nu
   return null;
 }
 
+/** Replaces the block at `path`. Returns `blocks` itself when `fn` returns the same block. */
 function updateAt(blocks: ViewBlock[], path: Path, fn: (b: ViewBlock) => ViewBlock): ViewBlock[] {
   const [i, ...rest] = path;
-  const next = blocks.slice();
+  let nb: ViewBlock;
   if (rest.length === 0) {
-    next[i] = fn(blocks[i]);
+    nb = fn(blocks[i]);
   } else {
     const parent = blocks[i] as ToolBlock;
-    next[i] = { ...parent, children: updateAt(parent.children, rest, fn) };
+    const children = updateAt(parent.children, rest, fn);
+    nb = children === parent.children ? parent : { ...parent, children };
   }
+  if (nb === blocks[i]) return blocks;
+  if (draft) {
+    blocks[i] = nb;
+    return blocks;
+  }
+  const next = blocks.slice();
+  next[i] = nb;
   return next;
 }
 
-const findTool = (blocks: ViewBlock[], id: string) => locate(blocks, (b) => b.kind === "tool" && b.id === id);
+const findTool = (blocks: ViewBlock[], id: string) =>
+  draft ? (draft.toolPaths.get(id) ?? null) : locate(blocks, (b) => b.kind === "tool" && b.id === id);
+
+/** Appends `block` to `list` (in place while seeding), recording it in the seed indexes. */
+function push(list: ViewBlock[], block: ViewBlock, parentPath: Path | null): ViewBlock[] {
+  if (!draft) return [...list, block];
+  if (block.kind === "tool") draft.toolPaths.set(block.id, [...(parentPath ?? []), list.length]);
+  if (block.kind === "text" || block.kind === "thinking") draft.textCounts.set(block.messageId, (draft.textCounts.get(block.messageId) ?? 0) + 1);
+  list.push(block);
+  return list;
+}
 
 /** Appends to the top level, or to the children of the tool `parent` (falls back to top level). */
 function append(blocks: ViewBlock[], parent: string | null, block: ViewBlock): ViewBlock[] {
   if (parent) {
     const path = findTool(blocks, parent);
-    if (path) return updateAt(blocks, path, (b) => ({ ...(b as ToolBlock), children: [...(b as ToolBlock).children, block] }));
+    if (path) {
+      return updateAt(blocks, path, (b) => {
+        const t = b as ToolBlock;
+        return draft ? (push(t.children, block, path), t) : { ...t, children: push(t.children, block, path) };
+      });
+    }
   }
-  return [...blocks, block];
+  return push(blocks, block, null);
 }
 
 function mapAll(blocks: ViewBlock[], fn: (b: ViewBlock) => ViewBlock): ViewBlock[] {
@@ -366,7 +404,10 @@ function onAssistant(s: ThreadRuntime, raw: RawMessage, now: number, seeding: bo
       const kind = c.type === "text" ? "text" : "thinking";
       const text = String((c.type === "text" ? c.text : c.thinking) ?? "");
       // With partial messages on, a streamed block for this message already exists: finalize it.
-      const path = locate(blocks, (b) => (b.kind === "text" || b.kind === "thinking") && b.kind === kind && b.messageId === messageId && b.streaming);
+      // (Nothing streams while seeding, so the walk is skipped there.)
+      const path = draft
+        ? null
+        : locate(blocks, (b) => (b.kind === "text" || b.kind === "thinking") && b.kind === kind && b.messageId === messageId && b.streaming);
       if (path) {
         blocks = updateAt(blocks, path, (b) => {
           if (b.kind === "thinking") {
@@ -391,6 +432,7 @@ function onAssistant(s: ThreadRuntime, raw: RawMessage, now: number, seeding: bo
 }
 
 function countByMessage(blocks: ViewBlock[], messageId: string): number {
+  if (draft) return draft.textCounts.get(messageId) ?? 0;
   let n = 0;
   const walk = (list: ViewBlock[]) => {
     for (const b of list) {
@@ -408,7 +450,7 @@ function bindUserUuid(blocks: ViewBlock[], uuid: string | undefined): ViewBlock[
     const b = blocks[i];
     if (b.kind !== "user") continue;
     if (b.uuid) return blocks; // newest user block already bound
-    const next = blocks.slice();
+    const next = draft ? blocks : blocks.slice();
     next[i] = { ...b, uuid };
     return next;
   }
@@ -465,7 +507,7 @@ function onStreamEvent(s: ThreadRuntime, raw: RawMessage, now: number): ThreadRu
   const blockId = cursor.blocks[index];
   if (!blockId) return blocks === s.blocks ? s : { ...s, blocks };
   const path = locate(blocks, (b) => b.id === blockId && b.kind !== "user");
-  if (!path) return { ...s, blocks };
+  if (!path) return blocks === s.blocks ? s : { ...s, blocks };
 
   if (ev.type === "content_block_delta" && ev.delta) {
     const d = ev.delta;
@@ -496,7 +538,7 @@ function onStreamEvent(s: ThreadRuntime, raw: RawMessage, now: number): ThreadRu
       return b;
     });
   }
-  return { ...s, blocks };
+  return blocks === s.blocks ? s : { ...s, blocks };
 }
 
 function onUser(s: ThreadRuntime, raw: RawMessage, now: number, seeding: boolean): ThreadRuntime {
@@ -536,7 +578,7 @@ function onUser(s: ThreadRuntime, raw: RawMessage, now: number, seeding: boolean
     } else if (!parent) {
       // A subagent's prompt (parent set) is already shown as the Task card's input.
       const uuid = typeof msg.uuid === "string" ? msg.uuid : null;
-      blocks = [...blocks, { kind: "user", id: uuid ?? `user-${now}-${blocks.length}`, uuid, text, images, ts }];
+      blocks = push(blocks, { kind: "user", id: uuid ?? `user-${now}-${blocks.length}`, uuid, text, images, ts }, null);
     }
   }
   return blocks === s.blocks ? s : { ...s, blocks };
@@ -664,8 +706,12 @@ const withSeq = (s: ThreadRuntime, seq: number) => (seq > s.lastSeq ? { ...s, la
 
 export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRuntime {
   switch (a.kind) {
-    case "message":
-      return withSeq(onMessage(s, a.raw, now), a.seq);
+    case "message": {
+      // An ignored message (keep-alive, hook chatter, a stray delta) leaves the runtime as is, so
+      // subscribers don't re-render for it; `lastSeq` only tracks messages that changed state.
+      const next = onMessage(s, a.raw, now);
+      return next === s ? s : withSeq(next, a.seq);
+    }
     case "initialized": {
       const mode = a.response.current_permission_mode;
       return withSeq({ ...s, init: a.response, permissionMode: typeof mode === "string" ? (mode as PermissionMode) : s.permissionMode }, a.seq);
@@ -726,18 +772,8 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
         status: s.status === "idle" ? "working" : s.status,
       };
     }
-    case "seed": {
-      let next: ThreadRuntime = { ...s, blocks: [] };
-      for (const line of a.lines) {
-        const type = line.type;
-        if (type !== "user" && type !== "assistant") continue;
-        if (line.isSidechain === true) continue;
-        next = onMessage(next, { ...line, parent_tool_use_id: null } as unknown as RawMessage, now, true);
-      }
-      // Seeded history is complete: nothing from it is still running.
-      const blocks = mapAll(next.blocks, (b) => (b.kind === "tool" && b.status === "running" ? { ...b, status: "done" as const } : b));
-      return { ...next, blocks: [...blocks, ...s.blocks], streams: {}, seed: "done" };
-    }
+    case "seed":
+      return seedRuntime(s, a.lines, now, true);
     case "seed_state":
       return { ...s, seed: a.seed };
     case "local_notice":
@@ -757,4 +793,28 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
     case "context_usage":
       return { ...s, contextUsage: a.usage };
   }
+}
+
+function seedRuntime(s: ThreadRuntime, lines: Record<string, unknown>[], now: number, useDraft: boolean): ThreadRuntime {
+  let next: ThreadRuntime = { ...s, blocks: [] };
+  const prevDraft = draft;
+  draft = useDraft ? { toolPaths: new Map(), textCounts: new Map() } : null;
+  try {
+    for (const line of lines) {
+      const type = line.type;
+      if (type !== "user" && type !== "assistant") continue;
+      if (line.isSidechain === true) continue;
+      next = onMessage(next, { ...line, parent_tool_use_id: null } as unknown as RawMessage, now, true);
+    }
+  } finally {
+    draft = prevDraft;
+  }
+  // Seeded history is complete: nothing from it is still running.
+  const blocks = mapAll(next.blocks, (b) => (b.kind === "tool" && b.status === "running" ? { ...b, status: "done" as const } : b));
+  return { ...next, blocks: [...blocks, ...s.blocks], streams: {}, seed: "done" };
+}
+
+/** Test-only: the seed reducer without the mutable draft (the original copy-per-line path). */
+export function __seedWithoutDraftForTests(s: ThreadRuntime, lines: Record<string, unknown>[], now: number): ThreadRuntime {
+  return seedRuntime(s, lines, now, false);
 }

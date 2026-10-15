@@ -11,16 +11,6 @@ type Mode = "code" | "both";
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-/** The thread whose transcript holds this user message (uuids are unique across sessions). */
-function useThreadOfMessage(uuid: string): string | null {
-  return useThreadStore((s) => {
-    for (const [id, rt] of Object.entries(s.threads)) {
-      if (rt.blocks.some((b) => b.kind === "user" && b.uuid === uuid)) return id;
-    }
-    return null;
-  });
-}
-
 function relativeTo(root: string | undefined, path: string) {
   if (root && path.startsWith(`${root.replace(/\/+$/, "")}/`)) return path.slice(root.replace(/\/+$/, "").length + 1);
   return path;
@@ -112,8 +102,8 @@ function RewindDialog({ threadId, uuid, mode, onClose }: { threadId: string; uui
   );
 }
 
-export function RewindAction({ uuid }: { uuid: string }) {
-  const threadId = useThreadOfMessage(uuid);
+/** `threadId` is the thread whose transcript holds this user message (passed down by the transcript). */
+export function RewindAction({ threadId, uuid }: { threadId: string; uuid: string }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<Mode | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -127,12 +117,10 @@ export function RewindAction({ uuid }: { uuid: string }) {
     return () => document.removeEventListener("mousedown", onDown);
   }, [menuOpen]);
 
-  if (!threadId) return null;
-
   function fork() {
     setMenuOpen(false);
-    forkConversation(threadId!, uuid).catch((err: unknown) =>
-      useThreadStore.getState().dispatch(threadId!, { kind: "local_notice", variant: "warning", text: `Failed to fork conversation: ${errorText(err)}` }),
+    forkConversation(threadId, uuid).catch((err: unknown) =>
+      useThreadStore.getState().dispatch(threadId, { kind: "local_notice", variant: "warning", text: `Failed to fork conversation: ${errorText(err)}` }),
     );
   }
 

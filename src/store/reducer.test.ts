@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/cli-2.1.296-permission-deny-interrupt.ndjson?raw";
 import type { ClaudeEvent, RawMessage } from "../ipc/types";
-import { initialRuntime, reduce, resetUnknownTypeLog, type ThreadAction, type ThreadRuntime, type ViewBlock } from "./reducer";
+import {
+  __seedWithoutDraftForTests,
+  initialRuntime,
+  reduce,
+  resetUnknownTypeLog,
+  type ThreadAction,
+  type ThreadRuntime,
+  type ViewBlock,
+} from "./reducer";
 import { syntheticSession } from "../test/fixtures/synthetic";
 
 let seq = 0;
@@ -293,5 +301,114 @@ describe("reducer: performance", () => {
     const elapsed = performance.now() - t0;
     expect(s.blocks.length).toBeGreaterThan(500);
     expect(elapsed).toBeLessThan(200);
+  });
+});
+
+/** Session-JSONL-shaped lines: the spike's user/assistant lines (both directions). */
+function spikeLines(): Record<string, unknown>[] {
+  return fixture
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as { dir: "in" | "out"; msg: Record<string, unknown> })
+    .filter(({ msg }) => msg.type === "user" || msg.type === "assistant")
+    .map(({ msg }) => msg);
+}
+
+/** A synthetic session as JSONL lines: users, thinking, text, tool use/results, plus edge cases. */
+function syntheticLines(messages: number): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (const a of syntheticSession(messages)) {
+    if (a.kind === "local_user") out.push({ type: "user", uuid: a.id, timestamp: new Date(a.ts).toISOString(), message: { role: "user", content: a.content } });
+    else if (a.kind === "message" && (a.raw.type === "user" || a.raw.type === "assistant")) out.push({ ...a.raw, timestamp: "2026-10-14T10:00:00.000Z" });
+  }
+  // A second text block for an existing message id, a duplicate tool id, a result for an unknown
+  // tool, an interrupt, a sidechain line, a meta line, an API error, an image-only user line, and
+  // an assistant line that binds a user uuid.
+  out.push(
+    { type: "user", message: { role: "user", content: "unbound question" } },
+    { type: "assistant", message: { id: "msg_1", content: [{ type: "text", text: "late extra text" }] } },
+    { type: "assistant", message: { id: "dup", content: [{ type: "tool_use", id: "tu_1", name: "Bash", input: { command: "again" } }] } },
+    { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_1", content: "second result", is_error: true }] } },
+    { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "nope", content: "x" }] } },
+    { type: "user", message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] } },
+    { type: "assistant", isSidechain: true, message: { id: "side", content: [{ type: "text", text: "hidden" }] } },
+    { type: "user", isMeta: true, message: { role: "user", content: "<meta>" } },
+    { type: "assistant", error: "overloaded", message: { id: "err", content: [{ type: "text", text: "Overloaded" }] } },
+    { type: "user", uuid: "img", message: { role: "user", content: [{ type: "image", source: {} }] } },
+    { type: "assistant", user_message_uuid: "bind-me", message: { id: "last", content: [{ type: "tool_use", id: "open", name: "TodoWrite", input: { todos: [] } }] } },
+  );
+  return out;
+}
+
+describe("reducer: seeding", () => {
+  const prior = (): ThreadRuntime => run([{ kind: "local_user", id: "live", content: [{ type: "text", text: "typed before load" }], ts: 1 }]);
+
+  it("builds the same transcript as the copy-per-line path (spike fixture)", () => {
+    const lines = spikeLines();
+    expect(lines.length).toBeGreaterThan(5);
+    const fast = reduce(prior(), { kind: "seed", lines }, 42);
+    const slow = __seedWithoutDraftForTests(prior(), lines, 42);
+    expect(fast).toEqual(slow);
+    expect(kinds(fast.blocks)).toContain("tool");
+  });
+
+  it("builds the same transcript as the copy-per-line path (2,000-message synthetic session)", () => {
+    const lines = syntheticLines(2000);
+    const t0 = performance.now();
+    const fast = reduce(prior(), { kind: "seed", lines }, 42);
+    const elapsed = performance.now() - t0;
+    const slow = __seedWithoutDraftForTests(prior(), lines, 42);
+    expect(fast).toEqual(slow);
+    expect(fast.blocks.length).toBeGreaterThan(1000);
+    expect(elapsed).toBeLessThan(200);
+  });
+
+  it("leaves no draft behind: later events copy instead of mutating seeded arrays", () => {
+    const seeded = reduce(initialRuntime(), { kind: "seed", lines: syntheticLines(50) }, 0);
+    const blocks = seeded.blocks;
+    const snapshot = [...blocks];
+    const next = run([asst([{ type: "text", text: "after" }], null, "fresh")], seeded);
+    expect(seeded.blocks).toBe(blocks);
+    expect(blocks).toEqual(snapshot);
+    expect(next.blocks).toHaveLength(blocks.length + 1);
+  });
+});
+
+describe("reducer: referential stability and no-ops", () => {
+  const streaming = () =>
+    run([
+      asst([{ type: "text", text: "earlier" }], null, "msg_0"),
+      asst([{ type: "tool_use", id: "tu_1", name: "Task", input: {} }], null, "msg_0"),
+      asst([{ type: "text", text: "child" }], "tu_1", "msg_c"),
+      se({ type: "message_start", message: { id: "msg_1", content: [] } }),
+      se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+      se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "a" } }),
+    ]);
+
+  it("replaces only the touched block on a delta; untouched blocks keep their identity", () => {
+    const s = streaming();
+    const next = reduce(s, se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "b" } }), 0);
+    expect(next.blocks).not.toBe(s.blocks);
+    expect(next.blocks[0]).toBe(s.blocks[0]);
+    expect(next.blocks[1]).toBe(s.blocks[1]);
+    expect(next.blocks[2]).not.toBe(s.blocks[2]);
+    expect(next.blocks[2]).toMatchObject({ text: "ab" });
+  });
+
+  it("returns the same runtime (without bumping lastSeq) for messages it ignores", () => {
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+    const s = streaming();
+    const ignored = [
+      { type: "keep_alive" },
+      { type: "rate_limit_event" },
+      { type: "system", subtype: "hook_progress" },
+      { type: "tool_progress", tool_use_id: "missing", elapsed_time_seconds: 3 },
+      { type: "stream_event", event: { type: "content_block_delta", index: 5, delta: { type: "text_delta", text: "x" } }, parent_tool_use_id: null, api_message_id: "msg_1" },
+      { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "x" } }, parent_tool_use_id: null, api_message_id: "msg_1" },
+      { type: "user", isMeta: true, message: { role: "user", content: "meta" } },
+    ] as RawMessage[];
+    for (const raw of ignored) expect(reduce(s, { kind: "message", seq: 999, raw }, 0)).toBe(s);
+    debug.mockRestore();
+    expect(reduce(s, { kind: "message", seq: 999, raw: { type: "system", subtype: "init", model: "x" } }, 0).lastSeq).toBe(999);
   });
 });

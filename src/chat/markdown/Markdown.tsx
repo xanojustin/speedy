@@ -212,7 +212,28 @@ function blocks(tokens: Token[] | undefined, key = ""): ReactNode[] {
   return (tokens ?? []).map((t, i) => renderBlock(t, `${key}${i}`));
 }
 
+/**
+ * One top-level token. While a message streams only its tail token's source changes, so the
+ * blocks above it skip rendering. A token's output depends only on the token itself and the
+ * document's reference-link definitions (`links`), which are compared too.
+ */
+const TopBlock = memo(
+  function TopBlock({ token, index }: { token: Token; index: number; links: string }) {
+    return <>{renderBlock(token, `${index}`)}</>;
+  },
+  (a, b) => a.index === b.index && a.links === b.links && a.token.type === b.token.type && a.token.raw === b.token.raw,
+);
+
 export const Markdown = memo(function Markdown({ text, className }: { text: string; className?: string }) {
-  const tokens = useMemo(() => Lexer.lex(text, { gfm: true, breaks: false }), [text]);
-  return <div className={`md ${className ?? ""}`}>{blocks(tokens)}</div>;
+  const { tokens, links } = useMemo(() => {
+    const tokens = Lexer.lex(text, { gfm: true, breaks: false });
+    return { tokens, links: JSON.stringify(tokens.links ?? {}) };
+  }, [text]);
+  return (
+    <div className={`md ${className ?? ""}`}>
+      {tokens.map((t, i) => (
+        <TopBlock key={i} token={t} index={i} links={links} />
+      ))}
+    </div>
+  );
 });

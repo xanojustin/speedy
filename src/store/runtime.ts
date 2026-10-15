@@ -12,7 +12,7 @@ import {
 } from "../ipc/commands";
 import type { ClaudeEvent, PermissionOutcome, PermissionResult, StartOptions, ThreadStatus } from "../ipc/types";
 import { findThread, newId, useAppStore } from "./appStore";
-import { getRuntime, useThreadStore, type ThreadAction } from "./threadStore";
+import { __resetThreadEventsForTests, getRuntime, queueThreadEvent, useThreadStore, type ThreadAction } from "./threadStore";
 
 const started = new Map<string, Promise<void>>();
 /** Threads with a user message written and no `result` yet; guards against double-sending the queue. */
@@ -23,10 +23,12 @@ const dispatch = (threadId: string, action: ThreadAction) => useThreadStore.getS
 export function __resetRuntimeForTests() {
   started.clear();
   inFlight.clear();
+  __resetThreadEventsForTests();
 }
 
 function handleEvent(threadId: string, ev: ClaudeEvent) {
-  dispatch(threadId, ev);
+  // Applied with the next frame's batch; the reads below (`getRuntime`) apply it first.
+  queueThreadEvent(threadId, ev);
   switch (ev.kind) {
     case "session_bound":
       useAppStore.getState().updateThread(threadId, { sessionId: ev.session_id });

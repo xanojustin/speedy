@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClaudeEvent, ThreadStatus } from "../ipc/types";
 
 const invoke = vi.fn();
@@ -14,7 +14,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import { useThreadStore } from "./threadStore";
+import { flushThreadEvents, setThreadEventBatching, useThreadStore } from "./threadStore";
 import {
   ensureStarted,
   interruptThread,
@@ -136,5 +136,32 @@ describe("runtime bridge", () => {
     useAppStore.getState().selectThread(null);
     emit({ kind: "message", seq: 2, raw: { type: "assistant", parent_tool_use_id: null, message: { id: "m", content: [{ type: "text", text: "bg" }] } } });
     expect(rt(threadId).blocks).toHaveLength(1);
+  });
+});
+
+describe("runtime bridge with per-frame batching", () => {
+  beforeEach(() => setThreadEventBatching(true));
+  afterEach(() => setThreadEventBatching(false));
+
+  it("buffers channel events until the frame, but decisions read the applied state", async () => {
+    await sendUserMessage(threadId, [{ type: "text", text: "first" }]);
+    expect(rt(threadId).queue).toHaveLength(1);
+
+    const before = useThreadStore.getState();
+    emit({ kind: "message", seq: 2, raw: { type: "assistant", parent_tool_use_id: null, message: { id: "m", content: [{ type: "text", text: "bg" }] } } });
+    // Not applied yet: subscribers are not notified per channel event.
+    expect(useThreadStore.getState()).toBe(before);
+
+    // The idle status sends the queued message, which lands after the buffered events.
+    emit(status("idle", 3));
+    await flush();
+    expect(calls("claude_send_user").map((c) => c[1].content)).toEqual([[{ type: "text", text: "first" }]]);
+    expect(rt(threadId).blocks.map((b) => b.kind)).toEqual(["text", "user"]);
+    expect(rt(threadId).status).toBe("working");
+
+    emit({ kind: "session_bound", seq: 4, session_id: "new-session" });
+    expect(useAppStore.getState().projects[0].threads[0].sessionId).toBe("new-session");
+    flushThreadEvents();
+    expect(rt(threadId).sessionId).toBe("new-session");
   });
 });

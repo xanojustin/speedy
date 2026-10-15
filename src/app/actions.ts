@@ -2,7 +2,7 @@
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { claudeStop, pathsExist, ptyHasForegroundChild } from "../ipc/commands";
 import { findThread, useAppStore } from "../store/appStore";
-import { useThreadStore } from "../store/threadStore";
+import { getRuntime } from "../store/threadStore";
 import { disposeTerminal } from "../terminal/TerminalPane";
 
 /** Opens the folder picker and adds the chosen folder (R2). */
@@ -34,7 +34,7 @@ export function newThread(projectId?: string): void {
 
 /** True when closing would kill live work: the agent is Working or the shell runs a foreground job. */
 async function isBusy(threadId: string): Promise<boolean> {
-  if (useThreadStore.getState().threads[threadId]?.status === "working") return true;
+  if (getRuntime(threadId).status === "working") return true;
   try {
     return await ptyHasForegroundChild(threadId);
   } catch {
@@ -89,7 +89,8 @@ export async function removeProject(projectId: string): Promise<boolean> {
     });
     if (!ok) return false;
   }
-  for (const t of live) await stopThread(t.id);
+  // stopThread never rejects; stop them concurrently.
+  await Promise.all(live.map((t) => stopThread(t.id)));
   useAppStore.getState().removeProject(projectId);
   return true;
 }

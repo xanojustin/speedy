@@ -132,6 +132,10 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
 
     updateThread(threadId, patch) {
+      // A patch that changes nothing (e.g. session_bound re-firing with the same id) is not a new
+      // state: no re-render for subscribers and no state_save.
+      const current = findThread(get(), threadId)?.thread;
+      if (current && (Object.keys(patch) as (keyof typeof patch)[]).every((k) => Object.is(current[k], patch[k]))) return;
       commit((s) => ({ projects: mapThreads(s.projects, threadId, (t) => ({ ...t, ...patch })) }));
     },
 

@@ -1,6 +1,12 @@
 // U8: per-thread chat runtime (status, transcript blocks, pending permissions, queue).
 // Every thread's events are reduced here whether or not it is visible (KTD2); only rendering is
 // limited to the selected thread. IO lives in `runtime.ts`; this module is state only.
+//
+// Streaming: channel events arrive one per token. `queueThreadEvent` buffers them and applies
+// everything buffered with one store update per animation frame, folding with `reduce` in arrival
+// order (each with its own arrival time), so the state after a flush equals applying the events one
+// by one. Anything that reads or writes a thread's runtime imperatively (`dispatch`, `getRuntime`)
+// first applies that thread's buffered events, so ordering against local actions is preserved.
 import { create } from "zustand";
 import { initialRuntime, reduce, type ThreadAction, type ThreadRuntime } from "./reducer";
 
@@ -19,23 +25,129 @@ export type {
 
 export interface ThreadStoreState {
   threads: Record<string, ThreadRuntime>;
-  /** Applies one action to a thread's runtime (creating it on first use). */
+  /** Applies one action to a thread's runtime (creating it on first use), after any buffered events. */
   dispatch(threadId: string, action: ThreadAction): void;
+}
+
+interface Pending {
+  action: ThreadAction;
+  now: number;
+}
+
+/** Buffered channel events per thread, in arrival order. */
+const pending = new Map<string, Pending[]>();
+
+/** Folds `actions` into `threads`; returns `threads` itself when no runtime changed. */
+function applyAll(threads: Record<string, ThreadRuntime>, batches: Iterable<[string, Pending[]]>): Record<string, ThreadRuntime> {
+  let next = threads;
+  for (const [threadId, list] of batches) {
+    const cur = threads[threadId];
+    let rt = cur ?? initialRuntime();
+    for (const p of list) rt = reduce(rt, p.action, p.now);
+    // Ignored events on an existing thread are a no-op; the first event for a thread creates it.
+    if (cur && rt === cur) continue;
+    if (next === threads) next = { ...threads };
+    next[threadId] = rt;
+  }
+  return next;
+}
+
+/** Removes and returns the buffered events for one thread (or all threads). */
+function take(threadId?: string): [string, Pending[]][] {
+  if (threadId === undefined) {
+    const all = [...pending.entries()];
+    pending.clear();
+    return all;
+  }
+  const list = pending.get(threadId);
+  if (!list) return [];
+  pending.delete(threadId);
+  return [[threadId, list]];
 }
 
 export const useThreadStore = create<ThreadStoreState>((set) => ({
   threads: {},
   dispatch(threadId, action) {
-    set((s) => ({
-      threads: { ...s.threads, [threadId]: reduce(s.threads[threadId] ?? initialRuntime(), action, Date.now()) },
-    }));
+    const batch = take(threadId);
+    const entry: [string, Pending[]] = [threadId, [...(batch[0]?.[1] ?? []), { action, now: Date.now() }]];
+    set((s) => {
+      const threads = applyAll(s.threads, [entry]);
+      return threads === s.threads ? s : { threads };
+    });
   },
 }));
 
+// ---------- per-frame batching ----------
+
+/** Vitest drives the store synchronously and asserts right after each event; batching is opt-in there. */
+let batching = import.meta.env?.MODE !== "test";
+let rafId: number | null = null;
+let timerId: ReturnType<typeof setTimeout> | null = null;
+
+/** Backstop for a frame that never comes (window hidden after the frame was requested). */
+const FALLBACK_MS = 16;
+const BACKSTOP_MS = 100;
+
+function cancelScheduled() {
+  if (rafId !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(rafId);
+  if (timerId !== null) clearTimeout(timerId);
+  rafId = null;
+  timerId = null;
+}
+
+function schedule() {
+  if (rafId !== null || timerId !== null) return;
+  const visible = typeof document === "undefined" || !document.hidden;
+  if (typeof requestAnimationFrame === "function" && visible) {
+    rafId = requestAnimationFrame(() => flushThreadEvents());
+    timerId = setTimeout(() => flushThreadEvents(), BACKSTOP_MS);
+  } else {
+    timerId = setTimeout(() => flushThreadEvents(), FALLBACK_MS);
+  }
+}
+
+/** Applies buffered events for one thread (or every thread) now, with a single store update. */
+export function flushThreadEvents(threadId?: string): void {
+  const batches = take(threadId);
+  if (pending.size === 0) cancelScheduled();
+  if (batches.length === 0) return;
+  useThreadStore.setState((s) => {
+    const threads = applyAll(s.threads, batches);
+    return threads === s.threads ? s : { threads };
+  });
+  if (pending.size > 0) schedule();
+}
+
+/** Buffers a channel event for the next frame's flush (applies it at once when batching is off). */
+export function queueThreadEvent(threadId: string, action: ThreadAction): void {
+  if (!batching) {
+    useThreadStore.getState().dispatch(threadId, action);
+    return;
+  }
+  const now = Date.now();
+  const list = pending.get(threadId);
+  if (list) list.push({ action, now });
+  else pending.set(threadId, [{ action, now }]);
+  schedule();
+}
+
+/** Turns per-frame batching on or off (tests). Turning it off applies anything buffered. */
+export function setThreadEventBatching(on: boolean): void {
+  batching = on;
+  if (!on) flushThreadEvents();
+}
+
+/** Test-only: drops buffered events and any scheduled flush. */
+export function __resetThreadEventsForTests(): void {
+  pending.clear();
+  cancelScheduled();
+}
+
 const EMPTY: ThreadRuntime = initialRuntime();
 
-/** The thread's runtime, or a shared empty runtime before any event arrived. */
+/** The thread's runtime (after its buffered events), or a shared empty runtime before any event arrived. */
 export function getRuntime(threadId: string): ThreadRuntime {
+  if (pending.has(threadId)) flushThreadEvents(threadId);
   return useThreadStore.getState().threads[threadId] ?? EMPTY;
 }
 
