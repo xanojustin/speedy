@@ -81,5 +81,10 @@ export const onUnread = (cb: (unread: string[]) => void): Promise<UnlistenFn> =>
 export const onMenu = (cb: (action: MenuAction) => void): Promise<UnlistenFn> =>
   listen<MenuAction>("menu", (e) => cb(e.payload));
 
+// ---- `speedy .` ----
+export const openFoldersTake = () => invoke<string[]>("open_folders_take");
+/** Fires when the OS hands Speedy folders; call `openFoldersTake` to get them. */
+export const onOpenFolders = (cb: () => void): Promise<UnlistenFn> => listen("open-folders", () => cb());
+
 // ---- misc ----
 export const openPath = (path: string) => invoke<void>("open_path", { path });

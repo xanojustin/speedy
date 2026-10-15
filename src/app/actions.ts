@@ -1,6 +1,6 @@
 // App-level flows shared by the sidebar, the empty state, and the menu shortcuts.
 import { ask, open } from "@tauri-apps/plugin-dialog";
-import { claudeStop, pathsExist, ptyHasForegroundChild } from "../ipc/commands";
+import { claudeStop, openFoldersTake, pathsExist, ptyHasForegroundChild } from "../ipc/commands";
 import { findThread, useAppStore } from "../store/appStore";
 import { forgetStarted } from "../store/runtime";
 import { getRuntime } from "../store/threadStore";
@@ -23,6 +23,11 @@ export async function addDroppedPaths(paths: string[]): Promise<void> {
   for (const [i, path] of paths.entries()) {
     if (isDir[i]) useAppStore.getState().addProject(path.replace(/\/+$/, "") || "/");
   }
+}
+
+/** Adds folders opened from outside the app (`speedy .`, Dock drops). Rust only queues directories. */
+export async function addOpenedFolders(): Promise<void> {
+  for (const path of await openFoldersTake()) useAppStore.getState().addProject(path);
 }
 
 /** New thread in the selected thread's project, else the first project, else pick a folder. */

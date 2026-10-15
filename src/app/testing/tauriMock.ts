@@ -36,6 +36,8 @@ export const backend = {
   calls: [] as Call[],
   listeners: {} as Record<string, Handler[]>,
   dragDrop: null as ((e: { payload: unknown }) => void) | null,
+  /** Folders the OS opened with Speedy (`speedy .`) that the webview hasn't taken. */
+  pendingOpens: [] as string[],
 };
 
 export function emptyState(): AppState {
@@ -61,6 +63,8 @@ export const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>):
       return backend.foreground[args!.threadId as string] ?? false;
     case "sessions_list":
       return [];
+    case "open_folders_take":
+      return backend.pendingOpens.splice(0);
     default:
       return undefined;
   }
@@ -107,6 +111,12 @@ export function emitMenu(action: MenuAction) {
   for (const h of backend.listeners.menu ?? []) h({ payload: action });
 }
 
+/** Simulates `speedy <folders>`: Rust queues them and emits `open-folders`. */
+export function openFolders(...paths: string[]) {
+  backend.pendingOpens.push(...paths);
+  for (const h of backend.listeners["open-folders"] ?? []) h({ payload: null });
+}
+
 export const callsTo = (cmd: string) => backend.calls.filter((c) => c.cmd === cmd);
 export const lastSaved = () => callsTo("state_save").at(-1)?.args?.state as AppState | undefined;
 
@@ -121,6 +131,7 @@ export function resetFakeBackend(state: AppState = emptyState()) {
   backend.calls = [];
   backend.listeners = {};
   backend.dragDrop = null;
+  backend.pendingOpens = [];
   invoke.mockClear();
   dialog.open.mockReset().mockResolvedValue(null);
   dialog.ask.mockReset().mockResolvedValue(true);

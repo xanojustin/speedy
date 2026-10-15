@@ -3,7 +3,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect, useState } from "react";
 import { findThread, useAppStore } from "../store/appStore";
 import { Sidebar } from "../sidebar/Sidebar";
-import { addDroppedPaths, addProjectViaPicker } from "./actions";
+import { onOpenFolders } from "../ipc/commands";
+import { addDroppedPaths, addOpenedFolders, addProjectViaPicker } from "./actions";
 import { useAttention } from "./attention";
 import { useMenuShortcuts } from "./shortcuts";
 import { ThreadView } from "./ThreadView";
@@ -19,6 +20,7 @@ export function Layout() {
   const setSidebarWidth = useAppStore((s) => s.setSidebarWidth);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const dropActive = useFolderDrop();
+  useOpenedFolders();
   useMenuShortcuts();
   const unread = useAttention();
 
@@ -95,6 +97,23 @@ function EmptyState() {
       </dl>
     </div>
   );
+}
+
+/** Folders opened with `speedy .` become projects, including ones queued before this mounted. */
+function useOpenedFolders() {
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void onOpenFolders(() => void addOpenedFolders()).then((u) => {
+      if (disposed) u();
+      else unlisten = u;
+    });
+    void addOpenedFolders();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 }
 
 /** Folders dropped onto the window become projects (R2). Returns whether a drag is hovering. */

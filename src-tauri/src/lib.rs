@@ -3,6 +3,7 @@
 
 pub mod attention;
 pub mod claude;
+pub mod cli;
 pub mod env;
 pub mod files;
 pub mod menu;
@@ -28,6 +29,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(cli::PendingOpens::default())
         .setup(|app| {
             let handle = app.handle().clone();
             let env = Arc::new(env::EnvService::start());
@@ -73,10 +75,15 @@ pub fn run() {
             attention::attention_mark_read,
             attention::attention_set_titles,
             open_path,
+            cli::open_folders_take,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Speedy")
         .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Opened { urls } = &event {
+                cli::handle_opened(app, urls);
+            }
             if let RunEvent::ExitRequested { .. } = event
                 && let Some(ctx) = app.try_state::<AppCtx>()
             {

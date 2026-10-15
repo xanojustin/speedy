@@ -3,6 +3,7 @@
 //! `new_thread`, `close_thread`, `toggle_terminal`, `maximize_terminal`,
 //! `focus_chat`, `switch_thread_1` … `switch_thread_9`, `add_project`.
 //! Accelerators live on native menu items so WKWebView can't swallow them.
+//! `install_cli` is handled here in Rust (see `cli.rs`).
 
 use tauri::Emitter;
 use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
@@ -24,6 +25,8 @@ const THREAD_ITEMS: &[(&str, &str, &str)] = &[
     ("focus_chat", "Focus Chat", "CmdOrCtrl+L"),
 ];
 
+const INSTALL_CLI: &str = "install_cli";
+
 const SWITCH_PREFIX: &str = "switch_thread_";
 
 /// Whether a menu event id is one of ours (predefined items have their own ids).
@@ -43,6 +46,8 @@ pub fn install(app: &mut tauri::App) -> tauri::Result<()> {
                 ..Default::default()
             }),
         )
+        .separator()
+        .item(&MenuItemBuilder::with_id(INSTALL_CLI, "Install 'speedy' Command in PATH…").build(app)?)
         .separator()
         .hide_with_text("Hide Speedy")
         .hide_others()
@@ -94,7 +99,9 @@ pub fn install(app: &mut tauri::App) -> tauri::Result<()> {
 
     app.on_menu_event(|app, event| {
         let id = event.id().as_ref();
-        if is_app_action(id)
+        if id == INSTALL_CLI {
+            crate::cli::install_command(app);
+        } else if is_app_action(id)
             && let Err(err) = app.emit(MENU_EVENT, id)
         {
             log::warn!("failed to emit menu event {id}: {err}");

@@ -15,6 +15,8 @@ cp -R src-tauri/target/release/bundle/macos/Speedy.app /Applications/
 open /Applications/Speedy.app
 ```
 
+To open folders from a terminal like VS Code's `code .`, choose **Speedy > Install 'speedy' Command in PATH…** once. Then `speedy .` (or `speedy ~/a ~/b`) adds each folder as a project, or selects it if it's already open. The command goes through LaunchServices, so it needs the bundled app, not `tauri dev`.
+
 For development, run `bun run tauri dev`. Notifications only work from the bundled `.app`. Under `tauri dev`, the log reports them as unavailable.
 
 ## Checks
@@ -40,6 +42,7 @@ Run the protocol drift test whenever the setup screen warns that your CLI versio
   - `files.rs`: @-mention search
   - `attention.rs`: notifications and Dock badge
   - `menu.rs`: native menu
+  - `cli.rs`: `speedy .` command and folders opened from Finder or the Dock
 - `src/`: the React webview.
   - `app/`, `sidebar/`: shell, layout, shortcuts
   - `theme/`: generated `--vscode-*` tokens
@@ -71,6 +74,9 @@ Tauri's WebDriver doesn't support macOS, so these checks are manual. Start with 
 - [ ] Stale diff: while a diff card is open, edit the same file from another thread, then accept. The card refreshes and asks again.
 - [ ] History: sessions from VS Code and the CLI are listed. Resuming works in both directions without losing turns. Rename survives, and offline renames show up in `claude --resume`. The live-elsewhere warning appears for a session active in the last 60 s.
 - [ ] Rewind: "Fork conversation and rewind code" restores the files and continues in a new thread.
+
+**`speedy .`**
+- [ ] The menu item installs `/usr/local/bin/speedy`, asking for a password if needed. `speedy .` works with Speedy quit (cold launch) and running, and brings the window forward.
 
 **Parallel work**
 - [ ] Three agents run in hidden threads. Every permission request and completion is surfaced through the sidebar status, the unread glyph, the Dock badge, and a notification.

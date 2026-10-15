@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/plugin-dialog", async () => (await import("./testing/tauriM
 import { useAppStore } from "../store/appStore";
 import { useThreadStore } from "../store/threadStore";
 import { App } from "./App";
-import { backend, callsTo, dialog, emitMenu, lastSaved, project, stateWith } from "./testing/tauriMock";
+import { backend, callsTo, dialog, emitMenu, lastSaved, openFolders, project, stateWith } from "./testing/tauriMock";
 import { resetBackend, runtime } from "./testing/reset";
 
 const chatRegion = () => document.querySelector<HTMLElement>(".chat-region");
@@ -195,5 +195,30 @@ describe("Menu shortcuts", () => {
     await renderApp();
     act(() => emitMenu("add_project"));
     await screen.findByText("tools");
+  });
+});
+
+describe("speedy <folder>", () => {
+  it("adds folders opened before the window was ready", async () => {
+    backend.pendingOpens.push("/Users/me/early");
+    await renderApp();
+    const sidebar = screen.getByRole("navigation", { name: "Projects" });
+    await within(sidebar).findByText("early");
+    expect(lastSaved()!.projects.map((p) => p.path)).toEqual(["/Users/me/early"]);
+  });
+
+  it("adds a new folder and selects a live thread for one already open", async () => {
+    resetBackend(stateWith([project("app", [{}, {}])], "app-t2"));
+    await renderApp();
+    await waitFor(() => expect(backend.listeners["open-folders"]?.length).toBeTruthy());
+
+    act(() => openFolders("/Users/me/new"));
+    const sidebar = screen.getByRole("navigation", { name: "Projects" });
+    await within(sidebar).findByText("new");
+    expect(lastSaved()!.projects.map((p) => p.path)).toEqual(["/Users/me/app", "/Users/me/new"]);
+
+    act(() => openFolders("/Users/me/app"));
+    await waitFor(() => expect(lastSaved()!.selectedThreadId).toBe("app-t1"));
+    expect(lastSaved()!.projects).toHaveLength(2);
   });
 });
