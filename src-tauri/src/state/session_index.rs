@@ -41,12 +41,22 @@ pub fn encode_project_dir(project_path: &str) -> String {
         .collect()
 }
 
+/// The CLI keeps encoded names up to this many characters; longer ones it cuts to
+/// this length and suffixes with a hash of the path.
+const MAX_ENCODED_DIR_LEN: usize = 200;
+
 /// Finds the CLI's directory for `project_path`: the encoded name, or (for names
 /// the CLI truncated) a directory holding a session whose `cwd` is the folder.
 fn find_project_dir(root: &Path, project_path: &str) -> Option<PathBuf> {
-    let direct = root.join(encode_project_dir(project_path));
+    let encoded = encode_project_dir(project_path);
+    let direct = root.join(&encoded);
     if direct.is_dir() {
         return Some(direct);
+    }
+    // Encoded names are ASCII, so `len` is the CLI's (UTF-16) length. A name the CLI
+    // didn't truncate can only live at `direct`; skip the scan of every project.
+    if encoded.len() <= MAX_ENCODED_DIR_LEN {
+        return None;
     }
     std::fs::read_dir(root).ok()?.filter_map(|e| e.ok()).map(|e| e.path()).find(|dir| {
         dir.is_dir() && jsonl_files(dir).iter().any(|f| first_cwd(f).as_deref() == Some(project_path))
@@ -64,9 +74,13 @@ fn jsonl_files(dir: &Path) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// The file's lines, stopping at the first read error (e.g. invalid UTF-8).
+fn read_lines(file: &Path) -> std::io::Result<impl Iterator<Item = String>> {
+    Ok(BufReader::new(std::fs::File::open(file)?).lines().map_while(Result::ok))
+}
+
 fn first_cwd(file: &Path) -> Option<String> {
-    let f = std::fs::File::open(file).ok()?;
-    BufReader::new(f).lines().map_while(Result::ok).find_map(|line| {
+    read_lines(file).ok()?.find_map(|line| {
         if !line.contains("\"cwd\"") {
             return None;
         }
@@ -110,13 +124,13 @@ fn system_ms(t: SystemTime) -> u64 {
 
 fn read_session_meta(file: &Path, meta: &std::fs::Metadata) -> Option<SessionMeta> {
     let session_id = file.file_stem()?.to_string_lossy().into_owned();
-    let f = std::fs::File::open(file).ok()?;
+    let lines = read_lines(file).ok()?;
     let mut custom: Option<String> = None;
     let mut ai: Option<String> = None;
     let mut first_user: Option<String> = None;
     let mut created: Option<u64> = None;
 
-    for line in BufReader::new(f).lines().map_while(Result::ok) {
+    for line in lines {
         // Cheap prefilter: most lines in long sessions matter for none of these.
         let wants_title = line.contains("-title\"");
         let wants_user = first_user.is_none() && line.contains("\"user\"");
@@ -234,10 +248,8 @@ fn session_file(root: &Path, project_path: &str, session_id: &str) -> Result<Pat
 /// Every parseable JSON line of a session, in order.
 pub fn load_session(root: &Path, project_path: &str, session_id: &str) -> Result<Vec<Value>, String> {
     let file = session_file(root, project_path, session_id)?;
-    let f = std::fs::File::open(&file).map_err(|e| format!("reading {}: {e}", file.display()))?;
-    Ok(BufReader::new(f)
-        .lines()
-        .map_while(Result::ok)
+    Ok(read_lines(&file)
+        .map_err(|e| format!("reading {}: {e}", file.display()))?
         .filter_map(|l| serde_json::from_str::<Value>(&l).ok())
         .collect())
 }
@@ -266,19 +278,25 @@ pub fn rename_session_offline(root: &Path, project_path: &str, session_id: &str,
     f.write_all(format!("{prefix}{line}\n").as_bytes()).map_err(err)
 }
 
-#[tauri::command]
-pub fn sessions_list(project_path: String) -> Result<Vec<SessionMeta>, String> {
-    list_sessions(&default_projects_root(), &project_path)
+/// Runs blocking file IO off the main thread and the async runtime's workers.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
-/// Every parseable JSONL line of a session, in order, for seeding a resumed transcript.
 #[tauri::command]
-pub fn session_load(project_path: String, session_id: String) -> Result<Vec<Value>, String> {
-    load_session(&default_projects_root(), &project_path, &session_id)
+pub async fn sessions_list(project_path: String) -> Result<Vec<SessionMeta>, String> {
+    blocking(move || list_sessions(&default_projects_root(), &project_path)).await
+}
+
+/// Every parseable JSONL line of a session, in order, for seeding a resumed transcript
+/// and for finding a rewind's fork point (which walks the `parentUuid` chain through all lines).
+#[tauri::command]
+pub async fn session_load(project_path: String, session_id: String) -> Result<Vec<Value>, String> {
+    blocking(move || load_session(&default_projects_root(), &project_path, &session_id)).await
 }
 
 /// Appends a `custom-title` entry in the CLI's own format (no live actor).
 #[tauri::command]
-pub fn session_rename_offline(project_path: String, session_id: String, title: String) -> Result<(), String> {
-    rename_session_offline(&default_projects_root(), &project_path, &session_id, &title)
+pub async fn session_rename_offline(project_path: String, session_id: String, title: String) -> Result<(), String> {
+    blocking(move || rename_session_offline(&default_projects_root(), &project_path, &session_id, &title)).await
 }

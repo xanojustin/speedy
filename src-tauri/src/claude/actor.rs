@@ -5,13 +5,13 @@
 //! every non-control line goes to the event sink verbatim. Everything here runs
 //! without Tauri: the sink is a plain callback, so tests drive it directly.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::ChildStdin;
@@ -22,6 +22,7 @@ use super::diff::{self, FileDiff};
 use super::process;
 use super::protocol::{self, LineSplitter};
 use super::{ClaudeEvent, PermissionOutcome, StartOptions, ThreadStatus};
+use crate::proc_group;
 
 pub type EventSink = Arc<dyn Fn(ClaudeEvent) + Send + Sync>;
 /// Called on every status transition with `(from, to)`.
@@ -79,6 +80,15 @@ struct State {
     pending_permissions: HashMap<String, PendingPermission>,
     pending_controls: HashMap<String, oneshot::Sender<Result<Value, String>>>,
     stderr_tail: Vec<u8>,
+}
+
+/// A `can_use_tool` request whose diff is still to be computed off the reader task.
+struct PermissionJob {
+    request_id: String,
+    request: Value,
+    tool_name: String,
+    input: Value,
+    cwd: PathBuf,
 }
 
 struct PendingPermission {
@@ -202,8 +212,8 @@ impl ClaudeActor {
             st.running.take()
         };
         if let Some(pgid) = pgid {
-            process::signal_group(pgid, libc::SIGTERM);
-            process::reap_group(pgid, grace).await;
+            proc_group::signal_group(pgid, libc::SIGTERM);
+            proc_group::reap_group(pgid, grace).await;
         }
     }
 
@@ -264,9 +274,9 @@ pub fn shutdown_all(actors: &[ClaudeActor], grace: Duration) {
         }
     }
     for &pgid in &pgids {
-        process::signal_group(pgid, libc::SIGTERM);
+        proc_group::signal_group(pgid, libc::SIGTERM);
     }
-    process::reap_groups_blocking(&pgids, grace);
+    proc_group::reap_groups_blocking(&pgids, grace);
 }
 
 const NOT_RUNNING: &str = "claude process is not running";
@@ -277,7 +287,18 @@ fn deny(request_id: &str, message: &str) -> Value {
 
 impl Inner {
     fn emit(&self, make: impl FnOnce(u64) -> ClaudeEvent) {
+        Self::send(&mut self.out.lock(), make);
+    }
+
+    /// Emits with `st` released. The output lock is taken first, so no event from a
+    /// later state change can overtake this one; the sink just doesn't block `state`.
+    fn emit_unlocking(&self, st: MutexGuard<'_, State>, make: impl FnOnce(u64) -> ClaudeEvent) {
         let mut out = self.out.lock();
+        drop(st);
+        Self::send(&mut out, make);
+    }
+
+    fn send(out: &mut Out, make: impl FnOnce(u64) -> ClaudeEvent) {
         out.seq += 1;
         let event = make(out.seq);
         (out.sink)(event);
@@ -325,7 +346,7 @@ impl Inner {
             let mut st = self.state.lock();
             // A child still alive here (e.g. Errored after a failed initialize) is superseded.
             if let Some(old) = st.running.take() {
-                process::signal_group(old, libc::SIGKILL);
+                proc_group::signal_group(old, libc::SIGKILL);
             }
             st.generation += 1;
             st.stopping = false;
@@ -399,14 +420,40 @@ impl Inner {
     async fn read_stdout(self: &Arc<Self>, generation: u64, mut stdout: impl AsyncRead + Unpin) {
         let mut buf = vec![0u8; READ_CHUNK];
         let mut lines = LineSplitter::default();
+        // Lines after a permission request wait here until its event is out.
+        let mut backlog: VecDeque<Vec<u8>> = VecDeque::new();
         loop {
-            match stdout.read(&mut buf).await {
+            let n = match stdout.read(&mut buf).await {
                 Ok(0) | Err(_) => break,
-                Ok(n) => lines.push(&buf[..n], |line| self.handle_line(generation, line)),
-            }
+                Ok(n) => n,
+            };
+            let mut job = None;
+            lines.push(&buf[..n], |line| {
+                if job.is_some() {
+                    backlog.push_back(line.to_vec());
+                } else {
+                    job = self.handle_line(generation, line);
+                }
+            });
+            self.drain_lines(generation, job, &mut backlog).await;
         }
         if let Some(rest) = lines.finish() {
-            self.handle_line(generation, &rest);
+            let job = self.handle_line(generation, &rest);
+            self.drain_lines(generation, job, &mut backlog).await;
+        }
+    }
+
+    /// Finishes `job`, then handles the backlog in order, finishing each further
+    /// permission request before the line after it. Stdout is not read meanwhile.
+    async fn drain_lines(self: &Arc<Self>, generation: u64, mut job: Option<PermissionJob>, backlog: &mut VecDeque<Vec<u8>>) {
+        loop {
+            if let Some(job) = job.take() {
+                self.finish_permission_request(generation, job).await;
+            }
+            match backlog.pop_front() {
+                Some(line) => job = self.handle_line(generation, &line),
+                None => break,
+            }
         }
     }
 
@@ -429,18 +476,22 @@ impl Inner {
         }
     }
 
-    fn handle_line(self: &Arc<Self>, generation: u64, line: &[u8]) {
+    /// Handles one stdout line. A permission request comes back as a job for the
+    /// caller to finish (its diff reads files) before handling the next line.
+    #[must_use]
+    fn handle_line(self: &Arc<Self>, generation: u64, line: &[u8]) -> Option<PermissionJob> {
         if line.iter().all(u8::is_ascii_whitespace) {
-            return;
+            return None;
         }
         let mut msg: Value = match serde_json::from_slice(line) {
             Ok(v) => v,
             Err(_) => {
                 let line = String::from_utf8_lossy(line).into_owned();
-                if self.state.lock().generation == generation {
-                    self.emit(|seq| ClaudeEvent::ProtocolError { seq, line });
+                let st = self.state.lock();
+                if st.generation == generation {
+                    self.emit_unlocking(st, |seq| ClaudeEvent::ProtocolError { seq, line });
                 }
-                return;
+                return None;
             }
         };
         let env = protocol::envelope(&msg);
@@ -456,7 +507,7 @@ impl Inner {
                 let id = request_id.unwrap_or_default();
                 if env.request_subtype == Some("can_use_tool") {
                     let request = msg["request"].take();
-                    self.on_permission_request(generation, id, request);
+                    return Some(self.permission_job(id, request));
                 } else {
                     // No hooks or SDK MCP servers are registered; never leave the CLI waiting.
                     let error = format!("unsupported control request: {}", env.request_subtype.unwrap_or("unknown"));
@@ -484,7 +535,7 @@ impl Inner {
                     .flatten();
                 let mut st = self.state.lock();
                 if st.generation != generation {
-                    return;
+                    return None;
                 }
                 if let Some(session_id) = bound
                     && st.session_id.as_deref() != Some(session_id.as_str())
@@ -492,19 +543,38 @@ impl Inner {
                     st.session_id = Some(session_id.clone());
                     self.emit(|seq| ClaudeEvent::SessionBound { seq, session_id });
                 }
-                self.emit(|seq| ClaudeEvent::Message { seq, raw: msg });
                 if is_result && matches!(st.status, ThreadStatus::Working | ThreadStatus::AwaitingUser) {
+                    self.emit(|seq| ClaudeEvent::Message { seq, raw: msg });
                     self.set_status(&mut st, ThreadStatus::Idle, None, None, false);
+                } else {
+                    // The common case: no state change follows, so serialize off the state lock.
+                    self.emit_unlocking(st, |seq| ClaudeEvent::Message { seq, raw: msg });
                 }
             }
         }
+        None
     }
 
-    fn on_permission_request(&self, generation: u64, request_id: String, request: Value) {
+    fn permission_job(&self, request_id: String, request: Value) -> PermissionJob {
         let cwd = PathBuf::from(&self.state.lock().options.cwd);
         let tool_name = request["tool_name"].as_str().unwrap_or_default().to_owned();
         let input = request.get("input").cloned().unwrap_or(Value::Null);
-        let diff = diff::diff_for_tool(&tool_name, &input, &cwd);
+        PermissionJob { request_id, request, tool_name, input, cwd }
+    }
+
+    /// Computes the proposed diff on a blocking thread, then records and emits the request.
+    async fn finish_permission_request(&self, generation: u64, job: PermissionJob) {
+        let PermissionJob { request_id, request, tool_name, input, cwd } = job;
+        let (tool_name, input, diff) = match tokio::task::spawn_blocking(move || {
+            let diff = diff::diff_for_tool(&tool_name, &input, &cwd);
+            (tool_name, input, diff)
+        })
+        .await
+        {
+            Ok(done) => done,
+            Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+            Err(_) => return, // runtime shutting down
+        };
         let mut st = self.state.lock();
         if st.generation != generation {
             return;

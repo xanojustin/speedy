@@ -7,7 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -98,7 +98,8 @@ struct Resolution {
 /// background thread; readers block (async) until it's done.
 pub struct EnvService {
     tx: Arc<watch::Sender<Option<Arc<Resolution>>>>,
-    settings: Map<String, Value>,
+    /// Set by the background thread before it starts resolving.
+    settings: Arc<OnceLock<Map<String, Value>>>,
 }
 
 impl EnvService {
@@ -108,11 +109,14 @@ impl EnvService {
 
     /// `start()` with explicit paths.
     pub fn start_with(paths: EnvPaths) -> Self {
-        let settings = read_extension_settings(&paths.vscode_extensions_dir, &paths.vscode_settings_path);
         let (tx, _rx) = watch::channel(None);
         let tx = Arc::new(tx);
         let bg = tx.clone();
+        let settings = Arc::new(OnceLock::new());
+        let bg_settings = settings.clone();
         std::thread::spawn(move || {
+            // First and quick (two small files), so it never waits on the login shell.
+            let _ = bg_settings.set(read_extension_settings(&paths.vscode_extensions_dir, &paths.vscode_settings_path));
             let env = capture_login_env_in(&paths.shell, paths.capture_timeout, &paths.home);
             let res = check_cli(env, None);
             bg.send_replace(Some(Arc::new(res)));
@@ -157,8 +161,10 @@ impl EnvService {
 
     /// Effective `claudeCode.*` settings: extension defaults overlaid with the
     /// user's VS Code `settings.json`. Keys keep their full `claudeCode.` names.
+    /// Read on the background thread before env resolution, so this blocks only if
+    /// called within moments of `start()` (and never once `env()` has returned).
     pub fn extension_settings(&self) -> Map<String, Value> {
-        self.settings.clone()
+        self.settings.wait().clone()
     }
 }
 
@@ -256,8 +262,8 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Option<(bool, Vec<u8
         }
     };
     let Some(status) = status else {
-        // SAFETY: plain syscall; pgid is the child's own session/group id.
-        unsafe { libc::kill(-pgid, libc::SIGKILL) };
+        // setsid made the child its own session/group leader, so pgid == pid.
+        crate::proc_group::signal_group(pgid, libc::SIGKILL);
         let _ = child.wait();
         return None;
     };

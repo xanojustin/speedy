@@ -6,6 +6,7 @@ pub mod claude;
 pub mod env;
 pub mod files;
 pub mod menu;
+pub mod proc_group;
 pub mod pty;
 pub mod state;
 

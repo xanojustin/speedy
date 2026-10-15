@@ -27,6 +27,9 @@ pub fn state_save(ctx: tauri::State<'_, crate::AppCtx>, state: AppState) {
 
 /// For each path, whether it exists on disk (missing projects render as missing).
 #[tauri::command]
-pub fn paths_exist(paths: Vec<String>) -> Vec<bool> {
-    paths.iter().map(|p| std::path::Path::new(p).exists()).collect()
+pub async fn paths_exist(paths: Vec<String>) -> Vec<bool> {
+    // Stat calls can block (e.g. on a slow network volume); keep them off the main thread.
+    tauri::async_runtime::spawn_blocking(move || paths.iter().map(|p| std::path::Path::new(p).exists()).collect())
+        .await
+        .expect("paths_exist stat task panicked")
 }

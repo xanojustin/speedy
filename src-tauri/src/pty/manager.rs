@@ -18,6 +18,7 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 use super::PtyExit;
 use super::coalesce::Coalescer;
+use crate::proc_group;
 
 /// Receives coalesced output frames. Swappable so a reloaded webview can rebind.
 pub type OutputSink = Box<dyn FnMut(Vec<u8>) + Send>;
@@ -188,22 +189,12 @@ impl PtySession {
     }
 }
 
-fn group_alive(pg: i32) -> bool {
-    unsafe { libc::killpg(pg, 0) == 0 }
-}
-
 /// SIGHUP every group, wait up to `grace` for them to go, SIGKILL survivors (KTD9).
 fn hangup_then_kill(groups: &[i32], grace: Duration) {
     for &pg in groups {
-        unsafe { libc::killpg(pg, libc::SIGHUP) };
+        proc_group::signal_group(pg, libc::SIGHUP);
     }
-    let deadline = Instant::now() + grace;
-    while groups.iter().any(|&pg| group_alive(pg)) && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    for &pg in groups.iter().filter(|&&pg| group_alive(pg)) {
-        unsafe { libc::killpg(pg, libc::SIGKILL) };
-    }
+    proc_group::reap_groups_blocking(groups, grace);
 }
 
 struct Entry {

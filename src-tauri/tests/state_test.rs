@@ -127,7 +127,7 @@ fn paths_exist_reports_missing_folder_as_false() {
     let dir = tempfile::tempdir().unwrap();
     let present = dir.path().to_string_lossy().into_owned();
     let missing = dir.path().join("gone").to_string_lossy().into_owned();
-    assert_eq!(paths_exist(vec![present, missing]), vec![true, false]);
+    assert_eq!(tauri::async_runtime::block_on(paths_exist(vec![present, missing])), vec![true, false]);
 }
 
 // ---- session index ----
@@ -182,14 +182,27 @@ fn unknown_folder_lists_nothing() {
 #[test]
 fn truncated_dir_name_found_by_cwd_scan() {
     let root = tempfile::tempdir().unwrap();
-    let folder = "/Users/x/some/very/long/folder";
-    let dir = root.path().join("-Users-x-some-very-lo-abc123");
+    // The CLI cuts encoded names longer than 200 chars and appends a hash.
+    let folder = format!("/Users/x/{}", "very-long-folder-name/".repeat(10));
+    let folder = folder.as_str();
+    let dir = root.path().join(format!("{}-abc123", &encode_project_dir(folder)[..200]));
     let line = serde_json::json!({"type": "user", "cwd": folder, "sessionId": "s",
         "timestamp": "2026-01-01T00:00:00.000Z", "message": {"role": "user", "content": "hi there"}});
     write_session(&dir, "s", &[line.to_string()], 1_000);
     let list = list_sessions(root.path(), folder).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].title, "hi there");
+}
+
+#[test]
+fn short_dir_name_is_only_looked_up_directly() {
+    // A name the CLI would not truncate lives only at its encoded path; no cwd scan.
+    let root = tempfile::tempdir().unwrap();
+    let folder = "/Users/x/short";
+    let line = serde_json::json!({"type": "user", "cwd": folder, "sessionId": "s",
+        "timestamp": "2026-01-01T00:00:00.000Z", "message": {"role": "user", "content": "hi"}});
+    write_session(&root.path().join("-Users-x-elsewhere"), "s", &[line.to_string()], 1_000);
+    assert!(list_sessions(root.path(), folder).unwrap().is_empty());
 }
 
 #[test]

@@ -1,6 +1,7 @@
 //! U3: one `claude` CLI process per thread, speaking stream-json (KTD4, KTD5, KTD9).
 //! The public types and commands here are the IPC contract. `actor.rs` runs one
-//! thread without Tauri; `SessionManager` maps thread ids to actors. `diff.rs` is U10's.
+//! thread without Tauri; `SessionManager` maps thread ids to actors. `diff.rs`
+//! computes the proposed file change shown with an edit tool's permission request.
 
 pub mod actor;
 pub mod diff;

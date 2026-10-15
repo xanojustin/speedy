@@ -1,9 +1,9 @@
-//! U3: spawn contract for the `claude` CLI (KTD4) and process-group signalling (KTD9).
+//! U3: spawn contract for the `claude` CLI (KTD4). Group signalling lives in
+//! [`crate::proc_group`] (KTD9).
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
-use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 use tokio::process::{Child, Command};
@@ -78,41 +78,4 @@ pub fn spawn(program: &Path, args: &[String], cwd: &Path, env: &HashMap<String, 
         .stderr(Stdio::piped())
         .process_group(0)
         .spawn()
-}
-
-pub fn signal_group(pgid: i32, signal: i32) {
-    // SAFETY: killpg has no memory-safety preconditions.
-    unsafe {
-        libc::killpg(pgid, signal);
-    }
-}
-
-/// True while any process (including an unreaped zombie) remains in the group.
-pub fn group_alive(pgid: i32) -> bool {
-    // SAFETY: signal 0 only checks for existence.
-    unsafe { libc::killpg(pgid, 0) == 0 }
-}
-
-/// Blocking wait for every group to empty, up to `grace`; SIGKILLs the survivors.
-pub fn reap_groups_blocking(pgids: &[i32], grace: Duration) {
-    let deadline = Instant::now() + grace;
-    while pgids.iter().any(|&g| group_alive(g)) && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    for &g in pgids {
-        if group_alive(g) {
-            signal_group(g, libc::SIGKILL);
-        }
-    }
-}
-
-/// Async variant of [`reap_groups_blocking`] for one group.
-pub async fn reap_group(pgid: i32, grace: Duration) {
-    let deadline = Instant::now() + grace;
-    while group_alive(pgid) && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    if group_alive(pgid) {
-        signal_group(pgid, libc::SIGKILL);
-    }
 }
