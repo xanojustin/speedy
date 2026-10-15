@@ -68,16 +68,19 @@ pub fn diff_for_tool(tool_name: &str, input: &Value, cwd: &Path) -> Option<Vec<F
     }])
 }
 
-/// Recomputes the diff and returns it only when any file's base fingerprint
-/// differs from the one that was shown (KTD5 staleness check).
+/// Returns a refreshed diff when any shown file's on-disk contents changed since
+/// it was shown (KTD5). Fails closed: if the change can't be re-diffed, the
+/// refreshed list is empty, which still blocks the allow.
 pub fn refresh_if_stale(tool_name: &str, input: &Value, cwd: &Path, shown: &[FileDiff]) -> Option<Vec<FileDiff>> {
-    let fresh = diff_for_tool(tool_name, input, cwd)?;
-    let same = fresh.len() == shown.len()
-        && fresh
-            .iter()
-            .zip(shown)
-            .all(|(a, b)| a.path == b.path && a.base_fingerprint == b.base_fingerprint);
-    (!same).then_some(fresh)
+    let changed = shown.iter().any(|d| current_fingerprint(Path::new(&d.path)) != d.base_fingerprint);
+    changed.then(|| diff_for_tool(tool_name, input, cwd).unwrap_or_default())
+}
+
+fn current_fingerprint(path: &Path) -> String {
+    match std::fs::read(path) {
+        Ok(b) => fingerprint(&String::from_utf8_lossy(&b)),
+        Err(_) => ABSENT_FINGERPRINT.to_owned(),
+    }
 }
 
 fn resolve(file_path: &str, cwd: &Path) -> PathBuf {

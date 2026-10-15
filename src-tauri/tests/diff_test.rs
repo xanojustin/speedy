@@ -126,3 +126,17 @@ fn huge_files_are_summarized_and_pathological_replace_all_is_skipped() {
     let empty_old = serde_json::json!({"file_path": big.to_str().unwrap(), "old_string": "", "new_string": "x"});
     assert!(speedy_lib::claude::diff::diff_for_tool("Edit", &empty_old, dir.path()).is_none());
 }
+
+#[test]
+fn staleness_fails_closed_when_the_change_cannot_be_rediffed() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, "one\n").unwrap();
+    let input = serde_json::json!({"file_path": f.to_str().unwrap(), "old_string": "one", "new_string": "two"});
+    let shown = speedy_lib::claude::diff::diff_for_tool("Edit", &input, dir.path()).unwrap();
+    // Another writer changes the file; the stored input no longer yields a diff.
+    std::fs::write(&f, "changed\n").unwrap();
+    let bad_input = serde_json::json!({"file_path": f.to_str().unwrap(), "old_string": "", "new_string": "x"});
+    let refreshed = speedy_lib::claude::diff::refresh_if_stale("Edit", &bad_input, dir.path(), &shown);
+    assert_eq!(refreshed, Some(vec![]), "a changed file must block the allow even without a new diff");
+}
