@@ -95,7 +95,7 @@ export type PermissionResult =
   | { behavior: "allow"; updatedInput: Record<string, unknown>; updatedPermissions?: PermissionUpdate[] }
   | { behavior: "deny"; message: string; interrupt?: boolean };
 
-export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions";
 
 export interface StartOptions {
   cwd: string;

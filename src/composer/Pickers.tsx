@@ -11,6 +11,11 @@ const MODE_INFO: Record<PermissionMode, { label: string; description: string; ic
   default: { label: "Manual", description: "Claude will ask for approval before making each edit", icon: "shield" },
   acceptEdits: { label: "Edit automatically", description: "Claude will edit your selected text or the whole file", icon: "edit" },
   plan: { label: "Plan", description: "Claude will explore the code and present a plan before editing", icon: "checklist" },
+  auto: {
+    label: "Auto",
+    description: "Claude will approve actions that pass a safety check and pause for anything risky",
+    icon: "sparkle",
+  },
   bypassPermissions: {
     label: "Bypass permissions",
     description: "Claude will not ask for approval before running potentially dangerous commands",
@@ -62,8 +67,18 @@ export function findModel(options: ModelOption[], model: string | null): ModelOp
   return (
     options.find((o) => o.value === model) ??
     options.find((o) => o.value === bare) ??
+    // A full model id: prefer the named entry over the "default" alias that resolves to it.
+    options.find((o) => o.value !== "default" && (o.resolvedModel === model || o.resolvedModel === bare)) ??
     options.find((o) => o.resolvedModel === model || o.resolvedModel === bare)
   );
+}
+
+/** "claude-opus-5-5" -> "Opus 5.5", for a model id the CLI hasn't listed yet. */
+export function prettyModelId(id: string): string {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?(\[1m\])?$/i.exec(id);
+  if (!m) return id;
+  const family = m[1][0].toUpperCase() + m[1].slice(1);
+  return `${family} ${m[2]}${m[3] ? `.${m[3]}` : ""}${m[4] ? " (1M)" : ""}`;
 }
 
 // ---------- shared popup behavior ----------

@@ -11,6 +11,7 @@ import { MentionMenu, useFileMentions } from "./Mentions";
 import {
   ContextUsage,
   EFFORT_LABEL,
+  prettyModelId,
   ModeMenu,
   ModelPicker,
   availableModes,
@@ -196,7 +197,8 @@ export function Composer({ threadId }: { threadId: string }) {
   const systemModel = typeof rt.systemInit?.model === "string" ? rt.systemInit.model : null;
   const chosen = thread?.model ?? settings?.selectedModel ?? null;
   const current: ModelOption | undefined = findModel(options, chosen) ?? (chosen ? undefined : findModel(options, systemModel));
-  const modelLabel = current?.displayName ?? chosen ?? systemModel ?? "Model";
+  const fallbackModel = chosen ?? systemModel;
+  const modelLabel = current?.displayName ?? (fallbackModel ? prettyModelId(fallbackModel) : "Model");
 
   const selectModel = async (o: ModelOption) => {
     if (live) {
@@ -220,11 +222,14 @@ export function Composer({ threadId }: { threadId: string }) {
     useSessionControls.getState().setEffort(threadId, level);
   };
 
+  // Until the user picks one, effort is the global Claude default the CLI applied at spawn.
+  const globalEffort = settings?.defaultEffort && settings.defaultEffort in EFFORT_LABEL ? (settings.defaultEffort as EffortLevel) : null;
+  const shownEffort = effort ?? globalEffort;
   const effortControl: EffortControl | null =
     live && current?.supportsEffort
-      ? { level: effort, levels: current.supportedEffortLevels ?? ["low", "medium", "high"], onSet: (l) => void setEffort(l) }
+      ? { level: shownEffort, levels: current.supportedEffortLevels ?? ["low", "medium", "high"], onSet: (l) => void setEffort(l) }
       : null;
-  const effortLabel = current?.supportsEffort && effort ? EFFORT_LABEL[effort] : null;
+  const effortLabel = (current ? current.supportsEffort : true) && shownEffort ? EFFORT_LABEL[shownEffort] : null;
 
   // ---------- context usage: refresh after every result ----------
   const liveRef = useRef(live);

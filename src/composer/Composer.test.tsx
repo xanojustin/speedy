@@ -339,16 +339,36 @@ describe("permission mode", () => {
     expect(modeButton()).toHaveAttribute("data-mode", "plan");
   });
 
+  it("a new thread starts in the global Claude default mode, ahead of the VS Code setting", async () => {
+    settings["claudeCode.initialPermissionMode"] = "acceptEdits";
+    settings["claude.defaultMode"] = "auto";
+    await renderComposer();
+    await waitFor(() => expect(thread().permissionMode).toBe("auto"));
+    expect(modeButton()).toHaveAttribute("data-mode", "auto");
+    expect(modeButton()).toHaveTextContent("Auto");
+  });
+
+  it("Shift+Tab reaches auto after plan", async () => {
+    goLive();
+    handlers.claude_control = () => ({});
+    const { user, input } = await renderComposer();
+    await user.click(modeButton());
+    await user.click(screen.getByRole("menuitemradio", { name: /^Plan/ }));
+    await waitFor(() => expect(modeButton()).toHaveAttribute("data-mode", "plan"));
+    await user.type(input, "{Shift>}{Tab}{/Shift}");
+    expect(controlCalls("set_permission_mode").at(-1)!.request).toEqual({ subtype: "set_permission_mode", mode: "auto" });
+  });
+
   it("bypass is only offered when allowDangerouslySkipPermissions is on", async () => {
     goLive();
     handlers.claude_control = () => ({});
     const first = await renderComposer();
     await first.user.click(modeButton());
     expect(screen.queryByRole("menuitemradio", { name: /^Bypass permissions/ })).toBeNull();
-    expect(screen.getAllByRole("menuitemradio")).toHaveLength(3);
-    // Cycling from plan wraps to default instead of reaching bypass.
-    await first.user.click(screen.getByRole("menuitemradio", { name: /^Plan/ }));
-    await waitFor(() => expect(modeButton()).toHaveAttribute("data-mode", "plan"));
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(4);
+    // Cycling from auto (the last non-bypass mode) wraps to default instead of reaching bypass.
+    await first.user.click(screen.getByRole("menuitemradio", { name: /^Auto/ }));
+    await waitFor(() => expect(modeButton()).toHaveAttribute("data-mode", "auto"));
     await first.user.type(first.input, "{Shift>}{Tab}{/Shift}");
     expect(controlCalls("set_permission_mode").at(-1)!.request).toEqual({ subtype: "set_permission_mode", mode: "default" });
     first.unmount();
@@ -363,6 +383,16 @@ describe("permission mode", () => {
 
 describe("model and effort", () => {
   const modelButton = () => screen.getByRole("combobox", { name: /^Model/ });
+
+  it("before the session starts, shows the global Claude default model and effort", async () => {
+    settings["claudeCode.selectedModel"] = "claude-fable-5[1m]";
+    settings["claude.model"] = "claude-opus-5-5";
+    settings["claude.effortLevel"] = "medium";
+    await renderComposer();
+    await waitFor(() => expect(modelButton()).toHaveTextContent("Opus 5.5"));
+    expect(modelButton()).toHaveTextContent("Medium");
+    expect(modelButton()).not.toHaveTextContent("Fable");
+  });
 
   it("selecting a model sends set_model, then persists it on the thread", async () => {
     goLive();

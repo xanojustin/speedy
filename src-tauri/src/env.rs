@@ -116,7 +116,9 @@ impl EnvService {
         let bg_settings = settings.clone();
         std::thread::spawn(move || {
             // First and quick (two small files), so it never waits on the login shell.
-            let _ = bg_settings.set(read_extension_settings(&paths.vscode_extensions_dir, &paths.vscode_settings_path));
+            let mut settings = read_extension_settings(&paths.vscode_extensions_dir, &paths.vscode_settings_path);
+            settings.extend(read_claude_defaults(&paths.home.join(".claude/settings.json")));
+            let _ = bg_settings.set(settings);
             let env = capture_login_env_in(&paths.shell, paths.capture_timeout, &paths.home);
             let res = check_cli(env, None);
             bg.send_replace(Some(Arc::new(res)));
@@ -408,6 +410,25 @@ fn read_extension_settings(extensions_dir: &Path, settings_path: &Path) -> Map<S
             if k.starts_with("claudeCode.") {
                 out.insert(k, v);
             }
+        }
+    }
+    out
+}
+
+/// The user's global Claude Code defaults (`~/.claude/settings.json`), under `claude.*` keys:
+/// `claude.model`, `claude.effortLevel`, and `claude.defaultMode` (from `permissions.defaultMode`).
+/// The CLI applies these itself; the UI reads them to show what a new thread will use.
+pub fn read_claude_defaults(settings_path: &Path) -> Map<String, Value> {
+    let mut out = Map::new();
+    let Some(s) = std::fs::read_to_string(settings_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&strip_jsonc(&s)).ok())
+    else {
+        return out;
+    };
+    for (key, pointer) in [("claude.model", "/model"), ("claude.effortLevel", "/effortLevel"), ("claude.defaultMode", "/permissions/defaultMode")] {
+        if let Some(v) = s.pointer(pointer).filter(|v| v.is_string()) {
+            out.insert(key.into(), v.clone());
         }
     }
     out

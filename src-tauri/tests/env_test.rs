@@ -258,3 +258,15 @@ async fn override_not_named_claude_is_refused_without_running_it() {
     assert_eq!(state.status, SetupStatus::CliNotFound);
     assert!(!marker.exists(), "override binary must not be executed");
 }
+
+#[test]
+fn global_claude_defaults_are_read_from_claude_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("settings.json");
+    std::fs::write(&p, r#"{"model":"claude-opus-5-5","effortLevel":"medium","permissions":{"defaultMode":"auto","allow":[]}}"#).unwrap();
+    let m = speedy_lib::env::read_claude_defaults(&p);
+    assert_eq!(m["claude.model"], "claude-opus-5-5");
+    assert_eq!(m["claude.effortLevel"], "medium");
+    assert_eq!(m["claude.defaultMode"], "auto");
+    assert!(speedy_lib::env::read_claude_defaults(&dir.path().join("missing.json")).is_empty());
+}
