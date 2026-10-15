@@ -40,7 +40,12 @@ export function ThreadRow({ thread, selected, unread, renaming, onRenameDone, on
     >
       <StatusGlyph status={status} unread={unread} />
       {renaming ? (
-        <RenameInput initial={thread.title} onDone={onRenameDone} threadId={thread.id} />
+        <RenameInput
+          initial={thread.title}
+          label="Thread name"
+          onCommit={(title) => useAppStore.getState().updateThread(thread.id, { title })}
+          onDone={onRenameDone}
+        />
       ) : (
         <span className="thread-title" title={thread.title} onDoubleClick={onStartRename}>
           {thread.title}
@@ -50,7 +55,14 @@ export function ThreadRow({ thread, selected, unread, renaming, onRenameDone, on
   );
 }
 
-function RenameInput({ initial, threadId, onDone }: { initial: string; threadId: string; onDone: () => void }) {
+interface RenameInputProps {
+  initial: string;
+  label: string;
+  onCommit: (value: string) => void;
+  onDone: () => void;
+}
+
+export function RenameInput({ initial, label, onCommit, onDone }: RenameInputProps) {
   const [value, setValue] = useState(initial);
   const ref = useRef<HTMLInputElement>(null);
   const finished = useRef(false);
@@ -64,7 +76,7 @@ function RenameInput({ initial, threadId, onDone }: { initial: string; threadId:
     if (finished.current) return;
     finished.current = true;
     const title = value.trim();
-    if (commit && title && title !== initial) useAppStore.getState().updateThread(threadId, { title });
+    if (commit && title && title !== initial) onCommit(title);
     onDone();
   };
 
@@ -72,7 +84,7 @@ function RenameInput({ initial, threadId, onDone }: { initial: string; threadId:
     <input
       ref={ref}
       className="rename-input"
-      aria-label="Thread name"
+      aria-label={label}
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onClick={(e) => e.stopPropagation()}

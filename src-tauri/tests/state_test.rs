@@ -7,7 +7,7 @@ use speedy_lib::state::session_index::{
     encode_project_dir, list_sessions, load_session, rename_session_offline,
 };
 use speedy_lib::state::store::STATE_VERSION;
-use speedy_lib::state::{paths_exist, AppState, Project, StateStore, Thread};
+use speedy_lib::state::{paths_exist, AppState, Group, Project, StateStore, Thread};
 
 fn sample_state() -> AppState {
     let projects = (0..2)
@@ -16,6 +16,7 @@ fn sample_state() -> AppState {
             path: format!("/Users/x/proj{p}"),
             name: format!("proj{p}"),
             collapsed: p == 1,
+            group_id: (p == 1).then(|| "g1".into()),
             threads: (0..3)
                 .map(|t| Thread {
                     id: format!("p{p}t{t}"),
@@ -28,7 +29,8 @@ fn sample_state() -> AppState {
                 .collect(),
         })
         .collect();
-    AppState { projects, selected_thread_id: Some("p1t2".into()), ..AppState::default() }
+    let groups = vec![Group { id: "g1".into(), name: "Work".into(), collapsed: false, color: Some("blue".into()) }];
+    AppState { projects, groups, selected_thread_id: Some("p1t2".into()), ..AppState::default() }
 }
 
 #[test]

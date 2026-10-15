@@ -61,6 +61,7 @@ export function emptyState(): AppState {
   return {
     version: 1,
     projects: [],
+    groups: [],
     selectedThreadId: null,
     claudePathOverride: null,
     sidebarWidth: 260,

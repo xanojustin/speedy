@@ -2,10 +2,11 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { addProjectViaPicker, closeThread, newThread, removeProject } from "../app/actions";
 import { pathsExist } from "../ipc/commands";
-import type { Project } from "../ipc/types";
-import { useAppStore } from "../store/appStore";
+import { GROUP_COLORS, type Group, type Project } from "../ipc/types";
+import { sidebarSections, useAppStore } from "../store/appStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { beginDragReorder } from "./dragReorder";
+import { GroupSection, groupColorVar } from "./GroupSection";
 import { ProjectRow } from "./ProjectRow";
 import "./sidebar.css";
 
@@ -16,8 +17,10 @@ interface SidebarProps {
 
 export function Sidebar({ unread }: SidebarProps) {
   const projects = useAppStore((s) => s.projects);
+  const groups = useAppStore((s) => s.groups);
   const selectedThreadId = useAppStore((s) => s.selectedThreadId);
   const moveProject = useAppStore((s) => s.moveProject);
+  const moveGroup = useAppStore((s) => s.moveGroup);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const missing = useMissingProjects(projects);
 
@@ -33,13 +36,47 @@ export function Sidebar({ unread }: SidebarProps) {
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
-  const onProjectMenu = (e: MouseEvent, project: Project) =>
+  /** Creates a group and puts its name in edit mode, optionally filing a project under it. */
+  const startNewGroup = (projectId?: string) => {
+    const store = useAppStore.getState();
+    const groupId = store.createGroup("New Group");
+    if (projectId) store.setProjectGroup(projectId, groupId);
+    setRenamingId(groupId);
+  };
+
+  const onProjectMenu = (e: MouseEvent, project: Project) => {
+    const { setProjectGroup } = useAppStore.getState();
+    const grouped = groups.some((g) => g.id === project.groupId);
     openMenu(e, [
       { label: "New Thread", onSelect: () => newThread(project.id) },
       { label: "Show Past Conversations", onSelect: () => setHistoryFor(project.id) },
       "separator",
+      ...groups
+        .filter((g) => g.id !== project.groupId)
+        .map((g): MenuItem => ({ label: `Move to ${g.name}`, onSelect: () => setProjectGroup(project.id, g.id) })),
+      { label: "Move to New Group…", onSelect: () => startNewGroup(project.id) },
+      ...(grouped ? [{ label: "Remove from Group", onSelect: () => setProjectGroup(project.id, null) }] : []),
+      "separator",
       { label: "Remove Project", onSelect: () => void removeProject(project.id) },
     ]);
+  };
+
+  const onGroupMenu = (e: MouseEvent, group: Group) => {
+    const { x, y } = { x: e.clientX, y: e.clientY };
+    const colorMenu: MenuItem[] = GROUP_COLORS.map((color) => ({
+      label: color[0].toUpperCase() + color.slice(1),
+      swatch: groupColorVar({ color }),
+      checked: group.color === color,
+      onSelect: () => useAppStore.getState().setGroupColor(group.id, color),
+    }));
+    openMenu(e, [
+      { label: "Rename", onSelect: () => setRenamingId(group.id) },
+      // The menu closes before onSelect runs; reopen it in place with the palette.
+      { label: "Change Color…", onSelect: () => setTimeout(() => setMenu({ x, y, items: colorMenu })) },
+      "separator",
+      { label: "Delete Group", onSelect: () => useAppStore.getState().deleteGroup(group.id) },
+    ]);
+  };
 
   const onThreadMenu = (e: MouseEvent, threadId: string) =>
     openMenu(e, [
@@ -47,13 +84,51 @@ export function Sidebar({ unread }: SidebarProps) {
       { label: "Archive", onSelect: () => void closeThread(threadId) },
     ]);
 
-  const onProjectPointerDown = (e: PointerEvent, projectId: string) =>
+  // Projects reorder within their own section; moving between groups is a context-menu action.
+  const onProjectPointerDown = (e: PointerEvent, projectId: string) => {
+    const list = (e.currentTarget as HTMLElement).closest(".project")?.parentElement;
     beginDragReorder({
       id: projectId,
       event: e,
-      items: () => [...(treeRef.current?.querySelectorAll<HTMLElement>(":scope > .project") ?? [])],
-      onDrop: moveProject,
+      items: () => [...(list?.querySelectorAll<HTMLElement>(":scope > .project") ?? [])],
+      // Indexes count the section's projects; map back to the full list, which holds every section.
+      onDrop: (id, toIndex) => {
+        const state = useAppStore.getState();
+        const section = sidebarSections(state).find((sec) => sec.projects.some((p) => p.id === id));
+        const others = section?.projects.filter((p) => p.id !== id) ?? [];
+        const rest = state.projects.filter((p) => p.id !== id);
+        const anchor = others[toIndex];
+        const last = others.at(-1);
+        moveProject(id, anchor ? rest.indexOf(anchor) : last ? rest.indexOf(last) + 1 : rest.length);
+      },
     });
+  };
+
+  const onGroupPointerDown = (e: PointerEvent, groupId: string) =>
+    beginDragReorder({
+      id: groupId,
+      event: e,
+      items: () => [...(treeRef.current?.querySelectorAll<HTMLElement>(":scope > .group") ?? [])],
+      onDrop: moveGroup,
+    });
+
+  const renderProject = (p: Project) => (
+    <ProjectRow
+      key={p.id}
+      project={p}
+      selectedThreadId={selectedThreadId}
+      missing={missing.has(p.id)}
+      unread={unread}
+      renamingId={renamingId}
+      setRenamingId={setRenamingId}
+      historyOpen={historyFor === p.id}
+      setHistoryOpen={(open) => setHistoryFor(open ? p.id : null)}
+      onProjectMenu={onProjectMenu}
+      onThreadMenu={onThreadMenu}
+      onProjectPointerDown={onProjectPointerDown}
+      onNewThread={newThread}
+    />
+  );
 
   return (
     <nav className="sidebar" aria-label="Projects">
@@ -63,29 +138,33 @@ export function Sidebar({ unread }: SidebarProps) {
           <button type="button" className="icon-button" aria-label="Add Project Folder…" title="Add Project Folder… (⌘O)" onClick={() => void addProjectViaPicker()}>
             <span className="codicon codicon-new-folder" aria-hidden />
           </button>
+          <button type="button" className="icon-button" aria-label="New Group" title="New Group" onClick={() => startNewGroup()}>
+            <span className="codicon codicon-new-collection" aria-hidden />
+          </button>
           <button type="button" className="icon-button" aria-label="Settings" title="Settings (⌘,)" onClick={() => setSettingsOpen(true)}>
             <span className="codicon codicon-settings-gear" aria-hidden />
           </button>
         </span>
       </div>
       <div ref={treeRef} className="sidebar-tree" role="tree" aria-label="Projects and threads">
-        {projects.map((p) => (
-          <ProjectRow
-            key={p.id}
-            project={p}
-            selectedThreadId={selectedThreadId}
-            missing={missing.has(p.id)}
-            unread={unread}
-            renamingId={renamingId}
-            setRenamingId={setRenamingId}
-            historyOpen={historyFor === p.id}
-            setHistoryOpen={(open) => setHistoryFor(open ? p.id : null)}
-            onProjectMenu={onProjectMenu}
-            onThreadMenu={onThreadMenu}
-            onProjectPointerDown={onProjectPointerDown}
-            onNewThread={newThread}
-          />
-        ))}
+        {sidebarSections({ projects, groups }).map(({ group, projects: members }) =>
+          group ? (
+            <GroupSection
+              key={group.id}
+              group={group}
+              empty={members.length === 0}
+              renaming={renamingId === group.id}
+              onStartRename={() => setRenamingId(group.id)}
+              onRenameDone={() => setRenamingId(null)}
+              onContextMenu={(e) => onGroupMenu(e, group)}
+              onPointerDown={(e) => onGroupPointerDown(e, group.id)}
+            >
+              {members.map(renderProject)}
+            </GroupSection>
+          ) : (
+            members.map(renderProject)
+          ),
+        )}
       </div>
       {menu && <ContextMenu {...menu} onClose={closeMenu} />}
     </nav>

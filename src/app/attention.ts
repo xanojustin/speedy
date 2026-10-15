@@ -37,12 +37,14 @@ export function useAttention(): ReadonlySet<string> {
   return unread;
 }
 
-/** Selects a thread from a notification click, expanding its project so the row is visible. */
+/** Selects a thread from a notification click, expanding its project and group so the row is visible. */
 function openThread(threadId: string) {
   const store = useAppStore.getState();
   const found = findThread(store, threadId);
   if (!found) return;
   if (found.project.collapsed) store.setProjectCollapsed(found.project.id, false);
+  const group = store.groups.find((g) => g.id === found.project.groupId);
+  if (group?.collapsed) store.setGroupCollapsed(group.id, false);
   store.selectThread(threadId);
 }
 

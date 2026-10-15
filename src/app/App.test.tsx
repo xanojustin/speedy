@@ -45,7 +45,7 @@ describe("Setup gating", () => {
   });
 
   it("applies a saved override path at launch", async () => {
-    resetBackend({ version: 1, projects: [], selectedThreadId: null, claudePathOverride: "/custom/claude", sidebarWidth: 260, notificationsEnabled: true, completionSound: null });
+    resetBackend({ version: 1, projects: [], groups: [], selectedThreadId: null, claudePathOverride: "/custom/claude", sidebarWidth: 260, notificationsEnabled: true, completionSound: null });
     backend.setup = { ...readySetup, status: "cli_not_found" };
     const real = backend.setup;
     render(<App />);

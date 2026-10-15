@@ -5,7 +5,7 @@ pub mod store;
 
 use std::path::PathBuf;
 
-pub use store::{AppState, LoadResult, Project, StateStore, Thread};
+pub use store::{AppState, Group, LoadResult, Project, StateStore, Thread};
 
 /// `~/Library/Application Support/Speedy/`.
 pub fn default_state_dir() -> PathBuf {

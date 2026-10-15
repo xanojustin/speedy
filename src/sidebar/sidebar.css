@@ -122,6 +122,75 @@
   display: flex;
 }
 
+/* Groups: user-named sections that projects are filed under. Each has a color (--group-color)
+   drawn as a stripe down its left edge and a tint on its header; groups are spaced and ruled apart. */
+.group {
+  position: relative;
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-widget-border, transparent));
+}
+
+.group:first-child {
+  margin-top: 0;
+  border-top-color: transparent;
+}
+
+.group::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--group-color);
+  pointer-events: none;
+}
+
+.group-header {
+  height: 26px;
+  line-height: 26px;
+  padding-left: 6px;
+  background: color-mix(in srgb, var(--group-color) 14%, transparent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.group-header:hover {
+  background: color-mix(in srgb, var(--group-color) 22%, transparent);
+}
+
+.group-header .twistie {
+  color: var(--group-color);
+}
+
+.group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-projects .project-header {
+  padding-left: 12px;
+}
+
+.group-projects .thread-row,
+.group-projects .archived-toggle {
+  padding-left: 30px;
+}
+
+.group-projects .archived-row {
+  padding-left: 46px;
+}
+
+.group-empty {
+  padding: 2px 8px 2px 24px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+}
+
 /* Thread rows. */
 .thread-row,
 .archived-row {
@@ -248,6 +317,7 @@
 }
 
 .context-menu-item {
+  position: relative;
   display: block;
   width: calc(100% - 8px);
   margin: 0 4px;
@@ -269,6 +339,22 @@
   background: var(--vscode-menu-selectionBackground);
   color: var(--vscode-menu-selectionForeground);
   border-color: var(--vscode-menu-selectionBorder, transparent);
+}
+
+.context-menu-check {
+  position: absolute;
+  left: 8px;
+  line-height: 24px;
+  font-size: 14px;
+}
+
+.context-menu-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border-radius: 50%;
+  vertical-align: -1px;
 }
 
 .context-menu-separator {

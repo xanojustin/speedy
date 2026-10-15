@@ -2,7 +2,7 @@
 // Every mutation schedules a save through the Rust store (which debounces and writes atomically).
 import { create } from "zustand";
 import { stateLoad, stateSave } from "../ipc/commands";
-import type { AppState, Project, Thread } from "../ipc/types";
+import { GROUP_COLORS, type AppState, type Group, type GroupColor, type Project, type Thread } from "../ipc/types";
 
 export interface AppStore extends AppState {
   loaded: boolean;
@@ -19,6 +19,16 @@ export interface AppStore extends AppState {
   removeProject(projectId: string): void;
   moveProject(projectId: string, toIndex: number): void;
   setProjectCollapsed(projectId: string, collapsed: boolean): void;
+  /** Files a project under a group; null ungroups it. */
+  setProjectGroup(projectId: string, groupId: string | null): void;
+
+  createGroup(name: string): string;
+  renameGroup(groupId: string, name: string): void;
+  /** Deletes the group; its projects become ungrouped. */
+  deleteGroup(groupId: string): void;
+  moveGroup(groupId: string, toIndex: number): void;
+  setGroupCollapsed(groupId: string, collapsed: boolean): void;
+  setGroupColor(groupId: string, color: GroupColor): void;
 
   createThread(projectId: string, init?: Partial<Pick<Thread, "title" | "sessionId">>): string;
   updateThread(threadId: string, patch: Partial<Omit<Thread, "id">>): void;
@@ -61,6 +71,7 @@ function basename(path: string) {
 const snapshot = (s: AppStore): AppState => ({
   version: s.version,
   projects: s.projects,
+  groups: s.groups,
   selectedThreadId: s.selectedThreadId,
   claudePathOverride: s.claudePathOverride,
   sidebarWidth: s.sidebarWidth,
@@ -70,6 +81,20 @@ const snapshot = (s: AppStore): AppState => ({
 
 const mapThreads = (projects: Project[], threadId: string, fn: (t: Thread) => Thread) =>
   projects.map((p) => (p.threads.some((t) => t.id === threadId) ? { ...p, threads: p.threads.map((t) => (t.id === threadId ? fn(t) : t)) } : p));
+
+/** The first palette color no group uses yet, cycling once all are taken. */
+function nextGroupColor(groups: Group[]): GroupColor {
+  const used = new Set(groups.map((g) => g.color));
+  return GROUP_COLORS.find((c) => !used.has(c)) ?? GROUP_COLORS[groups.length % GROUP_COLORS.length];
+}
+
+/** Gives groups saved without a color (or with an unknown one) a palette color. */
+function withColors(groups: Group[]): Group[] {
+  return groups.reduce<Group[]>(
+    (done, g) => [...done, GROUP_COLORS.includes(g.color as GroupColor) ? g : { ...g, color: nextGroupColor(done) }],
+    [],
+  );
+}
 
 function move<T>(list: T[], from: number, to: number): T[] {
   if (from < 0 || from === to) return list;
@@ -89,6 +114,7 @@ export const useAppStore = create<AppStore>((set, get) => {
   return {
     version: 1,
     projects: [],
+    groups: [],
     selectedThreadId: null,
     claudePathOverride: null,
     sidebarWidth: 260,
@@ -102,7 +128,7 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     async load() {
       const { state, notice } = await stateLoad();
-      set({ ...state, notice, loaded: true });
+      set({ ...state, groups: withColors(state.groups ?? []), notice, loaded: true });
     },
 
     addProject(path) {
@@ -136,6 +162,39 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     setProjectCollapsed(projectId, collapsed) {
       commit((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? { ...p, collapsed } : p)) }));
+    },
+
+    setProjectGroup(projectId, groupId) {
+      commit((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? { ...p, groupId } : p)) }));
+    },
+
+    createGroup(name) {
+      const group: Group = { id: newId(), name, collapsed: false, color: nextGroupColor(get().groups) };
+      commit((s) => ({ groups: [...s.groups, group] }));
+      return group.id;
+    },
+
+    renameGroup(groupId, name) {
+      commit((s) => ({ groups: s.groups.map((g) => (g.id === groupId ? { ...g, name } : g)) }));
+    },
+
+    deleteGroup(groupId) {
+      commit((s) => ({
+        groups: s.groups.filter((g) => g.id !== groupId),
+        projects: s.projects.map((p) => (p.groupId === groupId ? { ...p, groupId: null } : p)),
+      }));
+    },
+
+    moveGroup(groupId, toIndex) {
+      commit((s) => ({ groups: move(s.groups, s.groups.findIndex((g) => g.id === groupId), toIndex) }));
+    },
+
+    setGroupCollapsed(groupId, collapsed) {
+      commit((s) => ({ groups: s.groups.map((g) => (g.id === groupId ? { ...g, collapsed } : g)) }));
+    },
+
+    setGroupColor(groupId, color) {
+      commit((s) => ({ groups: s.groups.map((g) => (g.id === groupId ? { ...g, color } : g)) }));
     },
 
     createThread(projectId, init) {
@@ -224,7 +283,25 @@ export function findThread(state: Pick<AppState, "projects">, threadId: string |
   return null;
 }
 
+export interface SidebarSection {
+  /** null for the ungrouped projects, which come first. */
+  group: Group | null;
+  projects: Project[];
+}
+
+/** Projects as the sidebar shows them: ungrouped first, then each group in order. */
+export function sidebarSections(state: Pick<AppState, "projects" | "groups">): SidebarSection[] {
+  const groups = state.groups ?? [];
+  const known = new Set(groups.map((g) => g.id));
+  return [
+    { group: null, projects: state.projects.filter((p) => !p.groupId || !known.has(p.groupId)) },
+    ...groups.map((group) => ({ group, projects: state.projects.filter((p) => p.groupId === group.id) })),
+  ];
+}
+
 /** Non-archived threads in sidebar order (Cmd+1–9 targets). */
-export function visibleThreads(state: Pick<AppState, "projects">) {
-  return state.projects.flatMap((p) => (p.collapsed ? [] : p.threads.filter((t) => !t.archived)));
+export function visibleThreads(state: Pick<AppState, "projects" | "groups">) {
+  return sidebarSections(state).flatMap((sec) =>
+    sec.group?.collapsed ? [] : sec.projects.flatMap((p) => (p.collapsed ? [] : p.threads.filter((t) => !t.archived))),
+  );
 }

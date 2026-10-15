@@ -119,6 +119,8 @@ export interface PermissionOutcome {
 export interface AppState {
   version: number;
   projects: Project[];
+  /** Sidebar sections that projects can be filed under, in display order. */
+  groups: Group[];
   selectedThreadId: string | null;
   claudePathOverride: string | null;
   sidebarWidth: number;
@@ -133,8 +135,22 @@ export interface Project {
   path: string;
   name: string;
   collapsed: boolean;
+  /** The group this project is filed under; null (or an unknown id) = ungrouped. */
+  groupId?: string | null;
   threads: Thread[];
 }
+
+export interface Group {
+  id: string;
+  name: string;
+  collapsed: boolean;
+  /** A `GROUP_COLORS` name; null is filled in on load. */
+  color: GroupColor | null;
+}
+
+/** Group colors, drawn from the theme's `--vscode-charts-*` palette. */
+export const GROUP_COLORS = ["blue", "green", "orange", "purple", "red", "yellow"] as const;
+export type GroupColor = (typeof GROUP_COLORS)[number];
 
 export interface Thread {
   id: string;

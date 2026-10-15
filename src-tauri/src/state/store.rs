@@ -16,6 +16,8 @@ pub const STATE_VERSION: u32 = 1;
 pub struct AppState {
     pub version: u32,
     pub projects: Vec<Project>,
+    /// Sidebar sections that projects can be filed under, in display order.
+    pub groups: Vec<Group>,
     pub selected_thread_id: Option<String>,
     pub claude_path_override: Option<String>,
     pub sidebar_width: f64,
@@ -30,6 +32,7 @@ impl Default for AppState {
         AppState {
             version: STATE_VERSION,
             projects: vec![],
+            groups: vec![],
             selected_thread_id: None,
             claude_path_override: None,
             sidebar_width: 260.0,
@@ -46,7 +49,19 @@ pub struct Project {
     pub path: String,
     pub name: String,
     pub collapsed: bool,
+    /// The group this project is filed under; None (or an unknown id) = ungrouped.
+    pub group_id: Option<String>,
     pub threads: Vec<Thread>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Group {
+    pub id: String,
+    pub name: String,
+    pub collapsed: bool,
+    /// A theme chart color name (blue, green, …); None is filled in by the webview.
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

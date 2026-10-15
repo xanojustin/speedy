@@ -10,7 +10,7 @@ import { App } from "../app/App";
 import { backend, callsTo, lastSaved, project, stateWith } from "../app/testing/tauriMock";
 import { resetBackend, runtime } from "../app/testing/reset";
 import type { ThreadStatus } from "../ipc/types";
-import { useAppStore } from "../store/appStore";
+import { useAppStore, visibleThreads } from "../store/appStore";
 import { useThreadStore } from "../store/threadStore";
 import { Sidebar } from "./Sidebar";
 
@@ -197,5 +197,113 @@ describe("Sidebar", () => {
     });
     await within(sidebar()).findByText("dropped");
     expect(useAppStore.getState().projects.map((p) => p.path)).toEqual(["/Users/me/dropped"]);
+  });
+  describe("groups", () => {
+    const groupHeader = (name: string) => within(sidebar()).getByText(name).closest<HTMLElement>(".group-header")!;
+    const groupMembers = (name: string) =>
+      [...groupHeader(name).closest(".group")!.querySelectorAll(".project-name")].map((e) => e.textContent);
+
+    it("moves a project into a new group named inline, and persists it", async () => {
+      resetBackend(stateWith([project("alpha"), project("beta")]));
+      await renderApp();
+      fireEvent.contextMenu(projectHeader("beta"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Move to New Group…" }));
+      const input = screen.getByRole("textbox", { name: "Group name" });
+      fireEvent.change(input, { target: { value: "Work" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(groupMembers("Work")).toEqual(["beta"]);
+      expect(projectNames()).toEqual(["alpha", "beta"]);
+      const saved = lastSaved()!;
+      expect(saved.groups.map((g) => g.name)).toEqual(["Work"]);
+      expect(saved.projects.find((p) => p.name === "beta")!.groupId).toBe(saved.groups[0].id);
+    });
+
+    it("moves projects between groups and back out from the context menu", async () => {
+      resetBackend({
+        ...stateWith([project("alpha", [{}], { groupId: "g1" }), project("beta")]),
+        groups: [
+          { id: "g1", name: "Work", collapsed: false, color: "blue" },
+          { id: "g2", name: "Personal", collapsed: false, color: "green" },
+        ],
+      });
+      await renderApp();
+      expect(groupMembers("Work")).toEqual(["alpha"]);
+      fireEvent.contextMenu(projectHeader("alpha"));
+      expect(screen.queryByRole("menuitem", { name: "Move to Work" })).toBeNull();
+      fireEvent.click(screen.getByRole("menuitem", { name: "Move to Personal" }));
+      expect(groupMembers("Personal")).toEqual(["alpha"]);
+
+      fireEvent.contextMenu(projectHeader("alpha"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Remove from Group" }));
+      expect(groupMembers("Personal")).toEqual([]);
+      expect(lastSaved()!.projects.find((p) => p.name === "alpha")!.groupId).toBeNull();
+    });
+
+    it("collapses a group, hiding its threads from Cmd+number, and deleting it ungroups its projects", async () => {
+      resetBackend({
+        ...stateWith([project("alpha", [{}], { groupId: "g1" }), project("beta")]),
+        groups: [{ id: "g1", name: "Work", collapsed: false, color: "blue" }],
+      });
+      await renderApp();
+      // Ungrouped projects come first.
+      expect(visibleThreads(useAppStore.getState()).map((t) => t.id)).toEqual(["beta-t1", "alpha-t1"]);
+      fireEvent.click(groupHeader("Work"));
+      await waitFor(() => expect(within(sidebar()).queryByText("alpha")).toBeNull());
+      expect(visibleThreads(useAppStore.getState()).map((t) => t.id)).toEqual(["beta-t1"]);
+
+      fireEvent.contextMenu(groupHeader("Work"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete Group" }));
+      expect(within(sidebar()).queryByText("Work")).toBeNull();
+      expect(projectNames()).toEqual(["alpha", "beta"]);
+      expect(lastSaved()!.groups).toEqual([]);
+    });
+
+    it("gives each group a color: new groups take an unused one, uncolored saved groups get one, and the menu changes it", async () => {
+      resetBackend({
+        ...stateWith([project("alpha")]),
+        groups: [
+          { id: "g1", name: "Work", collapsed: false, color: "blue" },
+          { id: "g2", name: "Old", collapsed: false, color: null },
+        ],
+      });
+      await renderApp();
+      expect(useAppStore.getState().groups.map((g) => g.color)).toEqual(["blue", "green"]);
+      expect(groupHeader("Old").closest<HTMLElement>(".group")!.style.getPropertyValue("--group-color")).toBe("var(--vscode-charts-green)");
+
+      fireEvent.click(within(sidebar()).getByRole("button", { name: "New Group" }));
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Group name" }), { key: "Enter" });
+      expect(useAppStore.getState().groups[2].color).toBe("orange");
+
+      fireEvent.contextMenu(groupHeader("Work"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Change Color…" }));
+      const purple = await screen.findByRole("menuitemradio", { name: "Purple" });
+      expect(screen.getByRole("menuitemradio", { name: "Blue" })).toHaveAttribute("aria-checked", "true");
+      fireEvent.click(purple);
+      expect(lastSaved()!.groups[0].color).toBe("purple");
+    });
+
+    it("drag-reorders projects within a group without leaving it", async () => {
+      resetBackend({
+        ...stateWith([project("alpha", [{}], { groupId: "g1" }), project("solo"), project("beta", [{}], { groupId: "g1" })]),
+        groups: [{ id: "g1", name: "Work", collapsed: false, color: "blue" }],
+      });
+      await renderApp();
+      const alpha = projectHeader("alpha").closest<HTMLElement>(".project")!;
+      const beta = projectHeader("beta").closest<HTMLElement>(".project")!;
+      alpha.getBoundingClientRect = () => rect(100, 44);
+      beta.getBoundingClientRect = () => rect(144, 44);
+
+      fireEvent.pointerDown(projectHeader("alpha"), { clientY: 110, button: 0, pointerId: 1 });
+      fireEvent.pointerMove(window, { clientY: 200, pointerId: 1 });
+      fireEvent.pointerUp(window, { clientY: 200, pointerId: 1 });
+
+      expect(groupMembers("Work")).toEqual(["beta", "alpha"]);
+      expect(lastSaved()!.projects.map((p) => [p.name, p.groupId ?? null])).toEqual([
+        ["solo", null],
+        ["beta", "g1"],
+        ["alpha", "g1"],
+      ]);
+    });
   });
 });

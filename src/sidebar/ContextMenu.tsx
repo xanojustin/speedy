@@ -1,7 +1,7 @@
 // In-DOM context menu styled like VS Code's menus.
 import { useEffect, useLayoutEffect, useRef } from "react";
 
-export type MenuItem = { label: string; onSelect: () => void } | "separator";
+export type MenuItem = { label: string; onSelect: () => void; swatch?: string; checked?: boolean } | "separator";
 
 export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -13,7 +13,7 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
     const r = el.getBoundingClientRect();
     if (r.right > window.innerWidth) el.style.left = `${Math.max(0, window.innerWidth - r.width - 4)}px`;
     if (r.bottom > window.innerHeight) el.style.top = `${Math.max(0, window.innerHeight - r.height - 4)}px`;
-    el.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+    el.querySelector<HTMLElement>("[role^=menuitem]")?.focus();
   }, []);
 
   useEffect(() => {
@@ -36,7 +36,7 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
-    const entries = [...(ref.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [])];
+    const entries = [...(ref.current?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])];
     const i = entries.indexOf(document.activeElement as HTMLElement);
     const next = e.key === "ArrowDown" ? (i + 1) % entries.length : (i - 1 + entries.length) % entries.length;
     entries[next]?.focus();
@@ -49,15 +49,18 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
           <div key={`sep-${i}`} role="separator" className="context-menu-separator" />
         ) : (
           <button
-            key={item.label}
+            key={`${i}-${item.label}`}
             type="button"
-            role="menuitem"
+            role={item.checked === undefined ? "menuitem" : "menuitemradio"}
+            aria-checked={item.checked}
             className="context-menu-item"
             onClick={() => {
               onClose();
               item.onSelect();
             }}
           >
+            {item.checked && <span className="codicon codicon-check context-menu-check" aria-hidden />}
+            {item.swatch && <span className="context-menu-swatch" style={{ background: item.swatch }} aria-hidden />}
             {item.label}
           </button>
         ),
