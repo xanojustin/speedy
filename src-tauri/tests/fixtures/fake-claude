@@ -1,0 +1,81 @@
+#!/bin/sh
+# Fake `claude` CLI for the session-actor tests. No network, no real CLI.
+#
+# Env:
+#   FAKE_CLAUDE_LOG       directory for records: launches, argv.N, env.N, cwd.N, pid.N, stdin.N, sleep.pid
+#   FAKE_CLAUDE_SCENARIO  scenario file; `<scenario>.N` overrides it for launch N (1-based)
+#
+# Scenario commands, one per line:
+#   emit <text>      write <text> + newline to stdout; @ID@ becomes the last captured request_id
+#   partial <text>   write <text> with no newline
+#   expect <text>    read stdin lines until one contains <text>; capture its request_id
+#   stderr <text>    write <text> + newline to stderr
+#   sleep <secs>     pause
+#   spawn_sleep      start `sleep 1000` in the background (same process group), pid -> sleep.pid
+#   ignore_term      ignore SIGTERM from now on (only SIGKILL stops it)
+#   flood <n> <who>  write n lines of ~128 KB each, then touch flood.done
+#   burst <n> <who>  write n small lines tagged with <who>, yielding between them
+#   exit <code>      exit with <code>
+#   idle             log stdin until it closes, then exit 0
+
+log="${FAKE_CLAUDE_LOG:?FAKE_CLAUDE_LOG not set}"
+n=$(( $(cat "$log/launches" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$log/launches"
+for a in "$@"; do printf '%s\n' "$a"; done > "$log/argv.$n"
+env > "$log/env.$n"
+pwd > "$log/cwd.$n"
+echo $$ > "$log/pid.$n"
+stdin_log="$log/stdin.$n"
+: > "$stdin_log"
+
+scenario="${FAKE_CLAUDE_SCENARIO:?FAKE_CLAUDE_SCENARIO not set}"
+[ -f "$scenario.$n" ] && scenario="$scenario.$n"
+
+id=""
+pad=x
+grow() { while [ ${#pad} -lt 131072 ]; do pad="$pad$pad"; done; }
+
+while IFS= read -r cmd <&3 || [ -n "$cmd" ]; do
+  verb="${cmd%% *}"
+  rest="${cmd#* }"
+  case "$verb" in
+    emit)
+      case "$rest" in *@ID@*) rest=$(printf '%s\n' "$rest" | sed "s/@ID@/$id/g") ;; esac
+      printf '%s\n' "$rest" ;;
+    partial) printf '%s' "$rest" ;;
+    expect)
+      while IFS= read -r line; do
+        printf '%s\n' "$line" >> "$stdin_log"
+        case "$line" in *"$rest"*)
+          id=$(printf '%s\n' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+          break ;;
+        esac
+      done ;;
+    stderr) printf '%s\n' "$rest" >&2 ;;
+    sleep) sleep "$rest" ;;
+    spawn_sleep) sleep 1000 & echo $! > "$log/sleep.pid" ;;
+    ignore_term) trap "" TERM ;;
+    flood)
+      grow
+      count="${rest%% *}"; who="${rest#* }"; i=0
+      while [ $i -lt "$count" ]; do
+        printf '{"type":"flood","who":"%s","i":%d,"pad":"%s"}\n' "$who" $i "$pad"
+        i=$((i + 1))
+      done
+      touch "$log/flood.done" ;;
+    burst)
+      count="${rest%% *}"; who="${rest#* }"; i=0
+      while [ $i -lt "$count" ]; do
+        printf '{"type":"tick","who":"%s","i":%d}\n' "$who" $i
+        i=$((i + 1))
+        [ $((i % 20)) -eq 0 ] && sleep 0.01
+      done ;;
+    exit) exit "$rest" ;;
+    idle)
+      while IFS= read -r line; do printf '%s\n' "$line" >> "$stdin_log"; done
+      exit 0 ;;
+    "") ;;
+    *) echo "fake-claude: unknown scenario command: $verb" >&2; exit 97 ;;
+  esac
+done 3< "$scenario"
+exit 0
