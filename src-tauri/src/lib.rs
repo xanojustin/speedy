@@ -86,12 +86,50 @@ pub fn run() {
         });
 }
 
-/// Opens a file or URL with the user's default handler ("open file at line" defers to the default editor).
+/// Opens a web link or an existing document with the user's default handler
+/// ("open file at line" defers to the default editor). Refuses anything that
+/// would launch a program: app bundles, directories, executables, other URL schemes.
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
+    check_openable(&path)?;
     std::process::Command::new("open")
         .arg(&path)
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+fn check_openable(path: &str) -> Result<(), String> {
+    if ["https://", "http://", "mailto:"].iter().any(|p| path.starts_with(p)) {
+        return Ok(());
+    }
+    let p = std::path::Path::new(path);
+    if !p.is_absolute() {
+        return Err(format!("refusing to open {path}: not an absolute path or web link"));
+    }
+    let meta = std::fs::metadata(p).map_err(|e| format!("cannot open {path}: {e}"))?;
+    use std::os::unix::fs::PermissionsExt;
+    if !meta.is_file() || meta.permissions().mode() & 0o111 != 0 {
+        return Err(format!("refusing to open {path}: not a regular, non-executable file"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_openable;
+
+    #[test]
+    fn open_path_allows_links_and_documents_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc = dir.path().join("notes.md");
+        std::fs::write(&doc, "hi").unwrap();
+        assert!(check_openable("https://example.com").is_ok());
+        assert!(check_openable(doc.to_str().unwrap()).is_ok());
+        assert!(check_openable("/Applications/Calculator.app").is_err());
+        assert!(check_openable("/bin/ls").is_err());
+        assert!(check_openable(dir.path().to_str().unwrap()).is_err());
+        assert!(check_openable("file:///bin/ls").is_err());
+        assert!(check_openable("relative.txt").is_err());
+    }
 }
