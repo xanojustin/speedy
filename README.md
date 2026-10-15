@@ -30,7 +30,7 @@ For development, run `bun run tauri dev`. Notifications only work from the bundl
 | Protocol drift (real CLI; denies every tool, uses haiku) | `cargo test --manifest-path src-tauri/Cargo.toml --test claude_actor_test -- --ignored` |
 | Theme regeneration | `bun scripts/gen-vscode-theme.ts` |
 
-Run the protocol drift test whenever the setup screen warns that your CLI version differs from the last version it passed against (2.1.300; fixtures recorded against 2.1.296).
+Run the protocol drift test whenever the setup screen warns that your CLI version differs from the last version it passed against (2.1.301; fixtures recorded against 2.1.296).
 
 ## Layout
 
