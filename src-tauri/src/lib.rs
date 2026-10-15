@@ -91,16 +91,25 @@ pub fn run() {
 /// would launch a program: app bundles, directories, executables, other URL schemes.
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
-    check_openable(&path)?;
-    std::process::Command::new("open")
-        .arg(&path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let mut cmd = std::process::Command::new("open");
+    if is_web_link(&path) {
+        cmd.arg(&path);
+    } else {
+        // Files always open as text in the default text editor, never via their
+        // default handler (which can run `.terminal`, `.fileloc`, `.pkg`, …).
+        check_openable(&path)?;
+        let canon = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
+        cmd.args(["-t", "--"]).arg(canon);
+    }
+    cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+fn is_web_link(path: &str) -> bool {
+    ["https://", "http://", "mailto:"].iter().any(|p| path.starts_with(p))
 }
 
 fn check_openable(path: &str) -> Result<(), String> {
-    if ["https://", "http://", "mailto:"].iter().any(|p| path.starts_with(p)) {
+    if is_web_link(path) {
         return Ok(());
     }
     let p = std::path::Path::new(path);
