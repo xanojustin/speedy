@@ -75,7 +75,7 @@ impl Default for Thread {
             archived: false,
             created_at: 0,
             split_ratio: 0.65,
-            terminal_visible: true,
+            terminal_visible: false,
             terminal_maximized: false,
             model: None,
             permission_mode: None,

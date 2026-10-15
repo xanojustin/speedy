@@ -5,6 +5,7 @@ pub mod attention;
 pub mod claude;
 pub mod cli;
 pub mod env;
+pub mod explorer;
 pub mod files;
 pub mod menu;
 pub mod proc_group;
@@ -71,6 +72,11 @@ pub fn run() {
             state::session_index::session_load,
             state::session_index::session_rename_offline,
             files::files_search,
+            explorer::explorer_list,
+            explorer::explorer_read,
+            explorer::explorer_write,
+            explorer::explorer_git_status,
+            explorer::explorer_git_diff,
             attention::attention_set_visible,
             attention::attention_mark_read,
             attention::attention_set_titles,

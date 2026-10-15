@@ -167,6 +167,21 @@ export interface FileHit {
   isDir: boolean;
 }
 
+export interface DirEntry {
+  name: string;
+  /** Relative to the project root, `/`-separated. */
+  path: string;
+  isDir: boolean;
+}
+
+/** `M` modified, `A` added, `D` deleted, `R` renamed, `U` untracked, `C` conflicted. */
+export type GitStatus = "M" | "A" | "D" | "R" | "U" | "C";
+
+export interface GitChange {
+  path: string;
+  status: GitStatus;
+}
+
 export interface PtyExit {
   threadId: string;
   code: number | null;
@@ -178,6 +193,7 @@ export type MenuAction =
   | "close_thread"
   | "toggle_terminal"
   | "maximize_terminal"
+  | "toggle_explorer"
   | "focus_chat"
   | "add_project"
   | "open_settings"

@@ -3,7 +3,7 @@
 // not import anything that imports a mocked module (the factory would wait on itself).
 // Store resets live in ./reset.ts.
 import { vi } from "vitest";
-import type { AppState, MenuAction, Project, SetupState, Thread } from "../../ipc/types";
+import type { AppState, GitChange, MenuAction, Project, SetupState, Thread } from "../../ipc/types";
 
 type Handler = (event: { payload: unknown }) => void;
 
@@ -38,7 +38,24 @@ export const backend = {
   dragDrop: null as ((e: { payload: unknown }) => void) | null,
   /** Folders the OS opened with Speedy (`speedy .`) that the webview hasn't taken. */
   pendingOpens: [] as string[],
+  /** The explorer's view of the selected project: relative path -> text (folders are implied). */
+  projectFiles: {} as Record<string, string>,
+  gitChanges: [] as GitChange[],
 };
+
+/** Direct children of `dir` in `backend.projectFiles`, folders first. */
+function listProjectDir(dir: string) {
+  const prefix = dir ? `${dir}/` : "";
+  const seen = new Map<string, boolean>();
+  for (const path of Object.keys(backend.projectFiles)) {
+    if (!path.startsWith(prefix)) continue;
+    const [name, ...rest] = path.slice(prefix.length).split("/");
+    seen.set(name, (seen.get(name) ?? false) || rest.length > 0);
+  }
+  return [...seen]
+    .map(([name, isDir]) => ({ name, path: prefix + name, isDir }))
+    .sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name));
+}
 
 export function emptyState(): AppState {
   return {
@@ -73,6 +90,17 @@ export const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>):
       return [];
     case "open_folders_take":
       return backend.pendingOpens.splice(0);
+    case "explorer_list":
+      return listProjectDir(args!.dir as string);
+    case "explorer_read":
+      return backend.projectFiles[args!.path as string];
+    case "explorer_write":
+      backend.projectFiles[args!.path as string] = args!.content as string;
+      return undefined;
+    case "explorer_git_status":
+      return backend.gitChanges;
+    case "explorer_git_diff":
+      return { path: args!.path, isNewFile: false, unified: "--- a\n+++ a\n@@ -1 +1 @@\n-old\n+new\n", baseFingerprint: "" };
     default:
       return undefined;
   }
@@ -140,6 +168,8 @@ export function resetFakeBackend(state: AppState = emptyState()) {
   backend.listeners = {};
   backend.dragDrop = null;
   backend.pendingOpens = [];
+  backend.projectFiles = {};
+  backend.gitChanges = [];
   invoke.mockClear();
   dialog.open.mockReset().mockResolvedValue(null);
   dialog.ask.mockReset().mockResolvedValue(true);

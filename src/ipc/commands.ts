@@ -4,8 +4,11 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppState,
   ClaudeEvent,
+  DirEntry,
   ExtensionSettings,
+  FileDiff,
   FileHit,
+  GitChange,
   LoadResult,
   MenuAction,
   PermissionOutcome,
@@ -66,6 +69,14 @@ export const sessionRenameOffline = (projectPath: string, sessionId: string, tit
 // ---- files ----
 export const filesSearch = (root: string, query: string, limit?: number, respectGitignore?: boolean) =>
   invoke<FileHit[]>("files_search", { root, query, limit: limit ?? null, respectGitignore: respectGitignore ?? null });
+
+// ---- explorer ----
+export const explorerList = (root: string, dir: string) => invoke<DirEntry[]>("explorer_list", { root, dir });
+export const explorerRead = (root: string, path: string) => invoke<string>("explorer_read", { root, path });
+export const explorerWrite = (root: string, path: string, content: string) =>
+  invoke<void>("explorer_write", { root, path, content });
+export const explorerGitStatus = (root: string) => invoke<GitChange[]>("explorer_git_status", { root });
+export const explorerGitDiff = (root: string, path: string) => invoke<FileDiff>("explorer_git_diff", { root, path });
 
 // ---- attention ----
 export const attentionSetVisible = (threadId: string | null) => invoke<void>("attention_set_visible", { threadId });

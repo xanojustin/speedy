@@ -1,0 +1,219 @@
+/* File explorer docked right of the chat: tree, file preview/editor, and git changes. */
+
+.explorer-container {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 100%;
+  border-left: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-sideBar-background);
+}
+
+.explorer-container.resizing-explorer {
+  user-select: none;
+  cursor: ew-resize;
+}
+
+.resizing-explorer > .sash {
+  background: var(--vscode-sash-hoverBorder);
+}
+
+.explorer {
+  /* The transcript's Markdown and diff styles read these. */
+  --chat-fg: var(--vscode-foreground, #cccccc);
+  --chat-fg-secondary: var(--vscode-descriptionForeground, #9d9d9d);
+  --chat-border: var(--vscode-input-border, var(--vscode-widget-border, #7f7f7f66));
+  --chat-tool-bg: var(--vscode-editor-background, #1f1f1f);
+  --chat-code-bg: var(--vscode-textCodeBlock-background, #7f7f7f26);
+  --chat-inline-code-bg: var(--vscode-textPreformat-background, #7f7f7f26);
+  --chat-inline-code-fg: var(--vscode-textPreformat-foreground, var(--chat-fg));
+  --chat-link: var(--vscode-textLink-foreground, #4daafc);
+  --chat-mono: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  --chat-mono-size: var(--vscode-editor-font-size, 12px);
+  --chat-radius: 6px;
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--chat-fg);
+  font-size: 13px;
+}
+
+.explorer-header .panel-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 8px;
+}
+
+.explorer-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 22px;
+  padding-right: 8px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.explorer-row:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.explorer-row:focus-visible {
+  outline: 1px solid var(--vscode-list-focusOutline);
+  outline-offset: -1px;
+}
+
+.explorer-icon {
+  opacity: 0.8;
+}
+
+.explorer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+[data-git="M"],
+[data-git="R"] {
+  color: var(--vscode-gitDecoration-modifiedResourceForeground);
+}
+[data-git="A"] {
+  color: var(--vscode-gitDecoration-addedResourceForeground);
+}
+[data-git="U"] {
+  color: var(--vscode-gitDecoration-untrackedResourceForeground);
+}
+[data-git="D"] {
+  color: var(--vscode-gitDecoration-deletedResourceForeground);
+}
+[data-git="C"] {
+  color: var(--vscode-gitDecoration-conflictingResourceForeground);
+}
+
+.explorer-note {
+  padding: 8px 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.explorer-error {
+  margin: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--vscode-inputValidation-errorForeground, inherit);
+  overflow-wrap: anywhere;
+}
+
+.explorer-file {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.explorer-file-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 0 8px 6px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.explorer-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.explorer-dirty {
+  color: var(--vscode-foreground);
+}
+
+.explorer-modes {
+  display: flex;
+  gap: 2px;
+}
+
+.explorer-save {
+  min-height: 22px;
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
+.explorer-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.explorer-preview,
+.explorer-changes,
+.explorer-code {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.explorer-preview {
+  padding: 12px 16px 24px;
+  line-height: 1.5;
+}
+
+.explorer-changes {
+  padding: 8px;
+}
+
+.explorer-code,
+.explorer-code pre {
+  margin: 0;
+  padding: 8px 12px;
+  font-family: var(--chat-mono);
+  font-size: var(--chat-mono-size);
+  white-space: pre;
+  background: transparent !important;
+}
+
+.explorer-code pre {
+  padding: 0;
+}
+
+.explorer-editor {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border: none;
+  outline: none;
+  resize: none;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground, var(--chat-fg));
+  font-family: var(--chat-mono);
+  font-size: var(--chat-mono-size);
+  line-height: 1.5;
+  tab-size: 2;
+}

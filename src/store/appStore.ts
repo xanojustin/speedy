@@ -10,6 +10,9 @@ export interface AppStore extends AppState {
   notice: string | null;
   /** The Settings dialog is open (not persisted). */
   settingsOpen: boolean;
+  /** The file explorer panel is open (not persisted: it starts hidden). */
+  explorerOpen: boolean;
+  explorerWidth: number;
 
   load(): Promise<void>;
   addProject(path: string): string; // returns the new thread id
@@ -27,6 +30,8 @@ export interface AppStore extends AppState {
   setClaudePathOverride(path: string | null): void;
   updateSettings(patch: Partial<Pick<AppState, "notificationsEnabled" | "completionSound">>): void;
   setSettingsOpen(open: boolean): void;
+  setExplorerOpen(open: boolean): void;
+  setExplorerWidth(width: number): void;
   dismissNotice(): void;
 }
 
@@ -40,7 +45,7 @@ export function makeThread(init?: Partial<Thread>): Thread {
     archived: false,
     createdAt: Date.now(),
     splitRatio: 0.65,
-    terminalVisible: true,
+    terminalVisible: false,
     terminalMaximized: false,
     model: null,
     permissionMode: null,
@@ -92,6 +97,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     loaded: false,
     notice: null,
     settingsOpen: false,
+    explorerOpen: false,
+    explorerWidth: 380,
 
     async load() {
       const { state, notice } = await stateLoad();
@@ -191,6 +198,14 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     setSettingsOpen(open) {
       set({ settingsOpen: open });
+    },
+
+    setExplorerOpen(open) {
+      set({ explorerOpen: open });
+    },
+
+    setExplorerWidth(width) {
+      set({ explorerWidth: width });
     },
 
     dismissNotice() {

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { findThread, useAppStore } from "../store/appStore";
 import { Sidebar } from "../sidebar/Sidebar";
 import { SettingsDialog } from "../settings/SettingsDialog";
+import { Explorer } from "../explorer/Explorer";
 import { onOpenFolders } from "../ipc/commands";
 import { addDroppedPaths, addOpenedFolders, addProjectViaPicker } from "./actions";
 import { useAttention } from "./attention";
@@ -12,6 +13,8 @@ import { ThreadView } from "./ThreadView";
 
 const MIN_SIDEBAR = 170;
 const MAX_SIDEBAR = 600;
+const MIN_EXPLORER = 220;
+const MAX_EXPLORER = 900;
 
 export function Layout() {
   const projects = useAppStore((s) => s.projects);
@@ -21,6 +24,8 @@ export function Layout() {
   const setSidebarWidth = useAppStore((s) => s.setSidebarWidth);
   const settingsOpen = useAppStore((s) => s.settingsOpen);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
+  const explorerOpen = useAppStore((s) => s.explorerOpen);
+  const setExplorerOpen = useAppStore((s) => s.setExplorerOpen);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const dropActive = useFolderDrop();
   useOpenedFolders();
@@ -68,8 +73,56 @@ export function Layout() {
       <main className="main-area">
         {selected ? <ThreadView key={selected.thread.id} project={selected.project} thread={selected.thread} /> : <EmptyState />}
       </main>
+      {explorerOpen && selected && (
+        <ExplorerPanel key={selected.project.path} root={selected.project.path} name={selected.project.name} onClose={() => setExplorerOpen(false)} />
+      )}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </div>
+  );
+}
+
+/** The explorer docked on the right, resizable from its left edge. */
+function ExplorerPanel({ root, name, onClose }: { root: string; name: string; onClose: () => void }) {
+  const storedWidth = useAppStore((s) => s.explorerWidth);
+  const setExplorerWidth = useAppStore((s) => s.setExplorerWidth);
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const width = dragWidth ?? storedWidth;
+
+  const onSashPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const clamp = (w: number) => Math.min(MAX_EXPLORER, Math.max(MIN_EXPLORER, w));
+    let latest = width;
+    const onMove = (ev: PointerEvent) => {
+      latest = clamp(width - (ev.clientX - startX));
+      setDragWidth(latest);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      setDragWidth(null);
+      setExplorerWidth(Math.round(latest));
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+
+  return (
+    <aside className={`explorer-container${dragWidth !== null ? " resizing-explorer" : ""}`} style={{ width }}>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize explorer"
+        aria-valuenow={width}
+        className="sash sash-vertical"
+        style={{ left: -2 }}
+        onPointerDown={onSashPointerDown}
+      />
+      <Explorer root={root} name={name} onClose={onClose} />
+    </aside>
   );
 }
 
@@ -97,6 +150,12 @@ function EmptyState() {
         <dd>
           <kbd>⌘</kbd>
           <kbd>J</kbd>
+        </dd>
+        <dt>Toggle Explorer</dt>
+        <dd>
+          <kbd>⇧</kbd>
+          <kbd>⌘</kbd>
+          <kbd>E</kbd>
         </dd>
       </dl>
     </div>

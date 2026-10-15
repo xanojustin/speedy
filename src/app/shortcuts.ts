@@ -43,6 +43,8 @@ function handleMenuAction(action: MenuAction) {
     case "maximize_terminal":
       if (selected) toggleMaximizeTerminal(selected);
       return;
+    case "toggle_explorer":
+      return s.setExplorerOpen(!s.explorerOpen);
     case "focus_chat":
       if (selected) focusChat(selected);
       return;

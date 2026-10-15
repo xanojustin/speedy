@@ -100,7 +100,7 @@ fn older_schema_loads_with_defaults_for_new_fields() {
     let t = &s.projects[0].threads[0];
     assert_eq!(t.title, "old");
     assert_eq!(t.split_ratio, 0.65);
-    assert!(t.terminal_visible);
+    assert!(!t.terminal_visible);
     assert_eq!(t.session_id, None);
 }
 
