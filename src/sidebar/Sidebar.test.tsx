@@ -171,8 +171,9 @@ describe("Sidebar", () => {
   it("collapses a project", async () => {
     resetBackend(stateWith([project("app")]));
     await renderApp();
+    await within(sidebar()).findByText("app thread 1");
     fireEvent.click(projectHeader("app"));
-    expect(within(sidebar()).queryByText("app thread 1")).toBeNull();
+    await waitFor(() => expect(within(sidebar()).queryByText("app thread 1")).toBeNull());
     expect(projectHeader("app")).toHaveAttribute("aria-expanded", "false");
     expect(lastSaved()!.projects[0].collapsed).toBe(true);
   });
