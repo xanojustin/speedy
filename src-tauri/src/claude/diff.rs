@@ -23,6 +23,11 @@ pub struct FileDiff {
 }
 
 const ABSENT_FINGERPRINT: &str = "absent";
+/// Above this, either side is summarized instead of diffed so a huge file
+/// (or a `replace_all` blow-up) can't stall the actor.
+const MAX_DIFF_BYTES: usize = 4 * 1024 * 1024;
+const MAX_EXPANDED_BYTES: usize = 64 * 1024 * 1024;
+const DIFF_DEADLINE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Computes the proposed change for a file-editing tool, or None for other tools.
 pub fn diff_for_tool(tool_name: &str, input: &Value, cwd: &Path) -> Option<Vec<FileDiff>> {
@@ -40,11 +45,21 @@ pub fn diff_for_tool(tool_name: &str, input: &Value, cwd: &Path) -> Option<Vec<F
         _ => return None,
     };
     let shown = path.to_string_lossy().into_owned();
-    let unified = TextDiff::from_lines(base, proposed.as_str())
-        .unified_diff()
-        .context_radius(3)
-        .header(&shown, &shown)
-        .to_string();
+    let unified = if base.len() > MAX_DIFF_BYTES || proposed.len() > MAX_DIFF_BYTES {
+        format!(
+            "--- {shown}\n+++ {shown}\n(file too large to show a diff: {} bytes → {} bytes)\n",
+            base.len(),
+            proposed.len()
+        )
+    } else {
+        TextDiff::configure()
+            .timeout(DIFF_DEADLINE)
+            .diff_lines(base, proposed.as_str())
+            .unified_diff()
+            .context_radius(3)
+            .header(&shown, &shown)
+            .to_string()
+    };
     Some(vec![FileDiff {
         path: shown,
         is_new_file: current.is_none(),
@@ -74,7 +89,21 @@ fn apply_edit(text: &str, edit: &Value) -> Option<String> {
     let old = edit.get("old_string")?.as_str()?;
     let new = edit.get("new_string")?.as_str()?;
     let all = edit.get("replace_all").and_then(Value::as_bool).unwrap_or(false);
-    Some(if all { text.replace(old, new) } else { text.replacen(old, new, 1) })
+    // The CLI rejects an empty old_string; refusing it here also stops `replace("", …)`
+    // from inserting between every character.
+    if old.is_empty() {
+        return None;
+    }
+    if all {
+        // Skip the preview rather than materialize a pathological expansion.
+        let grown = text.matches(old).count().saturating_mul(new.len());
+        if grown.saturating_add(text.len()) > MAX_EXPANDED_BYTES {
+            return None;
+        }
+        Some(text.replace(old, new))
+    } else {
+        Some(text.replacen(old, new, 1))
+    }
 }
 
 /// FNV-1a over the contents, plus the length. Only compared within one app run.

@@ -109,3 +109,20 @@ fn fingerprint_changes_when_the_file_changes_and_refresh_reports_it() {
     let empty = diff_for_tool("Write", &json!({"file_path": "nope.txt", "content": ""}), dir.path()).unwrap();
     assert_ne!(absent[0].base_fingerprint, empty[0].base_fingerprint);
 }
+
+#[test]
+fn huge_files_are_summarized_and_pathological_replace_all_is_skipped() {
+    let dir = tempfile::tempdir().unwrap();
+    let big = dir.path().join("big.txt");
+    std::fs::write(&big, "a\n".repeat(3 * 1024 * 1024)).unwrap();
+    let input = serde_json::json!({"file_path": big.to_str().unwrap(), "content": "small\n"});
+    let d = &speedy_lib::claude::diff::diff_for_tool("Write", &input, dir.path()).unwrap()[0];
+    assert!(d.unified.contains("file too large to show a diff"), "{}", d.unified);
+
+    let blowup = serde_json::json!({
+        "file_path": big.to_str().unwrap(), "old_string": "a", "new_string": "x".repeat(100_000), "replace_all": true
+    });
+    assert!(speedy_lib::claude::diff::diff_for_tool("Edit", &blowup, dir.path()).is_none());
+    let empty_old = serde_json::json!({"file_path": big.to_str().unwrap(), "old_string": "", "new_string": "x"});
+    assert!(speedy_lib::claude::diff::diff_for_tool("Edit", &empty_old, dir.path()).is_none());
+}
