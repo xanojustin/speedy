@@ -10,7 +10,7 @@ import {
   claudeStart,
   sessionLoad,
 } from "../ipc/commands";
-import type { ClaudeEvent, PermissionOutcome, PermissionResult, ThreadStatus } from "../ipc/types";
+import type { ClaudeEvent, PermissionOutcome, PermissionResult, StartOptions, ThreadStatus } from "../ipc/types";
 import { findThread, newId, useAppStore } from "./appStore";
 import { getRuntime, useThreadStore, type ThreadAction } from "./threadStore";
 
@@ -44,8 +44,11 @@ function handleEvent(threadId: string, ev: ClaudeEvent) {
   }
 }
 
-/** Spawns (or rebinds to) the thread's claude process once. Idempotent. */
-export function ensureStarted(threadId: string): Promise<void> {
+/** Where a rewind fork starts: resume `resumeSessionId` truncated at `resumeSessionAt`, as a new session (U11). */
+export type ForkFrom = Required<Pick<StartOptions, "resumeSessionId" | "resumeSessionAt" | "forkSession">>;
+
+/** Spawns (or rebinds to) the thread's claude process once. Idempotent. `fork` applies to the first spawn only. */
+export function ensureStarted(threadId: string, fork?: ForkFrom): Promise<void> {
   const existing = started.get(threadId);
   if (existing) return existing;
   const found = findThread(useAppStore.getState(), threadId);
@@ -53,7 +56,7 @@ export function ensureStarted(threadId: string): Promise<void> {
   const { project, thread } = found;
   const p = claudeStart(
     threadId,
-    { cwd: project.path, resumeSessionId: thread.sessionId, model: thread.model, permissionMode: thread.permissionMode },
+    { cwd: project.path, resumeSessionId: thread.sessionId, model: thread.model, permissionMode: thread.permissionMode, ...fork },
     (ev) => handleEvent(threadId, ev),
   ).then(
     (status: ThreadStatus) => {

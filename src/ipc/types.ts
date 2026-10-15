@@ -95,6 +95,10 @@ export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermiss
 export interface StartOptions {
   cwd: string;
   resumeSessionId?: string | null;
+  /** With resumeSessionId: keep history only up to and including this message uuid (rewind). */
+  resumeSessionAt?: string | null;
+  /** With resumeSessionId: continue in a new session id (rewind fork). */
+  forkSession?: boolean | null;
   model?: string | null;
   permissionMode?: PermissionMode | null;
   maxThinkingTokens?: number | null;

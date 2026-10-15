@@ -1,0 +1,271 @@
+/* U11: past-conversations popover and rewind UI, styled against the --vscode-* tokens (KTD8). */
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+  max-height: inherit;
+  padding: 6px;
+  box-sizing: border-box;
+  color: var(--vscode-foreground, #cccccc);
+  font-size: 13px;
+}
+
+.session-list-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.session-list-search .codicon {
+  position: absolute;
+  left: 9px;
+  opacity: 0.7;
+  pointer-events: none;
+}
+.session-list-search input,
+.session-rename-input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 6px 10px 6px 30px;
+  border: 1px solid var(--vscode-input-border, #3c3c3c);
+  border-radius: 6px;
+  background: var(--vscode-input-background, #313131);
+  color: var(--vscode-input-foreground, #cccccc);
+  font: inherit;
+  outline: none;
+}
+.session-rename-input {
+  padding-left: 8px;
+  height: 26px;
+}
+.session-list-search input:focus,
+.session-rename-input:focus {
+  border-color: var(--vscode-focusBorder, #0078d4);
+}
+
+.session-list-items {
+  overflow-y: auto;
+  min-height: 0;
+}
+.session-list-status {
+  padding: 8px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+.session-list-error {
+  margin: 2px 0 4px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--vscode-errorForeground, #f85149);
+  background: var(--vscode-inputValidation-errorBackground, #5a1d1d55);
+  overflow-wrap: anywhere;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  border-radius: 6px;
+}
+.session-item:hover,
+.session-item:focus-within {
+  background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+.session-item.editing {
+  background: none;
+}
+.session-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.session-open:disabled {
+  cursor: progress;
+}
+.session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.session-time {
+  flex-shrink: 0;
+  opacity: 0.7;
+  font-size: 0.9em;
+}
+.session-action {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.session-item:hover .session-action,
+.session-item:focus-within .session-action {
+  display: inline-flex;
+}
+.session-item:hover .session-time {
+  display: none;
+}
+.session-action:hover {
+  background: var(--vscode-toolbar-hoverBackground, #5a5d5e50);
+}
+
+/* ---- rewind: per-message action, popup, and review dialog ---- */
+.rewind-action {
+  position: relative;
+  align-self: flex-end;
+  height: 0;
+}
+.rewind-button {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  cursor: pointer;
+  opacity: 0;
+}
+.user-message-container:hover .rewind-button,
+.rewind-button:focus-visible,
+.rewind-button[aria-expanded="true"] {
+  opacity: 1;
+}
+.rewind-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, #5a5d5e50);
+  color: var(--vscode-foreground, #cccccc);
+}
+.rewind-popup {
+  position: absolute;
+  right: 4px;
+  top: 26px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  padding: 4px;
+  border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, #454545));
+  border-radius: 6px;
+  background: var(--vscode-menu-background, #1f1f1f);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.35);
+}
+.rewind-popup button {
+  padding: 5px 8px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--vscode-menu-foreground, var(--vscode-foreground, #cccccc));
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rewind-popup button:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, #2a2d2e));
+}
+
+.rewind-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 0.4);
+}
+.rewind-dialog {
+  width: min(460px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 16px;
+  border: 1px solid var(--vscode-widget-border, #454545);
+  border-radius: 8px;
+  background: var(--vscode-editorWidget-background, #202020);
+  color: var(--vscode-foreground, #cccccc);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.5);
+}
+.rewind-dialog h2 {
+  margin: 0 0 10px;
+  font-size: 1.1em;
+  font-weight: 600;
+}
+.rewind-dialog p {
+  margin: 0 0 8px;
+}
+.rewind-note,
+.rewind-loading {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+.rewind-error {
+  color: var(--vscode-errorForeground, #f85149);
+  overflow-wrap: anywhere;
+}
+.rewind-deletions {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39);
+}
+.rewind-additions {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b);
+}
+.rewind-files {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.rewind-warning {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+.rewind-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.rewind-buttons button {
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: var(--vscode-button-secondaryBackground, #313131);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  cursor: pointer;
+}
+.rewind-buttons button.primary {
+  background: var(--vscode-button-background, #0078d4);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+.rewind-buttons button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

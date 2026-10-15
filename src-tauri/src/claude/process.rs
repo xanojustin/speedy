@@ -35,9 +35,18 @@ pub fn build_args(options: &StartOptions, resume: Option<&str>, settings: &Map<S
         }
     };
     flag("--resume", resume.map(str::to_owned));
+    // Rewind fork: only while resuming the original session. Once the fork's own
+    // session is bound, a respawn resumes it as-is instead of re-truncating it.
+    let resuming_original = resume.is_some() && resume == options.resume_session_id.as_deref();
+    if resuming_original {
+        flag("--resume-session-at", options.resume_session_at.clone());
+    }
     flag("--model", options.model.clone());
     flag("--permission-mode", options.permission_mode.clone());
     flag("--max-thinking-tokens", options.max_thinking_tokens.map(|n| n.to_string()));
+    if resuming_original && options.fork_session == Some(true) {
+        args.push("--fork-session".into());
+    }
     // Parity with the extension: without this flag the CLI rejects bypass mode.
     if settings.get(SKIP_PERMISSIONS_SETTING).and_then(Value::as_bool) == Some(true) {
         args.push("--allow-dangerously-skip-permissions".into());

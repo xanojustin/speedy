@@ -773,3 +773,42 @@ async fn contract_real_cli_initialize_prompt_interrupt() {
     until(&mut ev, &actor, "idle after interrupt", |e| matches!(e, ClaudeEvent::Status { status: ThreadStatus::Idle, .. })).await;
     actor.stop(Duration::from_secs(3)).await;
 }
+
+/// U11 rewind: a fork resumes the original session truncated at a message. The
+/// truncation and fork flags apply only while resuming the original; once the
+/// fork's own session is bound, a respawn resumes the fork as-is.
+#[tokio::test(flavor = "multi_thread")]
+async fn fork_at_message_applies_only_until_the_fork_is_bound() {
+    let fake = Fake::new(&[
+        &format!(
+            r#"{INIT}
+expect "type":"user"
+emit {{"type":"system","subtype":"init","session_id":"fork-1"}}
+stderr fatal: something broke
+exit 3"#
+        ),
+        &format!("{INIT}\nidle"),
+    ]);
+    let options = StartOptions {
+        resume_session_id: Some("orig".into()),
+        resume_session_at: Some("anchor-uuid".into()),
+        fork_session: Some(true),
+        ..fake.options()
+    };
+    let (actor, mut ev) = fake.start_with(options, Map::new());
+    ev.wait_status(ThreadStatus::Idle).await;
+    actor.send_user(text("hi")).await.unwrap();
+    ev.wait_for("fork bound", |e| matches!(e, ClaudeEvent::SessionBound { session_id, .. } if session_id == "fork-1"))
+        .await;
+    ev.wait_status(ThreadStatus::Crashed).await;
+    ev.wait_status(ThreadStatus::Starting).await;
+    ev.wait_status(ThreadStatus::Idle).await;
+
+    let argv1 = fake.lines("argv.1");
+    assert_eq!(
+        &argv1[BASE_FLAGS.len()..],
+        ["--resume", "orig", "--resume-session-at", "anchor-uuid", "--fork-session"]
+    );
+    let argv2 = fake.lines("argv.2");
+    assert_eq!(&argv2[BASE_FLAGS.len()..], ["--resume", "fork-1"]);
+}

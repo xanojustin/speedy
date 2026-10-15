@@ -74,6 +74,10 @@ pub enum ClaudeEvent {
 pub struct StartOptions {
     pub cwd: String,
     pub resume_session_id: Option<String>,
+    /// With `resume_session_id`: keep history only up to and including this message uuid (rewind).
+    pub resume_session_at: Option<String>,
+    /// With `resume_session_id`: continue in a new session id instead of the original (rewind fork).
+    pub fork_session: Option<bool>,
     pub model: Option<String>,
     pub permission_mode: Option<String>,
     pub max_thinking_tokens: Option<u32>,

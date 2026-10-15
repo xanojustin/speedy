@@ -1,5 +1,6 @@
 import { memo, useState } from "react";
 import type { ViewBlock } from "../../store/threadStore";
+import { RewindAction } from "../../history/RewindAction";
 import { Markdown } from "../markdown/Markdown";
 import { ToolCard } from "./ToolCard";
 import { timelineClass, timelinePos, type TimelinePos } from "./timeline";
@@ -15,6 +16,7 @@ function UserMessage({ block, stamp }: { block: Extract<ViewBlock, { kind: "user
     <div className="block user-message-container" data-block-kind="user" data-uuid={block.uuid ?? undefined}>
       {stamp?.date && <div className="date-line">{stamp.date}</div>}
       {stamp && <div className="message-stamp">{stamp.time}</div>}
+      {block.uuid && <RewindAction uuid={block.uuid} />}
       {block.images > 0 && (
         <div className="user-attachments">
           <span className="attachment-chip">
