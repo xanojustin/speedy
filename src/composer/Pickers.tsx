@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { PermissionMode } from "../ipc/types";
 import type { EffortLevel } from "./sessionControls";
+import { PERMISSION_MODES } from "./settings";
 
 // ---------- permission modes ----------
 
-export const MODE_INFO: Record<PermissionMode, { label: string; description: string; icon: string }> = {
+const MODE_INFO: Record<PermissionMode, { label: string; description: string; icon: string }> = {
   default: { label: "Manual", description: "Claude will ask for approval before making each edit", icon: "shield" },
   acceptEdits: { label: "Edit automatically", description: "Claude will edit your selected text or the whole file", icon: "edit" },
   plan: { label: "Plan", description: "Claude will explore the code and present a plan before editing", icon: "checklist" },
@@ -19,7 +20,7 @@ export const MODE_INFO: Record<PermissionMode, { label: string; description: str
 
 /** The modes the switcher offers, in Shift+Tab order. Bypass only when the setting allows it. */
 export function availableModes(allowBypass: boolean): PermissionMode[] {
-  return allowBypass ? ["default", "acceptEdits", "plan", "bypassPermissions"] : ["default", "acceptEdits", "plan"];
+  return PERMISSION_MODES.filter((m) => allowBypass || m !== "bypassPermissions");
 }
 
 export function nextMode(current: PermissionMode, modes: PermissionMode[]): PermissionMode {
@@ -270,7 +271,7 @@ export function ModelPicker({
 // ---------- context usage ----------
 
 /** `get_context_usage` response (SDKControlGetContextUsageResponse), read defensively. */
-export function contextPercentage(usage: unknown): number | null {
+function contextPercentage(usage: unknown): number | null {
   if (!usage || typeof usage !== "object") return null;
   const { percentage, totalTokens, maxTokens } = usage as { percentage?: unknown; totalTokens?: unknown; maxTokens?: unknown };
   if (typeof percentage === "number" && Number.isFinite(percentage)) return Math.min(100, Math.max(0, percentage));

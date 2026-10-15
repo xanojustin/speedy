@@ -85,7 +85,7 @@ function listenOnce() {
     const status = e.code == null ? "[Process exited]" : `[Process exited with code ${e.code}]`;
     entry.term.write(`\r\n${status} — press Enter to restart\r\n`);
   });
-  // The theme unit swaps the token values with the OS appearance; re-read them after it does.
+  // The theme tokens change with the OS appearance; re-read them after a light/dark switch.
   window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
     requestAnimationFrame(() => {
       const theme = readTheme();

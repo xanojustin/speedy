@@ -2,10 +2,11 @@
 // `/` command menu, @-mention file search, image paste, the queue, Esc-to-interrupt, and the
 // footer's model / mode / effort / context-usage controls.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
-import type { FileHit, PermissionMode, ThreadStatus } from "../ipc/types";
+import { isLiveStatus, type FileHit, type PermissionMode } from "../ipc/types";
 import { findThread, useAppStore } from "../store/appStore";
 import { controlRequest, interruptThread, removeQueued, sendUserMessage } from "../store/runtime";
 import { getRuntime, useThreadRuntime, useThreadStore } from "../store/threadStore";
+import { FOCUS_COMPOSER_EVENT, type FocusComposerDetail } from "./focusEvent";
 import { MentionMenu, useFileMentions } from "./Mentions";
 import {
   ContextUsage,
@@ -28,8 +29,6 @@ import "./composer.css";
 /** Image types the Messages API accepts. */
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const MAX_INPUT_HEIGHT = 200;
-/** A process that has answered `initialize` and can take control requests. */
-const LIVE: ReadonlySet<ThreadStatus> = new Set(["starting", "idle", "working", "awaiting_user"]);
 
 interface Attachment {
   id: string;
@@ -80,7 +79,7 @@ export function Composer({ threadId }: { threadId: string }) {
   const pendingCaret = useRef<number | null>(null);
 
   const busy = rt.status === "working" || rt.status === "awaiting_user";
-  const live = rt.init != null && LIVE.has(rt.status);
+  const live = rt.init != null && isLiveStatus(rt.status);
 
   // ---------- menus ----------
   const before = text.slice(0, caret);
@@ -122,10 +121,10 @@ export function Composer({ threadId }: { threadId: string }) {
   useEffect(() => {
     focusInput();
     const onFocus = (e: Event) => {
-      if ((e as CustomEvent<{ threadId?: string }>).detail?.threadId === threadId) focusInput();
+      if ((e as CustomEvent<Partial<FocusComposerDetail>>).detail?.threadId === threadId) focusInput();
     };
-    window.addEventListener("speedy:focus-composer", onFocus);
-    return () => window.removeEventListener("speedy:focus-composer", onFocus);
+    window.addEventListener(FOCUS_COMPOSER_EVENT, onFocus);
+    return () => window.removeEventListener(FOCUS_COMPOSER_EVENT, onFocus);
   }, [threadId, focusInput]);
 
   const selectSlash = (c: SlashCommand) => {

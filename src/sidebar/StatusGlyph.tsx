@@ -12,7 +12,7 @@ const GLYPHS: Record<ThreadStatus, { icon: string; label: string; spin?: boolean
   stopped: { icon: "debug-stop", label: "Stopped" },
 };
 
-/** Reserved for the attention unit (U12): a finished thread the user hasn't looked at yet. */
+/** A finished thread the user hasn't looked at yet. */
 const UNREAD = { icon: "circle-filled", label: "Finished, unread" };
 
 export function StatusGlyph({ status, unread = false }: { status: ThreadStatus; unread?: boolean }) {

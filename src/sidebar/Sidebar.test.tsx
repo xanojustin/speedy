@@ -57,7 +57,7 @@ describe("Sidebar", () => {
     expect(within(threadRow("app thread 4")).getByRole("img")).toHaveClass("codicon-modifier-spin");
   });
 
-  it("treats a thread with no runtime yet as not started, and shows the reserved unread glyph", () => {
+  it("treats a thread with no runtime yet as not started, and shows the unread glyph", () => {
     useAppStore.setState({ ...stateWith([project("app", [{}, {}])], null), loaded: true });
     useThreadStore.setState({ threads: { "app-t2": runtime("idle") } });
     render(<Sidebar unread={new Set(["app-t2"])} />);

@@ -1,6 +1,6 @@
 // The `claudeCode.*` settings the transcript honors (spinner verbs, message timestamps).
-import { useEffect, useMemo, useState } from "react";
-import { getExtensionSettings } from "../ipc/commands";
+import { useMemo } from "react";
+import { useExtensionSettings } from "../ipc/extensionSettings";
 import type { ExtensionSettings } from "../ipc/types";
 
 /** The extension's built-in spinner verbs (claude-code 2.1.299 webview). */
@@ -40,22 +40,7 @@ export function toChatSettings(s: ExtensionSettings | null): ChatSettings {
   };
 }
 
-let cached: Promise<ExtensionSettings | null> | null = null;
-
 export function useChatSettings(): ChatSettings {
-  const [settings, setSettings] = useState<ExtensionSettings | null>(null);
-  useEffect(() => {
-    let live = true;
-    cached ??= getExtensionSettings().catch(() => null);
-    const p = cached;
-    void p.then((s) => {
-      if (live) setSettings(s ?? null);
-    });
-    return () => {
-      live = false;
-      // Re-read next mount so edits to VS Code settings are picked up.
-      if (cached === p) cached = null;
-    };
-  }, []);
+  const settings = useExtensionSettings();
   return useMemo(() => toChatSettings(settings), [settings]);
 }

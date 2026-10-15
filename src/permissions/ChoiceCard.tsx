@@ -13,7 +13,7 @@ export interface Choice {
   disabled?: boolean;
 }
 
-export interface DenyChoice {
+interface DenyChoice {
   label: string;
   onDeny: (feedback: string) => void;
 }

@@ -2,16 +2,15 @@
 // rebinds an existing thread, it selects the thread already bound or opens a new one (KTD6).
 import { ask } from "@tauri-apps/plugin-dialog";
 import { sessionLoad, sessionRenameOffline } from "../ipc/commands";
-import type { SessionMeta, Thread, ThreadStatus } from "../ipc/types";
+import { isLiveStatus, type SessionMeta, type Thread } from "../ipc/types";
 import { useAppStore } from "../store/appStore";
 import { controlRequest, ensureStarted, seedTranscript } from "../store/runtime";
 import { getRuntime } from "../store/threadStore";
 
 /** A session file written this recently is probably live in VS Code or a terminal `claude`. */
-export const LIVE_ELSEWHERE_MS = 60_000;
+const LIVE_ELSEWHERE_MS = 60_000;
 
-const NOT_LIVE: ThreadStatus[] = ["not_started", "stopped", "crashed", "errored"];
-export const hasLiveActor = (threadId: string) => !NOT_LIVE.includes(getRuntime(threadId).status);
+const hasLiveActor = (threadId: string) => isLiveStatus(getRuntime(threadId).status);
 
 function projectOf(projectId: string) {
   const project = useAppStore.getState().projects.find((p) => p.id === projectId);
@@ -20,12 +19,12 @@ function projectOf(projectId: string) {
 }
 
 /** The thread bound to a session, preferring a non-archived one. */
-export function boundThread(projectId: string, sessionId: string): Thread | undefined {
+function boundThread(projectId: string, sessionId: string): Thread | undefined {
   const bound = projectOf(projectId).threads.filter((t) => t.sessionId === sessionId);
   return bound.find((t) => !t.archived) ?? bound[0];
 }
 
-export type ResumeOutcome = "selected" | "restored" | "created" | "cancelled";
+type ResumeOutcome = "selected" | "restored" | "created" | "cancelled";
 
 /**
  * Opens `session` in this project: selects (or restores) the thread already bound to it, otherwise

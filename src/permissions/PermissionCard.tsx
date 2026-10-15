@@ -2,7 +2,7 @@
 // question cards; everything else gets the extension's generic prompt (allow once / always
 // allow / deny with feedback), with a diff for file edits.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { getExtensionSettings } from "../ipc/commands";
+import { useComposerSettings } from "../composer/settings";
 import { useThreadRuntime, type PendingPermission } from "../store/threadStore";
 import { ChoiceCard, useResponder, type Choice } from "./ChoiceCard";
 import { DiffView, type FileVerdict } from "./DiffView";
@@ -38,22 +38,9 @@ export function PermissionCard({ threadId, requestId }: { threadId: string; requ
   );
 }
 
-/** `claudeCode.allowDangerouslySkipPermissions`, read fresh per card (off until loaded). */
+/** `claudeCode.allowDangerouslySkipPermissions` (off until loaded). */
 function useAllowBypass(): boolean {
-  const [allow, setAllow] = useState(false);
-  useEffect(() => {
-    let live = true;
-    getExtensionSettings().then(
-      (s) => {
-        if (live) setAllow(s?.["claudeCode.allowDangerouslySkipPermissions"] === true);
-      },
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
-  return allow;
+  return useComposerSettings()?.allowDangerouslySkipPermissions ?? false;
 }
 
 const basename = (p: string) => p.split(/[/\\]/).pop() || p;

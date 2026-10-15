@@ -4,13 +4,8 @@ import { useEffect } from "react";
 import { onMenu } from "../ipc/commands";
 import type { MenuAction } from "../ipc/types";
 import { findThread, useAppStore, visibleThreads } from "../store/appStore";
+import { FOCUS_COMPOSER_EVENT, type FocusComposerDetail } from "../composer/focusEvent";
 import { addProjectViaPicker, closeThread, newThread } from "./actions";
-
-/** DOM event the composer (U9) listens for to take focus. */
-export const FOCUS_COMPOSER_EVENT = "speedy:focus-composer";
-export interface FocusComposerDetail {
-  threadId: string;
-}
 
 export function toggleTerminal(threadId: string) {
   const t = findThread(useAppStore.getState(), threadId)?.thread;
@@ -25,13 +20,13 @@ export function toggleMaximizeTerminal(threadId: string) {
   useAppStore.getState().updateThread(threadId, { terminalVisible: true, terminalMaximized: maximize });
 }
 
-export function focusChat(threadId: string) {
+function focusChat(threadId: string) {
   const t = findThread(useAppStore.getState(), threadId)?.thread;
   if (t?.terminalMaximized) useAppStore.getState().updateThread(threadId, { terminalMaximized: false });
   window.dispatchEvent(new CustomEvent<FocusComposerDetail>(FOCUS_COMPOSER_EVENT, { detail: { threadId } }));
 }
 
-export function handleMenuAction(action: MenuAction) {
+function handleMenuAction(action: MenuAction) {
   const s = useAppStore.getState();
   const selected = s.selectedThreadId;
   switch (action) {

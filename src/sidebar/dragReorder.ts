@@ -5,7 +5,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 const THRESHOLD_PX = 4;
 const MARKERS = ["dragging", "drop-before", "drop-after"];
 
-export interface DragReorderOptions {
+interface DragReorderOptions {
   id: string;
   event: ReactPointerEvent;
   /** The sibling elements being reordered, in order, each carrying `data-drag-id`. */

@@ -10,7 +10,7 @@ import { ProjectRow } from "./ProjectRow";
 import "./sidebar.css";
 
 interface SidebarProps {
-  /** Threads that finished while not visible (filled in by the attention unit, U12). */
+  /** Threads that finished while not visible. */
   unread?: ReadonlySet<string>;
 }
 

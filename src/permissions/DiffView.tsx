@@ -4,16 +4,16 @@ import { useEffect, useMemo, useState } from "react";
 import type { FileDiff } from "../ipc/types";
 import { highlight } from "../chat/markdown/highlight";
 
-export type DiffLineKind = "ctx" | "add" | "del";
+type DiffLineKind = "ctx" | "add" | "del";
 
-export interface DiffLine {
+interface DiffLine {
   kind: DiffLineKind;
   text: string;
   oldNo: number | null;
   newNo: number | null;
 }
 
-export interface ParsedDiff {
+interface ParsedDiff {
   hunks: { header: string; lines: DiffLine[] }[];
   /** Non-diff body text (e.g. the "file too large" summary), shown as-is. */
   summary: string | null;
@@ -21,7 +21,7 @@ export interface ParsedDiff {
 
 const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
-export function parseUnified(unified: string): ParsedDiff {
+function parseUnified(unified: string): ParsedDiff {
   const hunks: ParsedDiff["hunks"] = [];
   const extra: string[] = [];
   let cur: ParsedDiff["hunks"][number] | null = null;

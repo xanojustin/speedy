@@ -1,6 +1,6 @@
 // TS mirror of the Rust IPC contract (src-tauri/src/**). Keep the two in sync.
 
-export type SetupStatus = "resolving" | "ready" | "cli_not_found" | "not_logged_in" | "error";
+type SetupStatus = "resolving" | "ready" | "cli_not_found" | "not_logged_in" | "error";
 
 export interface SetupState {
   status: SetupStatus;
@@ -25,6 +25,11 @@ export type ThreadStatus =
   | "crashed"
   | "errored"
   | "stopped";
+
+/** A process is running (starting, idle, working or awaiting the user), not stopped or failed. */
+export function isLiveStatus(status: ThreadStatus): boolean {
+  return status === "starting" || status === "idle" || status === "working" || status === "awaiting_user";
+}
 
 export interface FileDiff {
   path: string;

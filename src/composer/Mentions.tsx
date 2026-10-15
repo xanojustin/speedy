@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { filesSearch } from "../ipc/commands";
 import type { FileHit } from "../ipc/types";
 
-export const MENTION_LIMIT = 50;
+const MENTION_LIMIT = 50;
 const DEBOUNCE_MS = 100;
 
 /** Hits for `query` (null = no mention being typed). Stale responses are dropped. */
