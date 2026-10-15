@@ -240,4 +240,13 @@ describe("TerminalPane", () => {
     render(pane("d1"));
     expect(ipc.ptyOpen).toHaveBeenCalledTimes(2);
   });
+  it("focuses the terminal when it is toggled open, not on thread switch", () => {
+    const { rerender } = render(pane("t9", false));
+    expect(document.activeElement).not.toBe(textarea());
+    rerender(pane("t9", true));
+    expect(document.activeElement).toBe(textarea());
+    act(() => textarea().blur());
+    rerender(pane("t10", true));
+    expect(document.activeElement).not.toBe(textarea());
+  });
 });

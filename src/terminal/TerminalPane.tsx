@@ -24,8 +24,12 @@ export function TerminalPane({ threadId, cwd, visible }: { threadId: string; cwd
     // cwd is fixed for a thread's lifetime; `visible` changes go through setVisible below.
   }, [threadId]);
 
+  // Focus when this thread's terminal is toggled open, but not when switching threads.
+  const prev = useRef({ threadId, visible });
   useLayoutEffect(() => {
     attached.current?.setVisible(visible);
+    if (visible && !prev.current.visible && prev.current.threadId === threadId) attached.current?.focus();
+    prev.current = { threadId, visible };
   }, [visible, threadId]);
 
   useEffect(() => setFindOpen(false), [threadId]);
