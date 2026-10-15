@@ -132,8 +132,11 @@ fn ten_megabytes_of_output_arrive_complete_and_in_order() {
     let end = text.rfind("\r\nDONE_2").unwrap();
     let body = &text[first..end];
     assert!(body.len() >= 10 * 1024 * 1024, "only {} bytes", body.len());
+    // Under load the macOS tty line discipline can emit an extra CR ("388\r\r\n");
+    // a terminal renders that identically, so compare content with CRs removed.
+    let body = body.replace('\r', "");
     let mut expected = 1u32;
-    for line in body.split("\r\n") {
+    for line in body.split('\n') {
         assert_eq!(line, expected.to_string(), "line out of order or corrupted");
         expected += 1;
     }
