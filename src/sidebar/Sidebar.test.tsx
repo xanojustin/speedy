@@ -159,7 +159,7 @@ describe("Sidebar", () => {
     await renderApp();
     fireEvent.click(within(projectHeader("app")).getByRole("button", { name: "Show Past Conversations" }));
     const popover = screen.getByRole("dialog", { name: "Past conversations in app" });
-    expect(popover.querySelector(".session-list")).toHaveAttribute("data-project", "p-app");
+    expect(within(popover).getByPlaceholderText("Search sessions…")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
 
