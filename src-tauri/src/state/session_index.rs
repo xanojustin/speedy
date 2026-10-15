@@ -217,6 +217,10 @@ fn parse_iso_ms(s: &str) -> Option<u64> {
 }
 
 fn session_file(root: &Path, project_path: &str, session_id: &str) -> Result<PathBuf, String> {
+    // Session ids arrive from the webview; only the CLI's id alphabet may reach a path join.
+    if session_id.is_empty() || !session_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(format!("invalid session id {session_id:?}"));
+    }
     let dir = find_project_dir(root, project_path)
         .ok_or_else(|| format!("no Claude Code sessions found for {project_path}"))?;
     let file = dir.join(format!("{session_id}.jsonl"));

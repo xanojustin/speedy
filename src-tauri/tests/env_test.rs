@@ -244,3 +244,17 @@ fn no_settings_files_use_builtin_defaults() {
     assert_eq!(settings["claudeCode.initialPermissionMode"], Value::String("default".into()));
     assert_eq!(settings["claudeCode.showMessageTimestamps"], Value::Bool(false));
 }
+
+#[tokio::test]
+async fn override_not_named_claude_is_refused_without_running_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("ran");
+    let evil = dir.path().join("evil");
+    std::fs::write(&evil, format!("#!/bin/sh\ntouch {}\n", marker.display())).unwrap();
+    std::fs::set_permissions(&evil, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let shell = fake_shell(dir.path(), "/usr/bin:/bin");
+
+    let state = EnvService::start_with(paths(dir.path(), &shell)).recheck(Some(evil)).await;
+    assert_eq!(state.status, SetupStatus::CliNotFound);
+    assert!(!marker.exists(), "override binary must not be executed");
+}

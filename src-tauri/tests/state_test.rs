@@ -277,3 +277,16 @@ fn session_load_returns_parseable_lines_in_order() {
     let err = load_session(root.path(), "/p", "missing").unwrap_err();
     assert!(err.contains("missing"), "{err}");
 }
+
+#[test]
+fn session_ids_with_path_characters_are_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join(encode_project_dir("/p"));
+    write_session(&dir, "s", &[r#"{"type":"a"}"#.into()], 1_000);
+    std::fs::write(root.path().join("secret.jsonl"), "{\"type\":\"x\"}\n").unwrap();
+
+    let err = load_session(root.path(), "/p", "../secret").unwrap_err();
+    assert!(err.contains("invalid session id"), "{err}");
+    assert!(rename_session_offline(root.path(), "/p", "../secret", "t").is_err());
+    assert_eq!(std::fs::read_to_string(root.path().join("secret.jsonl")).unwrap(), "{\"type\":\"x\"}\n");
+}

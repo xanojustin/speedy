@@ -285,7 +285,10 @@ fn check_cli(env: ResolvedEnv, override_path: Option<&Path>) -> Resolution {
     };
 
     let candidates: Vec<PathBuf> = match override_path {
-        Some(p) => vec![p.to_path_buf()],
+        // The override comes from the webview, so it may only name a binary called `claude`;
+        // anything else would let the page run an arbitrary program via `--version`.
+        Some(p) if p.file_name().is_some_and(|n| n == "claude") => vec![p.to_path_buf()],
+        Some(_) => vec![],
         None => env
             .vars
             .get("PATH")
@@ -303,7 +306,10 @@ fn check_cli(env: ResolvedEnv, override_path: Option<&Path>) -> Resolution {
                 .collect(),
         };
         setup.message = Some(match override_path {
-            Some(p) => format!("No executable `claude` at {}. Check the path and try again.", p.display()),
+            Some(p) => format!(
+                "No executable `claude` at {}. Choose the path of a binary named `claude`.",
+                p.display()
+            ),
             None => "Couldn't find the `claude` CLI on your login shell's PATH. Install Claude Code \
                      (https://docs.anthropic.com/claude-code) or choose its location."
                 .into(),
