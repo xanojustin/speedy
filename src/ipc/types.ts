@@ -122,6 +122,10 @@ export interface AppState {
   selectedThreadId: string | null;
   claudePathOverride: string | null;
   sidebarWidth: number;
+  /** Post a system notification when a hidden thread finishes or needs input. */
+  notificationsEnabled: boolean;
+  /** System sound played when a thread needs attention (src-tauri/src/attention.rs `SOUNDS`); null = silent. */
+  completionSound: string | null;
 }
 
 export interface Project {
@@ -176,4 +180,5 @@ export type MenuAction =
   | "maximize_terminal"
   | "focus_chat"
   | "add_project"
+  | "open_settings"
   | `switch_thread_${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;

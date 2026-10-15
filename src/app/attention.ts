@@ -1,9 +1,9 @@
 // U12: wires the sidebar to the Rust attention service (R5, R6). Reports the thread on screen
 // (and marks it read), reports titles for notifications, follows notification clicks, and
-// returns the finished-unread set for <Sidebar unread>.
+// returns the finished-unread set for <Sidebar unread>. Also pushes the notification settings.
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
-import { attentionMarkRead, attentionSetTitles, attentionSetVisible, onOpenThread, onUnread } from "../ipc/commands";
+import { attentionMarkRead, attentionSetPrefs, attentionSetTitles, attentionSetVisible, onOpenThread, onUnread } from "../ipc/commands";
 import { findThread, useAppStore } from "../store/appStore";
 
 export function useAttention(): ReadonlySet<string> {
@@ -11,6 +11,12 @@ export function useAttention(): ReadonlySet<string> {
   const selectedThreadId = useAppStore((s) => s.selectedThreadId);
   const visibleId = findThread({ projects }, selectedThreadId)?.thread.id ?? null;
   const [unread, setUnread] = useState<ReadonlySet<string>>(() => new Set());
+  const notificationsEnabled = useAppStore((s) => s.notificationsEnabled);
+  const completionSound = useAppStore((s) => s.completionSound);
+
+  useEffect(() => {
+    void attentionSetPrefs(notificationsEnabled, completionSound);
+  }, [notificationsEnabled, completionSound]);
 
   useEffect(() => {
     void attentionSetVisible(visibleId);

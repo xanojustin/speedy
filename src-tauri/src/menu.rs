@@ -1,7 +1,7 @@
 //! U6: native menu with app-level accelerators (KTD10).
 //! Each custom item emits the app event `menu` with its id as payload:
 //! `new_thread`, `close_thread`, `toggle_terminal`, `maximize_terminal`,
-//! `focus_chat`, `switch_thread_1` … `switch_thread_9`, `add_project`.
+//! `focus_chat`, `switch_thread_1` … `switch_thread_9`, `add_project`, `open_settings`.
 //! Accelerators live on native menu items so WKWebView can't swallow them.
 //! `install_cli` is handled here in Rust (see `cli.rs`).
 
@@ -26,12 +26,14 @@ const THREAD_ITEMS: &[(&str, &str, &str)] = &[
 ];
 
 const INSTALL_CLI: &str = "install_cli";
+const OPEN_SETTINGS: &str = "open_settings";
 
 const SWITCH_PREFIX: &str = "switch_thread_";
 
 /// Whether a menu event id is one of ours (predefined items have their own ids).
 fn is_app_action(id: &str) -> bool {
-    THREAD_ITEMS.iter().any(|(item, _, _)| *item == id)
+    id == OPEN_SETTINGS
+        || THREAD_ITEMS.iter().any(|(item, _, _)| *item == id)
         || id
             .strip_prefix(SWITCH_PREFIX)
             .is_some_and(|n| matches!(n.parse::<u8>(), Ok(1..=9)) && n.len() == 1)
@@ -46,6 +48,8 @@ pub fn install(app: &mut tauri::App) -> tauri::Result<()> {
                 ..Default::default()
             }),
         )
+        .separator()
+        .item(&MenuItemBuilder::with_id(OPEN_SETTINGS, "Settings…").accelerator("CmdOrCtrl+,").build(app)?)
         .separator()
         .item(&MenuItemBuilder::with_id(INSTALL_CLI, "Install 'speedy' Command in PATH…").build(app)?)
         .separator()
@@ -123,6 +127,7 @@ mod tests {
             "toggle_terminal",
             "maximize_terminal",
             "focus_chat",
+            "open_settings",
         ] {
             assert!(is_app_action(id), "{id}");
         }

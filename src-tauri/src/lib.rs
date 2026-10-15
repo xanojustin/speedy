@@ -74,6 +74,8 @@ pub fn run() {
             attention::attention_set_visible,
             attention::attention_mark_read,
             attention::attention_set_titles,
+            attention::attention_set_prefs,
+            attention::play_sound,
             open_path,
             cli::open_folders_take,
         ])

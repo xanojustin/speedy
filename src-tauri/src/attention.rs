@@ -13,6 +13,10 @@
 //! Flapping rule: within one turn (from leaving a resting state until it returns to one),
 //! entering AwaitingUser notifies at most once. Later permission prompts in the same turn
 //! re-raise the badge silently. Finishing and crashing are separate events and always notify.
+//!
+//! Settings: notifications can be turned off (the badge and unread set still update), and an
+//! attention sound plays whenever a thread needs attention (finished, needs input, crashed;
+//! same once-per-turn rule for input), whether or not it's on screen.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -28,6 +32,12 @@ pub const OPEN_THREAD_EVENT: &str = "attention-open-thread";
 pub const UNREAD_EVENT: &str = "attention-unread";
 
 const FALLBACK_TITLE: &str = "Claude thread";
+
+/// The macOS system sounds (/System/Library/Sounds) offered as completion sounds.
+pub const SOUNDS: &[&str] = &[
+    "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi",
+    "Submarine", "Tink",
+];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +65,8 @@ pub enum Effect {
     SetBadge(usize),
     /// The finished-unread thread ids, sorted.
     EmitUnread(Vec<String>),
+    /// A system sound name from [`SOUNDS`].
+    PlaySound(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +92,9 @@ pub struct AttentionState {
     threads: HashMap<String, ThreadAttention>,
     last_badge: usize,
     last_unread: Vec<String>,
+    /// Notifications are on unless the user turned them off.
+    notifications_off: bool,
+    completion_sound: Option<String>,
 }
 
 fn is_resting(s: ThreadStatus) -> bool {
@@ -106,6 +121,12 @@ impl AttentionState {
         }
     }
 
+    /// The user's notification settings; unknown sound names are treated as silent.
+    pub fn set_prefs(&mut self, notifications: bool, sound: Option<String>) {
+        self.notifications_off = !notifications;
+        self.completion_sound = sound.filter(|s| SOUNDS.contains(&s.as_str()));
+    }
+
     pub fn on_status(&mut self, thread_id: &str, from: ThreadStatus, to: ThreadStatus) -> Vec<Effect> {
         self.on_status_titled(thread_id, "", from, to)
     }
@@ -119,24 +140,22 @@ impl AttentionState {
         }
         // Any transition leaves whatever state the previous flag was about.
         t.flag = None;
+        let (flag, body) = match (from, to) {
+            (_, ThreadStatus::AwaitingUser) => {
+                (Flag::Awaiting, (!std::mem::replace(&mut t.awaiting_notified, true)).then_some("Needs your input"))
+            }
+            (ThreadStatus::Working, ThreadStatus::Idle) => (Flag::Unread, Some("Finished")),
+            (_, ThreadStatus::Crashed) => (Flag::Crashed, Some("Claude crashed. Open the thread to retry.")),
+            _ => return self.recompute(Vec::new()),
+        };
         let mut fx = Vec::new();
+        // The sound plays even for the thread on screen; flags and notifications are for unseen ones.
+        if let (Some(_), Some(sound)) = (body, &self.completion_sound) {
+            fx.push(Effect::PlaySound(sound.clone()));
+        }
         if !seen {
-            let body = match (from, to) {
-                (_, ThreadStatus::AwaitingUser) => {
-                    t.flag = Some(Flag::Awaiting);
-                    (!std::mem::replace(&mut t.awaiting_notified, true)).then_some("Needs your input")
-                }
-                (ThreadStatus::Working, ThreadStatus::Idle) => {
-                    t.flag = Some(Flag::Unread);
-                    Some("Finished")
-                }
-                (_, ThreadStatus::Crashed) => {
-                    t.flag = Some(Flag::Crashed);
-                    Some("Claude crashed. Open the thread to retry.")
-                }
-                _ => None,
-            };
-            if let Some(body) = body {
+            t.flag = Some(flag);
+            if let Some(body) = body.filter(|_| !self.notifications_off) {
                 fx.push(Effect::Notify(Notification { thread_id: thread_id.to_string(), title, body: body.into() }));
             }
         }
@@ -227,6 +246,10 @@ impl Attention {
         self.state.lock().set_titles(titles);
     }
 
+    pub fn set_prefs(&self, notifications: bool, sound: Option<String>) {
+        self.state.lock().set_prefs(notifications, sound);
+    }
+
     fn apply(&self, effects: Vec<Effect>) {
         for e in effects {
             match e {
@@ -241,6 +264,7 @@ impl Attention {
                         log::warn!("setting the Dock badge failed: {e}");
                     }
                 }
+                Effect::PlaySound(name) => platform::play_sound(&self.app, name),
                 Effect::EmitUnread(unread) => {
                     if let Err(e) = self.app.emit(UNREAD_EVENT, UnreadSet { unread }) {
                         log::warn!("emitting {UNREAD_EVENT} failed: {e}");
@@ -272,6 +296,7 @@ mod platform {
     use objc2::rc::Retained;
     use objc2::runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject};
     use objc2::{AllocAnyThread, DefinedClass, define_class, msg_send};
+    use objc2_app_kit::NSSound;
     use objc2_foundation::{NSBundle, NSDictionary, NSError, NSString};
     use objc2_user_notifications::{
         UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationPresentationOptions,
@@ -282,6 +307,22 @@ mod platform {
     use super::Notification;
 
     const THREAD_ID_KEY: &str = "threadId";
+
+    /// Plays a system sound by name (restarting it if it's still playing).
+    pub fn play_sound(app: &AppHandle, name: String) {
+        let res = app.run_on_main_thread(move || match NSSound::soundNamed(&NSString::from_str(&name)) {
+            Some(sound) => {
+                sound.stop();
+                if !sound.play() {
+                    log::warn!("playing sound {name} failed");
+                }
+            }
+            None => log::warn!("system sound {name} not found"),
+        });
+        if let Err(e) = res {
+            log::warn!("scheduling a sound failed: {e}");
+        }
+    }
 
     define_class!(
         #[unsafe(super(NSObject))]
@@ -404,6 +445,8 @@ mod platform {
 
     pub struct Notifier;
 
+    pub fn play_sound(_app: &AppHandle, _name: String) {}
+
     impl Notifier {
         pub fn install(_app: AppHandle) -> Option<Notifier> {
             log::info!("notifications unavailable on this platform");
@@ -429,4 +472,89 @@ pub fn attention_mark_read(ctx: tauri::State<'_, crate::AppCtx>, thread_id: Stri
 #[tauri::command]
 pub fn attention_set_titles(ctx: tauri::State<'_, crate::AppCtx>, titles: HashMap<String, String>) {
     ctx.attention.set_titles(titles);
+}
+
+/// The user's notification settings (mirrors `notificationsEnabled` / `completionSound`).
+#[tauri::command]
+pub fn attention_set_prefs(ctx: tauri::State<'_, crate::AppCtx>, notifications: bool, sound: Option<String>) {
+    ctx.attention.set_prefs(notifications, sound);
+}
+
+/// Plays one of [`SOUNDS`] (the settings preview).
+#[tauri::command]
+pub fn play_sound(app: AppHandle, name: String) -> Result<(), String> {
+    if !SOUNDS.contains(&name.as_str()) {
+        return Err(format!("unknown sound {name}"));
+    }
+    platform::play_sound(&app, name);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ThreadStatus::*;
+
+    fn notifies(fx: &[Effect]) -> bool {
+        fx.iter().any(|e| matches!(e, Effect::Notify(_)))
+    }
+
+    fn sound(fx: &[Effect]) -> Option<&str> {
+        fx.iter().find_map(|e| match e {
+            Effect::PlaySound(s) => Some(s.as_str()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn finishing_notifies_hidden_threads_by_default_without_sound() {
+        let mut s = AttentionState::default();
+        let fx = s.on_status("a", Working, Idle);
+        assert!(notifies(&fx));
+        assert_eq!(sound(&fx), None);
+    }
+
+    #[test]
+    fn notifications_off_still_badges() {
+        let mut s = AttentionState::default();
+        s.set_prefs(false, None);
+        let fx = s.on_status("a", Working, Idle);
+        assert!(!notifies(&fx));
+        assert!(fx.contains(&Effect::SetBadge(1)));
+        assert!(!notifies(&s.on_status("b", Working, AwaitingUser)));
+    }
+
+    #[test]
+    fn attention_sound_plays_whenever_a_thread_needs_attention_even_when_visible() {
+        let mut s = AttentionState::default();
+        s.set_prefs(true, Some("Glass".into()));
+        s.set_visible(Some("a".into()));
+        s.set_app_focused(true);
+        let fx = s.on_status("a", Working, Idle);
+        assert_eq!(sound(&fx), Some("Glass"));
+        assert!(!notifies(&fx));
+        assert_eq!(sound(&s.on_status("a", Idle, Working)), None);
+        assert_eq!(sound(&s.on_status("a", Working, AwaitingUser)), Some("Glass"));
+        // A second prompt in the same turn stays quiet, like the notification.
+        assert_eq!(sound(&s.on_status("a", AwaitingUser, Working)), None);
+        assert_eq!(sound(&s.on_status("a", Working, AwaitingUser)), None);
+        assert_eq!(sound(&s.on_status("a", AwaitingUser, Crashed)), Some("Glass"));
+    }
+
+    #[test]
+    fn repeat_prompts_in_one_turn_still_badge_silently() {
+        let mut s = AttentionState::default();
+        assert!(notifies(&s.on_status("a", Working, AwaitingUser)));
+        s.mark_read("a");
+        let fx = s.on_status("a", Working, AwaitingUser);
+        assert!(!notifies(&fx));
+        assert!(fx.contains(&Effect::SetBadge(1)));
+    }
+
+    #[test]
+    fn unknown_sounds_are_ignored() {
+        let mut s = AttentionState::default();
+        s.set_prefs(true, Some("../../evil".into()));
+        assert_eq!(sound(&s.on_status("a", Working, Idle)), None);
+    }
 }

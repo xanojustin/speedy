@@ -19,6 +19,10 @@ pub struct AppState {
     pub selected_thread_id: Option<String>,
     pub claude_path_override: Option<String>,
     pub sidebar_width: f64,
+    /// Post a system notification when a hidden thread finishes or needs input.
+    pub notifications_enabled: bool,
+    /// System sound played when a thread needs attention; None = silent.
+    pub completion_sound: Option<String>,
 }
 
 impl Default for AppState {
@@ -29,6 +33,8 @@ impl Default for AppState {
             selected_thread_id: None,
             claude_path_override: None,
             sidebar_width: 260.0,
+            notifications_enabled: true,
+            completion_sound: None,
         }
     }
 }

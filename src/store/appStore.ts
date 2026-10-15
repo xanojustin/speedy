@@ -8,6 +8,8 @@ export interface AppStore extends AppState {
   loaded: boolean;
   /** Set when the state file was corrupt and moved aside. */
   notice: string | null;
+  /** The Settings dialog is open (not persisted). */
+  settingsOpen: boolean;
 
   load(): Promise<void>;
   addProject(path: string): string; // returns the new thread id
@@ -23,6 +25,8 @@ export interface AppStore extends AppState {
   selectThread(threadId: string | null): void;
   setSidebarWidth(width: number): void;
   setClaudePathOverride(path: string | null): void;
+  updateSettings(patch: Partial<Pick<AppState, "notificationsEnabled" | "completionSound">>): void;
+  setSettingsOpen(open: boolean): void;
   dismissNotice(): void;
 }
 
@@ -55,6 +59,8 @@ const snapshot = (s: AppStore): AppState => ({
   selectedThreadId: s.selectedThreadId,
   claudePathOverride: s.claudePathOverride,
   sidebarWidth: s.sidebarWidth,
+  notificationsEnabled: s.notificationsEnabled,
+  completionSound: s.completionSound,
 });
 
 const mapThreads = (projects: Project[], threadId: string, fn: (t: Thread) => Thread) =>
@@ -81,8 +87,11 @@ export const useAppStore = create<AppStore>((set, get) => {
     selectedThreadId: null,
     claudePathOverride: null,
     sidebarWidth: 260,
+    notificationsEnabled: true,
+    completionSound: null,
     loaded: false,
     notice: null,
+    settingsOpen: false,
 
     async load() {
       const { state, notice } = await stateLoad();
@@ -174,6 +183,14 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     setClaudePathOverride(path) {
       commit(() => ({ claudePathOverride: path }));
+    },
+
+    updateSettings(patch) {
+      commit(() => patch);
+    },
+
+    setSettingsOpen(open) {
+      set({ settingsOpen: open });
     },
 
     dismissNotice() {

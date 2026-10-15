@@ -46,6 +46,8 @@ function handleMenuAction(action: MenuAction) {
     case "focus_chat":
       if (selected) focusChat(selected);
       return;
+    case "open_settings":
+      return s.setSettingsOpen(true);
     default: {
       const m = /^switch_thread_([1-9])$/.exec(action);
       const target = m && visibleThreads(s)[Number(m[1]) - 1];

@@ -45,7 +45,7 @@ describe("Setup gating", () => {
   });
 
   it("applies a saved override path at launch", async () => {
-    resetBackend({ version: 1, projects: [], selectedThreadId: null, claudePathOverride: "/custom/claude", sidebarWidth: 260 });
+    resetBackend({ version: 1, projects: [], selectedThreadId: null, claudePathOverride: "/custom/claude", sidebarWidth: 260, notificationsEnabled: true, completionSound: null });
     backend.setup = { ...readySetup, status: "cli_not_found" };
     const real = backend.setup;
     render(<App />);
@@ -59,7 +59,7 @@ describe("Setup gating", () => {
     const { invoke } = await import("./testing/tauriMock");
     invoke.mockImplementationOnce(async (cmd: string) => {
       backend.calls.push({ cmd, args: undefined });
-      return { state: { version: 1, projects: [], selectedThreadId: null, claudePathOverride: null, sidebarWidth: 260 }, notice: null };
+      return { state: { version: 1, projects: [], selectedThreadId: null, claudePathOverride: null, sidebarWidth: 260, notificationsEnabled: true, completionSound: null }, notice: null };
     });
     invoke.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
     render(<App />);

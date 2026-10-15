@@ -18,6 +18,7 @@ export function Sidebar({ unread }: SidebarProps) {
   const projects = useAppStore((s) => s.projects);
   const selectedThreadId = useAppStore((s) => s.selectedThreadId);
   const moveProject = useAppStore((s) => s.moveProject);
+  const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const missing = useMissingProjects(projects);
 
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
@@ -61,6 +62,9 @@ export function Sidebar({ unread }: SidebarProps) {
         <span className="sidebar-title-actions">
           <button type="button" className="icon-button" aria-label="Add Project Folder…" title="Add Project Folder… (⌘O)" onClick={() => void addProjectViaPicker()}>
             <span className="codicon codicon-new-folder" aria-hidden />
+          </button>
+          <button type="button" className="icon-button" aria-label="Settings" title="Settings (⌘,)" onClick={() => setSettingsOpen(true)}>
+            <span className="codicon codicon-settings-gear" aria-hidden />
           </button>
         </span>
       </div>

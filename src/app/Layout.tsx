@@ -3,6 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect, useState } from "react";
 import { findThread, useAppStore } from "../store/appStore";
 import { Sidebar } from "../sidebar/Sidebar";
+import { SettingsDialog } from "../settings/SettingsDialog";
 import { onOpenFolders } from "../ipc/commands";
 import { addDroppedPaths, addOpenedFolders, addProjectViaPicker } from "./actions";
 import { useAttention } from "./attention";
@@ -18,6 +19,8 @@ export function Layout() {
   const selected = findThread({ projects }, selectedThreadId);
   const storedWidth = useAppStore((s) => s.sidebarWidth);
   const setSidebarWidth = useAppStore((s) => s.setSidebarWidth);
+  const settingsOpen = useAppStore((s) => s.settingsOpen);
+  const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const dropActive = useFolderDrop();
   useOpenedFolders();
@@ -65,6 +68,7 @@ export function Layout() {
       <main className="main-area">
         {selected ? <ThreadView key={selected.thread.id} project={selected.project} thread={selected.thread} /> : <EmptyState />}
       </main>
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

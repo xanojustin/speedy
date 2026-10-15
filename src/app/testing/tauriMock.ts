@@ -41,7 +41,15 @@ export const backend = {
 };
 
 export function emptyState(): AppState {
-  return { version: 1, projects: [], selectedThreadId: null, claudePathOverride: null, sidebarWidth: 260 };
+  return {
+    version: 1,
+    projects: [],
+    selectedThreadId: null,
+    claudePathOverride: null,
+    sidebarWidth: 260,
+    notificationsEnabled: true,
+    completionSound: null,
+  };
 }
 
 export const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {

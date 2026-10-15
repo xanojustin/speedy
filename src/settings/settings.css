@@ -1,0 +1,85 @@
+/* Settings dialog, styled against the --vscode-* tokens (KTD8). */
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.settings-dialog {
+  width: min(480px, calc(100vw - 48px));
+  padding: 4px 16px 16px;
+  box-sizing: border-box;
+  border: 1px solid var(--vscode-widget-border, #454545);
+  border-radius: 8px;
+  background: var(--vscode-editorWidget-background, #202020);
+  color: var(--vscode-foreground, #cccccc);
+  box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+  font-size: 13px;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  height: 40px;
+}
+
+.settings-title {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-section-title {
+  margin: 8px 0 4px;
+  font-size: 11px;
+  font-weight: normal;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.settings-row input[type="checkbox"] {
+  margin: 2px 0 0;
+  accent-color: var(--vscode-checkbox-selectBackground, var(--vscode-focusBorder, #0078d4));
+}
+
+.settings-label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-description {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 12px;
+}
+
+.settings-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settings-select {
+  min-width: 120px;
+  font: inherit;
+}
+
+.settings-control .icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
