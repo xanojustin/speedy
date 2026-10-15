@@ -1,0 +1,535 @@
+/* U10 permission cards. Layout follows the extension's permission prompt (bordered card, stacked
+   full-width choices with a dimmed shortcut number, feedback field, "Esc to cancel" hint);
+   colors come from the --vscode-* tokens. */
+
+.perm-card {
+  --perm-fg: var(--vscode-foreground, #cccccc);
+  --perm-fg-secondary: var(--vscode-descriptionForeground, #9d9d9d);
+  --perm-bg: var(--vscode-input-background, #313131);
+  --perm-border: var(--vscode-input-border, var(--vscode-widget-border, #7f7f7f66));
+  --perm-border-active: var(--vscode-focusBorder, #0078d4);
+  --perm-inner-border: var(--vscode-widget-border, #7f7f7f33);
+  --perm-button-bg: var(--vscode-button-background, #0078d4);
+  --perm-button-fg: var(--vscode-button-foreground, #ffffff);
+  --perm-hover: var(--vscode-toolbar-hoverBackground, #5a5d5e50);
+  --perm-mono: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  --perm-mono-size: var(--vscode-editor-font-size, 12px);
+  --perm-ins-bg: var(--vscode-diffEditor-insertedLineBackground, var(--vscode-diffEditor-insertedTextBackground, #9bb95533));
+  --perm-del-bg: var(--vscode-diffEditor-removedLineBackground, var(--vscode-diffEditor-removedTextBackground, #ff000033));
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  margin: 0 0 6px;
+  padding: 8px;
+  overflow: hidden;
+  color: var(--perm-fg);
+  background: var(--perm-bg);
+  border: 1px solid var(--perm-border);
+  border-radius: 6px;
+  outline: none;
+  font-family: var(--vscode-chat-font-family, var(--vscode-font-family, -apple-system, BlinkMacSystemFont, sans-serif));
+  font-size: var(--vscode-chat-font-size, 13px);
+}
+
+.perm-card:focus-within {
+  border-color: color-mix(in srgb, var(--perm-border-active) 65%, transparent);
+}
+
+.perm-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 1.05em;
+}
+
+.perm-header {
+  font-weight: 700;
+  margin-bottom: 2px;
+  overflow-wrap: anywhere;
+}
+
+.perm-path {
+  font-family: var(--perm-mono);
+  font-size: inherit;
+}
+
+.perm-input {
+  margin: 0;
+  padding: 6px 8px;
+  font-family: var(--perm-mono);
+  font-size: var(--perm-mono-size);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--vscode-textCodeBlock-background, #7f7f7f26);
+  border-radius: 4px;
+}
+
+.perm-description,
+.perm-reason {
+  color: var(--perm-fg-secondary);
+  font-size: 0.92em;
+}
+
+.perm-details summary {
+  cursor: pointer;
+  color: var(--perm-fg-secondary);
+}
+
+.perm-json {
+  margin: 4px 0 0;
+  max-height: 200px;
+  overflow: auto;
+  font-family: var(--perm-mono);
+  font-size: var(--perm-mono-size);
+}
+
+.perm-notice {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--vscode-inputValidation-warningForeground, var(--perm-fg));
+  background: var(--vscode-inputValidation-warningBackground, #352a05);
+  border: 1px solid var(--vscode-inputValidation-warningBorder, #b89500);
+}
+
+.perm-error {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--vscode-inputValidation-errorForeground, var(--perm-fg));
+  background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
+.perm-buttons {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.perm-button,
+.perm-feedback {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  border: 0;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--perm-inner-border);
+  font: inherit;
+}
+
+.perm-button {
+  display: block;
+  color: var(--perm-fg);
+  background: transparent;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+}
+
+.perm-button.perm-primary:not(:disabled),
+.perm-button:focus-visible:not(:disabled),
+.perm-button:focus:not(:disabled) {
+  color: var(--perm-button-fg);
+  background: var(--perm-button-bg);
+  box-shadow: none;
+  font-weight: 700;
+}
+
+.perm-buttons:has(.perm-button:focus) .perm-button.perm-primary:not(:focus):not(:disabled) {
+  color: var(--perm-fg);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--perm-inner-border);
+  font-weight: 500;
+}
+
+.perm-button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.perm-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.perm-shortcut {
+  opacity: 0.6;
+  padding-right: 4px;
+}
+
+.perm-destination {
+  text-decoration: underline dotted;
+}
+
+.perm-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.85em;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.perm-feedback {
+  color: var(--perm-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  outline: none;
+}
+
+.perm-feedback:focus {
+  border-color: var(--perm-border-active);
+}
+
+.perm-hints {
+  margin-top: 8px;
+  color: var(--perm-fg-secondary);
+  font-size: 0.85em;
+}
+
+/* ---- diff ---- */
+
+.perm-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.perm-diff-file {
+  border: 1px solid var(--perm-inner-border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--vscode-editor-background, #1f1f1f);
+}
+
+.perm-diff-file[data-verdict="accepted"] {
+  border-color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b);
+}
+
+.perm-diff-file[data-verdict="rejected"] {
+  border-color: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39);
+}
+
+.perm-diff-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 0.92em;
+  border-bottom: 1px solid var(--perm-inner-border);
+  min-width: 0;
+}
+
+.perm-diff-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.perm-diff-dir {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--perm-fg-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.perm-diff-badge {
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 0.85em;
+  color: var(--vscode-badge-foreground, #f8f8f8);
+  background: var(--vscode-badge-background, #616161);
+}
+
+.perm-diff-stat {
+  font-family: var(--perm-mono);
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
+.perm-diff-stat-add {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b);
+}
+
+.perm-diff-stat-del {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39);
+}
+
+.perm-diff-verdict {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.perm-diff-verdict-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 3px;
+  color: var(--perm-fg);
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.perm-diff-verdict-btn:hover,
+.perm-diff-verdict-btn[aria-pressed="true"] {
+  background: var(--perm-hover);
+}
+
+.perm-diff-summary {
+  padding: 6px 8px;
+  color: var(--perm-fg-secondary);
+  font-family: var(--perm-mono);
+  font-size: var(--perm-mono-size);
+  white-space: pre-wrap;
+}
+
+.perm-diff-body {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.perm-diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--perm-mono);
+  font-size: var(--perm-mono-size);
+  line-height: 1.5;
+}
+
+.perm-diff-table td {
+  padding: 0;
+  vertical-align: top;
+}
+
+.perm-diff-old,
+.perm-diff-new {
+  width: 1%;
+  min-width: 3ch;
+  padding: 0 4px !important;
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground, #6e7681);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.perm-diff-sign {
+  width: 1%;
+  padding: 0 4px !important;
+  user-select: none;
+  color: var(--perm-fg-secondary);
+}
+
+.perm-diff-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-right: 8px !important;
+}
+
+.perm-diff-line[data-kind="add"] {
+  background: var(--perm-ins-bg);
+}
+
+.perm-diff-line[data-kind="del"] {
+  background: var(--perm-del-bg);
+}
+
+.perm-diff-sep td {
+  padding: 2px 8px !important;
+  color: var(--perm-fg-secondary);
+  background: var(--vscode-diffEditor-unchangedRegionBackground, #7f7f7f1a);
+}
+
+/* Shiki dual themes: colors arrive as --shiki-light / --shiki-dark. */
+.perm-diff-code.shiki-line span {
+  color: var(--shiki-light);
+}
+
+@media (prefers-color-scheme: dark) {
+  .perm-diff-code.shiki-line span {
+    color: var(--shiki-dark);
+  }
+}
+
+/* ---- plan ---- */
+
+.perm-plan {
+  max-height: 45vh;
+  overflow-y: auto;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  border: 1px solid var(--perm-inner-border);
+  border-radius: 4px;
+  background: var(--vscode-editor-background, #1f1f1f);
+}
+
+/* ---- questions ---- */
+
+.perm-question-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-bottom: 4px;
+}
+
+.perm-tabs {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.perm-tab {
+  min-width: 0;
+  padding: 4px 2px;
+  overflow: hidden;
+  color: var(--perm-fg);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font: inherit;
+  font-size: 0.85em;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.perm-tab-active {
+  border-bottom-color: var(--perm-border-active);
+  opacity: 1;
+}
+
+.perm-tab-answered::after {
+  content: " ✓";
+}
+
+.perm-spacer {
+  flex: 1;
+}
+
+.perm-close {
+  display: inline-flex;
+  padding: 2px;
+  color: var(--perm-fg-secondary);
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.perm-close:hover {
+  background: var(--perm-hover);
+}
+
+.perm-question-text {
+  margin-bottom: 6px;
+  font-size: 0.95em;
+  font-weight: 500;
+}
+
+.perm-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.perm-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+.perm-option:hover,
+.perm-option:focus {
+  background: var(--perm-hover);
+}
+
+.perm-radio,
+.perm-checkbox {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1.5px solid var(--perm-border);
+}
+
+.perm-radio {
+  border-radius: 50%;
+}
+
+.perm-checkbox {
+  border-radius: 3px;
+}
+
+.perm-checkbox .codicon {
+  font-size: 12px;
+}
+
+.perm-radio-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--perm-fg);
+}
+
+.perm-option-selected .perm-radio,
+.perm-option-selected .perm-checkbox {
+  border-color: var(--perm-border-active);
+}
+
+.perm-option-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.perm-option-label {
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.perm-option-description {
+  color: var(--perm-fg-secondary);
+  font-size: 0.85em;
+  line-height: 1.4;
+}
+
+.perm-other-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 3px 6px;
+  color: var(--perm-fg);
+  background: transparent;
+  border: 1px solid var(--perm-inner-border);
+  border-radius: 3px;
+  outline: none;
+  font: inherit;
+  font-size: 0.9em;
+}
+
+.perm-other-input:focus {
+  border-color: var(--perm-border-active);
+}
