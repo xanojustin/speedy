@@ -163,6 +163,41 @@
   top: 18px;
   bottom: 0;
 }
+/* Activity rows (thinking, tool calls) recede so the assistant's prose reads as the main thread:
+   smaller, dimmer, tighter, with a smaller dot re-centred on their shorter first line. */
+.block.thinking,
+.block.tool-card {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  font-size: 12px;
+}
+.tool-card > .tool-header {
+  opacity: 0.6;
+  transition: opacity 0.1s;
+}
+.tool-card > .tool-header:hover,
+.tool-card > .tool-header[aria-expanded="true"] {
+  opacity: 1;
+}
+.thinking.timeline::before,
+.tool-card.timeline::before {
+  left: 10px;
+  top: 9px;
+  width: 5px;
+  height: 5px;
+}
+.thinking.timeline.tl-prev:not(.tl-next)::after,
+.tool-card.timeline.tl-prev:not(.tl-next)::after {
+  height: 12px;
+}
+.thinking.timeline.tl-next:not(.tl-prev)::after,
+.tool-card.timeline.tl-next:not(.tl-prev)::after {
+  top: 12px;
+}
+.block.assistant-text {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
 @keyframes chat-blink {
   50% {
     opacity: 0.2;
@@ -389,15 +424,16 @@
   cursor: pointer;
 }
 .tool-name {
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
+  color: var(--chat-fg-secondary);
 }
 .tool-detail {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   color: var(--chat-fg-secondary);
   overflow-wrap: anywhere;
@@ -405,8 +441,14 @@
 .tool-detail.mono {
   padding-top: 1px;
   font-family: var(--chat-mono);
-  font-size: 0.85em;
+  font-size: 0.9em;
+}
+.tool-header:hover .tool-name,
+.tool-header[aria-expanded="true"] .tool-name {
   color: var(--chat-fg);
+}
+.tool-header[aria-expanded="true"] .tool-detail {
+  -webkit-line-clamp: 3;
 }
 .tool-elapsed {
   color: var(--chat-fg-secondary);
