@@ -1,15 +1,16 @@
 //! U4: one login-shell PTY per thread with coalesced binary output (KTD3, KTD9).
-//! Types and commands are the IPC contract; bodies are STUBS until U4 lands.
+//! Types and commands are the IPC contract; the Tauri-free core is in `manager`.
 
 pub mod coalesce;
 pub mod manager;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use crate::env::EnvService;
 
@@ -23,60 +24,88 @@ pub struct PtyExit {
     pub code: Option<i32>,
 }
 
+/// Grace between SIGHUP and SIGKILL when a thread's terminal is closed.
+const CLOSE_GRACE: Duration = Duration::from_secs(3);
+
 pub struct PtyManager {
-    #[allow(dead_code)]
     env: Arc<EnvService>,
-    #[allow(dead_code)]
-    app: AppHandle,
+    host: manager::PtyHost,
 }
 
 impl PtyManager {
     pub fn new(env: Arc<EnvService>, app: AppHandle) -> Self {
-        PtyManager { env, app }
+        let host = manager::PtyHost::new(move |exit: PtyExit| {
+            if let Err(e) = app.emit(PTY_EXIT_EVENT, exit) {
+                log::warn!("emitting {PTY_EXIT_EVENT}: {e}");
+            }
+        });
+        PtyManager { env, host }
+    }
+
+    /// Starts `$SHELL -l` in `cwd` with the resolved login env, or rebinds output.
+    pub async fn open(
+        &self,
+        thread_id: &str,
+        cwd: &str,
+        cols: u16,
+        rows: u16,
+        on_data: Channel<InvokeResponseBody>,
+    ) -> anyhow::Result<()> {
+        let resolved = self.env.env().await;
+        // Until the login env is resolved (or if it failed), use the process env.
+        let env: HashMap<String, String> =
+            if resolved.vars.is_empty() { std::env::vars().collect() } else { resolved.vars };
+        let spec = manager::PtySpawn { shell: manager::login_shell(&env), cwd: cwd.into(), env, cols, rows };
+        let sink: manager::OutputSink = Box::new(move |bytes| {
+            let _ = on_data.send(InvokeResponseBody::Raw(bytes));
+        });
+        self.host.open(thread_id, spec, sink)
     }
 
     /// SIGHUP every PTY's process group, SIGKILL after `grace` (KTD9).
-    pub fn shutdown_all(&self, _grace: Duration) {}
+    pub fn shutdown_all(&self, grace: Duration) {
+        self.host.shutdown_all(grace);
+    }
 }
-
-const NOT_IMPLEMENTED: &str = "pty manager not implemented";
 
 /// Opens the thread's shell if absent, or rebinds `on_data` if it already runs.
 /// Output arrives on `on_data` as raw bytes (ArrayBuffer in JS), coalesced per KTD3.
 #[tauri::command]
 pub async fn pty_open(
-    _ctx: tauri::State<'_, crate::AppCtx>,
-    _thread_id: String,
-    _cwd: String,
-    _cols: u16,
-    _rows: u16,
-    _on_data: Channel<InvokeResponseBody>,
+    ctx: tauri::State<'_, crate::AppCtx>,
+    thread_id: String,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+    on_data: Channel<InvokeResponseBody>,
 ) -> Result<(), String> {
-    Err(NOT_IMPLEMENTED.into())
+    ctx.ptys.open(&thread_id, &cwd, cols, rows, on_data).await.map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
-pub fn pty_write(_ctx: tauri::State<'_, crate::AppCtx>, _thread_id: String, _data: String) -> Result<(), String> {
-    Err(NOT_IMPLEMENTED.into())
+pub fn pty_write(ctx: tauri::State<'_, crate::AppCtx>, thread_id: String, data: String) -> Result<(), String> {
+    ctx.ptys.host.write(&thread_id, data.as_bytes()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn pty_resize(
-    _ctx: tauri::State<'_, crate::AppCtx>,
-    _thread_id: String,
-    _cols: u16,
-    _rows: u16,
+    ctx: tauri::State<'_, crate::AppCtx>,
+    thread_id: String,
+    cols: u16,
+    rows: u16,
 ) -> Result<(), String> {
-    Err(NOT_IMPLEMENTED.into())
+    ctx.ptys.host.resize(&thread_id, cols, rows).map_err(|e| e.to_string())
 }
 
+/// Returns immediately; the shell's process groups get SIGHUP, then SIGKILL after a grace.
 #[tauri::command]
-pub fn pty_close(_ctx: tauri::State<'_, crate::AppCtx>, _thread_id: String) -> Result<(), String> {
-    Err(NOT_IMPLEMENTED.into())
+pub fn pty_close(ctx: tauri::State<'_, crate::AppCtx>, thread_id: String) -> Result<(), String> {
+    ctx.ptys.host.close(&thread_id, CLOSE_GRACE);
+    Ok(())
 }
 
 /// True when the shell has a foreground child (Cmd+W confirmation, U6).
 #[tauri::command]
-pub fn pty_has_foreground_child(_ctx: tauri::State<'_, crate::AppCtx>, _thread_id: String) -> bool {
-    false
+pub fn pty_has_foreground_child(ctx: tauri::State<'_, crate::AppCtx>, thread_id: String) -> bool {
+    ctx.ptys.host.has_foreground_child(&thread_id)
 }
