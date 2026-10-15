@@ -27,9 +27,22 @@ export function deny(feedback: string, opts: { plan?: boolean } = {}): Permissio
   return { behavior: "deny", message: opts.plan ? KEEP_PLANNING_MESSAGE : DENY_MESSAGE, interrupt: true };
 }
 
-/** Drops a suggested switch to bypassPermissions unless the user opted in to it (claudeCode setting). */
+/**
+ * The updates the always-allow choice grants: exactly the kind its label names (rules, else
+ * directories, else a mode switch), never extra grants bundled alongside. The CLI often suggests
+ * `addRules` together with `addDirectories` and `setMode acceptEdits`; sending all of them would
+ * silently switch the session to auto-accepting edits. A switch to bypassPermissions is dropped
+ * unless the user opted in to it (claudeCode setting).
+ */
 export function filterSuggestions(suggestions: PermissionUpdate[] | undefined, allowBypass: boolean): PermissionUpdate[] {
-  return (suggestions ?? []).filter((s) => allowBypass || !(s.type === "setMode" && s.mode === "bypassPermissions"));
+  const allowed = (suggestions ?? []).filter(
+    (s) => allowBypass || !(s.type === "setMode" && s.mode === "bypassPermissions"),
+  );
+  for (const kind of ["addRules", "addDirectories", "setMode"] as const) {
+    const group = allowed.filter((s) => s.type === kind);
+    if (group.length) return group;
+  }
+  return [];
 }
 
 export const DESTINATION_LABEL: Record<PermissionDestination, string> = {

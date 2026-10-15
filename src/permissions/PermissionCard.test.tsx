@@ -192,18 +192,35 @@ describe("generic prompt choices", () => {
     });
   });
 
+  it("sends only the rules the always-allow label names, never bundled mode or directory grants", async () => {
+    // The suggestion set the real CLI 2.1.296 sent in the U1 spike.
+    const bundled = [
+      { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "touch ./x" }], behavior: "allow", destination: "localSettings" },
+      { type: "addDirectories", directories: ["/tmp/p"], destination: "session" },
+      { type: "setMode", mode: "acceptEdits", destination: "session" },
+    ] as CanUseToolRequest["permission_suggestions"];
+    addRequest({ tool_name: "Bash", input: { command: "touch ./x" }, permission_suggestions: bundled });
+    card();
+    const always = screen.getByRole("button", { name: /^2\s*Yes, allow touch \.\/x for/ });
+    expect(always).not.toHaveTextContent("this session only");
+    fireEvent.click(always);
+    await waitFor(() => expect(respondCalls()).toHaveLength(1));
+    expect(respondCalls()[0].response.updatedPermissions).toEqual([bundled![0]]);
+  });
+
   it("keeps a bypass setMode when claudeCode.allowDangerouslySkipPermissions is on", async () => {
     settings = { "claudeCode.allowDangerouslySkipPermissions": true };
-    addRequest({ tool_name: "Bash", input: { command: "npm test" }, permission_suggestions: suggestions });
+    const bypassOnly = [suggestions![1]];
+    addRequest({ tool_name: "Bash", input: { command: "npm test" }, permission_suggestions: bypassOnly });
     card();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_extension_settings", undefined));
     await act(async () => {});
-    fireEvent.click(screen.getByRole("button", { name: /^2\s*Yes, allow/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^2\s*Yes/ }));
     await waitFor(() => expect(respondCalls()).toHaveLength(1));
-    expect(respondCalls()[0].response.updatedPermissions).toEqual(suggestions);
+    expect(respondCalls()[0].response.updatedPermissions).toEqual(bypassOnly);
   });
 
-  it("shows each destination label", () => {
+  it("labels every destination of the granted rules, and none of the grants it doesn't send", () => {
     addRequest({
       tool_name: "Read",
       input: { file_path: "/etc/hosts" },
@@ -215,9 +232,9 @@ describe("generic prompt choices", () => {
     });
     card();
     const always = screen.getByRole("button", { name: /^2/ });
-    expect(always).toHaveTextContent("all projects (~/.claude/settings.json)");
     expect(always).toHaveTextContent("this project (shared, .claude/settings.json)");
     expect(always).toHaveTextContent("this session only");
+    expect(always).not.toHaveTextContent("all projects (~/.claude/settings.json)");
   });
 
   it("deny with typed feedback sends a deny carrying the message", async () => {
