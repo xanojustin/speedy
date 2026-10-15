@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { findThread, useAppStore } from "../store/appStore";
 import { Sidebar } from "../sidebar/Sidebar";
 import { addDroppedPaths, addProjectViaPicker } from "./actions";
+import { useAttention } from "./attention";
 import { useMenuShortcuts } from "./shortcuts";
 import { ThreadView } from "./ThreadView";
 
@@ -19,6 +20,7 @@ export function Layout() {
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const dropActive = useFolderDrop();
   useMenuShortcuts();
+  const unread = useAttention();
 
   const width = dragWidth ?? storedWidth;
 
@@ -47,7 +49,7 @@ export function Layout() {
   return (
     <div className={`layout${dropActive ? " drop-active" : ""}${dragWidth !== null ? " resizing-sidebar" : ""}`}>
       <div className="sidebar-container" style={{ width }}>
-        <Sidebar />
+        <Sidebar unread={unread} />
       </div>
       <div
         role="separator"

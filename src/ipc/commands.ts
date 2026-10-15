@@ -70,6 +70,8 @@ export const filesSearch = (root: string, query: string, limit?: number, respect
 // ---- attention (U12) ----
 export const attentionSetVisible = (threadId: string | null) => invoke<void>("attention_set_visible", { threadId });
 export const attentionMarkRead = (threadId: string) => invoke<void>("attention_mark_read", { threadId });
+/** Thread id → title, so notifications can name the thread. */
+export const attentionSetTitles = (titles: Record<string, string>) => invoke<void>("attention_set_titles", { titles });
 export const onOpenThread = (cb: (threadId: string) => void): Promise<UnlistenFn> =>
   listen<{ threadId: string }>("attention-open-thread", (e) => cb(e.payload.threadId));
 export const onUnread = (cb: (unread: string[]) => void): Promise<UnlistenFn> =>

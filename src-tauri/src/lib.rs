@@ -70,6 +70,7 @@ pub fn run() {
             files::files_search,
             attention::attention_set_visible,
             attention::attention_mark_read,
+            attention::attention_set_titles,
             open_path,
         ])
         .build(tauri::generate_context!())
