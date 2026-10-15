@@ -1,0 +1,196 @@
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@tauri-apps/api/core", async () => (await import("./testing/tauriMock")).coreMock);
+vi.mock("@tauri-apps/api/event", async () => (await import("./testing/tauriMock")).eventMock);
+vi.mock("@tauri-apps/api/webview", async () => (await import("./testing/tauriMock")).webviewMock);
+vi.mock("@tauri-apps/plugin-dialog", async () => (await import("./testing/tauriMock")).dialogMock);
+
+import { useAppStore } from "../store/appStore";
+import { useThreadStore } from "../store/threadStore";
+import { App } from "./App";
+import { backend, callsTo, dialog, emitMenu, lastSaved, project, stateWith } from "./testing/tauriMock";
+import { resetBackend } from "./testing/reset";
+
+const chatRegion = () => document.querySelector<HTMLElement>(".chat-region");
+const terminalRegion = () => document.querySelector<HTMLElement>(".terminal-region");
+const threadRow = (title: string) => screen.getByText(title).closest<HTMLElement>("[role=treeitem]")!;
+
+async function renderApp() {
+  const utils = render(<App />);
+  await screen.findByRole("navigation", { name: "Projects" });
+  return utils;
+}
+
+beforeEach(() => resetBackend());
+afterEach(cleanup);
+
+describe("Layout", () => {
+  it("adds a folder through the picker as a project with one new, selected thread", async () => {
+    dialog.open.mockResolvedValue("/Users/me/speedy");
+    await renderApp();
+    const main = screen.getByRole("main");
+    fireEvent.click(within(main).getByRole("button", { name: "Add Project Folder" }));
+
+    const sidebar = screen.getByRole("navigation", { name: "Projects" });
+    await within(sidebar).findByText("speedy");
+    expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({ directory: true }));
+    const rows = within(sidebar).getAllByRole("treeitem").filter((r) => r.classList.contains("thread-row"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveAttribute("aria-selected", "true");
+
+    const saved = lastSaved()!;
+    expect(saved.projects).toHaveLength(1);
+    expect(saved.projects[0].path).toBe("/Users/me/speedy");
+    expect(saved.selectedThreadId).toBe(saved.projects[0].threads[0].id);
+    expect(chatRegion()).toHaveAttribute("data-thread-id", saved.projects[0].threads[0].id);
+  });
+
+  it("shows only the selected thread's chat and terminal and leaves other threads' runtime alone", async () => {
+    resetBackend(stateWith([project("app", [{}, {}])], "app-t1"));
+    const a = { status: "working" as const };
+    useThreadStore.setState({ threads: { "app-t1": a, "app-t2": { status: "idle" } } });
+    await renderApp();
+    expect(chatRegion()).toHaveAttribute("data-thread-id", "app-t1");
+    expect(terminalRegion()).toHaveAttribute("data-thread-id", "app-t1");
+
+    fireEvent.click(threadRow("app thread 2"));
+    expect(chatRegion()).toHaveAttribute("data-thread-id", "app-t2");
+    expect(terminalRegion()).toHaveAttribute("data-thread-id", "app-t2");
+    expect(document.querySelectorAll(".chat-region")).toHaveLength(1);
+    expect(document.querySelectorAll(".terminal-region")).toHaveLength(1);
+    expect(useThreadStore.getState().threads["app-t1"]).toBe(a);
+    expect(lastSaved()!.selectedThreadId).toBe("app-t2");
+  });
+
+  it("toggles the terminal per thread, and each thread keeps its split ratio", async () => {
+    resetBackend(stateWith([project("app", [{}, {}])], "app-t1"));
+    await renderApp();
+    const split = document.querySelector<HTMLElement>(".thread-split")!;
+    split.getBoundingClientRect = () => ({ top: 0, height: 1000, bottom: 1000, left: 0, right: 800, width: 800, x: 0, y: 0, toJSON() {} });
+
+    // Drag the sash of thread 1 to 40%.
+    const sash = screen.getByRole("separator", { name: "Resize terminal" });
+    fireEvent.pointerDown(sash, { clientY: 650, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientY: 400, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientY: 400, pointerId: 1 });
+    expect(chatRegion()!.style.flexBasis).toBe("40%");
+    expect(useAppStore.getState().projects[0].threads[0].splitRatio).toBeCloseTo(0.4);
+
+    // Hide thread 1's terminal.
+    act(() => emitMenu("toggle_terminal"));
+    expect(terminalRegion()).not.toBeVisible();
+    expect(screen.queryByRole("separator", { name: "Resize terminal" })).toBeNull();
+
+    // Thread 2 still shows its own terminal with the default ratio.
+    fireEvent.click(threadRow("app thread 2"));
+    expect(terminalRegion()).toBeVisible();
+    expect(chatRegion()!.style.flexBasis).toBe("65%");
+
+    // Back on thread 1: still hidden; showing it again restores 40%.
+    fireEvent.click(threadRow("app thread 1"));
+    expect(terminalRegion()).not.toBeVisible();
+    act(() => emitMenu("toggle_terminal"));
+    expect(terminalRegion()).toBeVisible();
+    expect(chatRegion()!.style.flexBasis).toBe("40%");
+    expect(lastSaved()!.projects[0].threads[0]).toMatchObject({ splitRatio: 0.4, terminalVisible: true });
+  });
+
+  it("maximizes the terminal over the chat and restores it", async () => {
+    resetBackend(stateWith([project("app")]));
+    await renderApp();
+    act(() => emitMenu("maximize_terminal"));
+    expect(chatRegion()).not.toBeVisible();
+    expect(terminalRegion()).toBeVisible();
+    expect(lastSaved()!.projects[0].threads[0].terminalMaximized).toBe(true);
+    act(() => emitMenu("maximize_terminal"));
+    expect(chatRegion()).toBeVisible();
+  });
+
+  it("shows an empty state with Add Project Folder when no thread is selected", async () => {
+    await renderApp();
+    expect(within(screen.getByRole("main")).getByRole("button", { name: "Add Project Folder" })).toBeInTheDocument();
+    expect(chatRegion()).toBeNull();
+  });
+});
+
+describe("Close thread (Cmd+W)", () => {
+  it("asks before closing a Working thread and keeps it when cancelled", async () => {
+    resetBackend(stateWith([project("app", [{}, {}])], "app-t1"));
+    useThreadStore.setState({ threads: { "app-t1": { status: "working" } } });
+    dialog.ask.mockResolvedValue(false);
+    await renderApp();
+
+    act(() => emitMenu("close_thread"));
+    await waitFor(() => expect(dialog.ask).toHaveBeenCalledTimes(1));
+    expect(callsTo("claude_stop")).toHaveLength(0);
+    expect(screen.getByText("app thread 1")).toBeInTheDocument();
+
+    dialog.ask.mockResolvedValue(true);
+    act(() => emitMenu("close_thread"));
+    await waitFor(() => expect(screen.queryByText("app thread 1")).toBeNull());
+    expect(callsTo("claude_stop").map((c) => c.args)).toEqual([{ threadId: "app-t1" }]);
+  });
+
+  it("asks when the thread's shell has a foreground process", async () => {
+    resetBackend(stateWith([project("app")]));
+    backend.foreground["app-t1"] = true;
+    await renderApp();
+    act(() => emitMenu("close_thread"));
+    await waitFor(() => expect(dialog.ask).toHaveBeenCalledTimes(1));
+  });
+
+  it("archives an idle thread immediately, stops it, and restores it from Archived", async () => {
+    resetBackend(stateWith([project("app", [{}, {}])], "app-t1"));
+    useThreadStore.setState({ threads: { "app-t1": { status: "idle" } } });
+    await renderApp();
+
+    act(() => emitMenu("close_thread"));
+    await waitFor(() => expect(screen.queryByText("app thread 1")).toBeNull());
+    expect(dialog.ask).not.toHaveBeenCalled();
+    expect(callsTo("claude_stop").map((c) => c.args)).toEqual([{ threadId: "app-t1" }]);
+    expect(lastSaved()!.projects[0].threads[0].archived).toBe(true);
+    expect(chatRegion()).toHaveAttribute("data-thread-id", "app-t2");
+
+    fireEvent.click(screen.getByRole("button", { name: /Archived \(1\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore app thread 1" }));
+    expect(threadRow("app thread 1")).toHaveAttribute("aria-selected", "true");
+    expect(lastSaved()!.projects[0].threads[0].archived).toBe(false);
+  });
+});
+
+describe("Menu shortcuts", () => {
+  it("Cmd+N creates a thread in the selected thread's project", async () => {
+    resetBackend(stateWith([project("app"), project("web")], "web-t1"));
+    await renderApp();
+    act(() => emitMenu("new_thread"));
+    const web = useAppStore.getState().projects[1];
+    expect(web.threads).toHaveLength(2);
+    expect(useAppStore.getState().selectedThreadId).toBe(web.threads[1].id);
+  });
+
+  it("Cmd+2 selects the second visible thread", async () => {
+    resetBackend(stateWith([project("app"), project("web")], "app-t1"));
+    await renderApp();
+    act(() => emitMenu("switch_thread_2"));
+    expect(chatRegion()).toHaveAttribute("data-thread-id", "web-t1");
+  });
+
+  it("Cmd+L asks the composer to take focus", async () => {
+    resetBackend(stateWith([project("app")]));
+    await renderApp();
+    const seen: unknown[] = [];
+    const onFocus = (e: Event) => seen.push((e as CustomEvent).detail);
+    window.addEventListener("speedy:focus-composer", onFocus);
+    act(() => emitMenu("focus_chat"));
+    window.removeEventListener("speedy:focus-composer", onFocus);
+    expect(seen).toEqual([{ threadId: "app-t1" }]);
+  });
+
+  it("Cmd+O adds a project through the picker", async () => {
+    dialog.open.mockResolvedValue("/Users/me/tools");
+    await renderApp();
+    act(() => emitMenu("add_project"));
+    await screen.findByText("tools");
+  });
+});

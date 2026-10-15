@@ -1,0 +1,294 @@
+/* Sidebar styled like VS Code's explorer view: 35px title, 22px rows, list colors. */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--vscode-sideBar-background);
+  color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+  border-right: 1px solid var(--vscode-sideBar-border, transparent);
+}
+
+.sidebar-title {
+  display: flex;
+  align-items: center;
+  flex: 0 0 35px;
+  padding: 0 8px 0 20px;
+  color: var(--vscode-sideBarTitle-foreground, var(--vscode-foreground));
+}
+
+.sidebar-title-label {
+  flex: 1;
+  margin: 0;
+  font-size: 11px;
+  font-weight: normal;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-title-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.sidebar-tree {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 8px;
+  outline: none;
+}
+
+.sidebar-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  line-height: 22px;
+  padding-right: 8px;
+  white-space: nowrap;
+  cursor: pointer;
+  outline-offset: -1px;
+}
+
+.sidebar-row:hover {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-list-hoverForeground, inherit);
+}
+
+.twistie {
+  flex: 0 0 16px;
+  width: 16px;
+  text-align: center;
+  font-size: 16px;
+}
+
+/* Project rows: section-header colors. */
+.project {
+  position: relative;
+}
+
+.project-header {
+  padding-left: 4px;
+  background: var(--vscode-sideBarSectionHeader-background);
+  color: var(--vscode-sideBarSectionHeader-foreground, inherit);
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.project:first-child .project-header {
+  border-top-color: transparent;
+}
+
+.project-name {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+}
+
+.project-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-weight: normal;
+  color: var(--vscode-list-warningForeground, var(--vscode-editorWarning-foreground));
+}
+
+.project-missing .codicon {
+  font-size: 12px;
+}
+
+.row-actions {
+  display: none;
+  margin-left: auto;
+  gap: 2px;
+}
+
+.row-actions .icon-button {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+}
+
+.sidebar-row:hover .row-actions,
+.sidebar-row:focus-within .row-actions,
+.row-actions:has([aria-pressed="true"]) {
+  display: flex;
+}
+
+/* Thread rows. */
+.thread-row,
+.archived-row {
+  padding-left: 22px;
+  font-size: 13px;
+}
+
+.thread-row[aria-selected="true"] {
+  background: var(--vscode-list-inactiveSelectionBackground);
+  color: var(--vscode-list-inactiveSelectionForeground, inherit);
+}
+
+.sidebar:focus-within .thread-row[aria-selected="true"] {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground, inherit);
+}
+
+.sidebar:focus-within .thread-row[aria-selected="true"]:focus {
+  outline: 1px solid var(--vscode-list-focusOutline, var(--vscode-focusBorder));
+}
+
+.thread-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-glyph {
+  flex: 0 0 16px;
+  font-size: 16px;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+}
+
+.status-glyph.status-working,
+.status-glyph.status-starting {
+  color: var(--vscode-foreground);
+}
+
+.status-glyph.status-awaiting_user {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow));
+}
+
+.status-glyph.status-crashed,
+.status-glyph.status-errored {
+  color: var(--vscode-errorForeground);
+}
+
+.status-glyph.status-unread {
+  color: var(--vscode-charts-orange, #d97757);
+  font-size: 10px;
+}
+
+.rename-input {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  margin-right: 2px;
+  padding: 0 4px;
+  border: 1px solid var(--vscode-focusBorder);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-size: 13px;
+  outline: none;
+}
+
+/* Archived section. */
+.archived-toggle {
+  width: 100%;
+  padding-left: 22px;
+  border: none;
+  background: none;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  text-align: left;
+}
+
+.archived-row {
+  padding-left: 38px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.archived-row .codicon-archive {
+  font-size: 14px;
+}
+
+/* Drag reordering. */
+.dragging {
+  opacity: 0.5;
+}
+
+.drop-before::before,
+.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--vscode-list-dropBetweenBackground, var(--vscode-focusBorder));
+  pointer-events: none;
+  z-index: 1;
+}
+
+.drop-before::before {
+  top: -1px;
+}
+
+.drop-after::after {
+  bottom: -1px;
+}
+
+/* Context menu (VS Code menu colors). */
+.context-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 160px;
+  padding: 4px 0;
+  border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, transparent));
+  border-radius: 5px;
+  background: var(--vscode-menu-background);
+  color: var(--vscode-menu-foreground);
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+}
+
+.context-menu-item {
+  display: block;
+  width: calc(100% - 8px);
+  margin: 0 4px;
+  padding: 0 24px;
+  height: 24px;
+  line-height: 24px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-menu-item:hover,
+.context-menu-item:focus {
+  outline: none;
+  background: var(--vscode-menu-selectionBackground);
+  color: var(--vscode-menu-selectionForeground);
+  border-color: var(--vscode-menu-selectionBorder, transparent);
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--vscode-menu-separatorBackground, var(--vscode-widget-border));
+}
+
+/* Past-conversations popover anchored under the project row. */
+.history-popover {
+  position: absolute;
+  z-index: 50;
+  top: 22px;
+  left: 8px;
+  right: 8px;
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border));
+  border-radius: 5px;
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-editorWidget-foreground);
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+}

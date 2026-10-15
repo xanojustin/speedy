@@ -22,6 +22,7 @@ export interface AppStore extends AppState {
   moveThread(threadId: string, toIndex: number): void;
   selectThread(threadId: string | null): void;
   setSidebarWidth(width: number): void;
+  setClaudePathOverride(path: string | null): void;
   dismissNotice(): void;
 }
 
@@ -165,6 +166,10 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     setSidebarWidth(width) {
       commit(() => ({ sidebarWidth: width }));
+    },
+
+    setClaudePathOverride(path) {
+      commit(() => ({ claudePathOverride: path }));
     },
 
     dismissNotice() {
