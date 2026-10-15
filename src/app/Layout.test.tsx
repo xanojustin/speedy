@@ -20,6 +20,8 @@ const threadRow = (title: string) =>
 async function renderApp() {
   const utils = render(<App />);
   await screen.findByRole("navigation", { name: "Projects" });
+  // The menu listener registers asynchronously; an event emitted before it exists is lost.
+  await waitFor(() => expect(backend.listeners.menu?.length).toBeTruthy());
   return utils;
 }
 
