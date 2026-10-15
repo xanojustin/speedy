@@ -14,8 +14,9 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use tokio::sync::watch;
 
-/// The CLI version the protocol fixtures were recorded against (KTD7 skew warning).
-pub const FIXTURE_CLI_VERSION: &str = "2.1.296 (Claude Code)";
+/// The latest CLI version the protocol drift test passed against (KTD7 skew warning).
+/// Fixtures were recorded against 2.1.296.
+pub const FIXTURE_CLI_VERSION: &str = "2.1.300 (Claude Code)";
 
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 /// `claude --version` / `claude auth status` should answer quickly; a wedged CLI
