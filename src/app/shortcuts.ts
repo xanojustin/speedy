@@ -9,9 +9,12 @@ import { addProjectViaPicker, closeThread, newThread } from "./actions";
 import { disposeTerminal, focusTerminal } from "../terminal/registry";
 import { terminalsOf, useTerminalTabs } from "../terminal/tabs";
 
+/** Shows or hides the panel; hiding it hands focus back to the chat. */
 export function toggleTerminal(threadId: string) {
   const t = findThread(useAppStore.getState(), threadId)?.thread;
-  if (t) useAppStore.getState().updateThread(threadId, { terminalVisible: !t.terminalVisible });
+  if (!t) return;
+  useAppStore.getState().updateThread(threadId, { terminalVisible: !t.terminalVisible });
+  if (t.terminalVisible) focusComposer(threadId);
 }
 
 export function toggleMaximizeTerminal(threadId: string) {
@@ -29,23 +32,31 @@ export function newTerminal(threadId: string) {
   requestAnimationFrame(() => focusTerminal(id));
 }
 
-/** Kills the terminal's shell and closes its tab. Killing the last one hides the panel, like VS Code. */
+/**
+ * Kills the terminal's shell and closes its tab, focusing the tab that takes its place. Killing the
+ * last one hides the panel, like VS Code, and focuses the chat.
+ */
 export function killTerminal(threadId: string, terminalId: string) {
   const tabs = useTerminalTabs.getState();
   const last = tabs.remove(threadId, terminalId);
   disposeTerminal(terminalId);
   if (last) {
     useAppStore.getState().updateThread(threadId, { terminalVisible: false, terminalMaximized: false });
+    focusComposer(threadId);
     return;
   }
   const { active } = terminalsOf(useTerminalTabs.getState().byThread, threadId);
   requestAnimationFrame(() => focusTerminal(active));
 }
 
+function focusComposer(threadId: string) {
+  window.dispatchEvent(new CustomEvent<FocusComposerDetail>(FOCUS_COMPOSER_EVENT, { detail: { threadId } }));
+}
+
 function focusChat(threadId: string) {
   const t = findThread(useAppStore.getState(), threadId)?.thread;
   if (t?.terminalMaximized) useAppStore.getState().updateThread(threadId, { terminalMaximized: false });
-  window.dispatchEvent(new CustomEvent<FocusComposerDetail>(FOCUS_COMPOSER_EVENT, { detail: { threadId } }));
+  focusComposer(threadId);
 }
 
 function handleMenuAction(action: MenuAction) {

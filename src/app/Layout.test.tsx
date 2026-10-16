@@ -238,6 +238,26 @@ describe("Menu shortcuts", () => {
     expect(seen).toEqual([{ threadId: "app-t1" }]);
   });
 
+  it("hands focus back to the composer when the terminal panel closes", async () => {
+    resetBackend(stateWith([project("app")]));
+    await renderApp();
+    const seen: unknown[] = [];
+    const onFocus = (e: Event) => seen.push((e as CustomEvent).detail);
+    window.addEventListener("speedy:focus-composer", onFocus);
+    act(() => emitMenu("toggle_terminal"));
+    expect(seen).toEqual([{ threadId: "app-t1" }]);
+    // Showing the panel focuses the terminal, not the composer.
+    act(() => emitMenu("toggle_terminal"));
+    expect(seen).toHaveLength(1);
+    // Killing a tab with another left keeps focus in the terminal; killing the last one returns it.
+    act(() => emitMenu("new_terminal"));
+    fireEvent.click(screen.getByRole("button", { name: "Kill Terminal 2" }));
+    expect(seen).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Kill Terminal" }));
+    window.removeEventListener("speedy:focus-composer", onFocus);
+    expect(seen).toEqual([{ threadId: "app-t1" }, { threadId: "app-t1" }]);
+  });
+
   it("Cmd+O adds a project through the picker", async () => {
     dialog.open.mockResolvedValue("/Users/me/tools");
     await renderApp();
