@@ -43,16 +43,16 @@ export const claudeStop = (threadId: string) => invoke<void>("claude_stop", { th
 export const claudeRetry = (threadId: string) => invoke<ThreadStatus>("claude_retry", { threadId });
 
 // ---- pty ----
-export function ptyOpen(threadId: string, cwd: string, cols: number, rows: number, onData: (bytes: Uint8Array) => void) {
+export function ptyOpen(terminalId: string, cwd: string, cols: number, rows: number, onData: (bytes: Uint8Array) => void) {
   const channel = new Channel<ArrayBuffer>();
   channel.onmessage = (buf) => onData(new Uint8Array(buf));
-  return invoke<void>("pty_open", { threadId, cwd, cols, rows, onData: channel });
+  return invoke<void>("pty_open", { terminalId, cwd, cols, rows, onData: channel });
 }
-export const ptyWrite = (threadId: string, data: string) => invoke<void>("pty_write", { threadId, data });
-export const ptyResize = (threadId: string, cols: number, rows: number) =>
-  invoke<void>("pty_resize", { threadId, cols, rows });
-export const ptyClose = (threadId: string) => invoke<void>("pty_close", { threadId });
-export const ptyHasForegroundChild = (threadId: string) => invoke<boolean>("pty_has_foreground_child", { threadId });
+export const ptyWrite = (terminalId: string, data: string) => invoke<void>("pty_write", { terminalId, data });
+export const ptyResize = (terminalId: string, cols: number, rows: number) =>
+  invoke<void>("pty_resize", { terminalId, cols, rows });
+export const ptyClose = (terminalId: string) => invoke<void>("pty_close", { terminalId });
+export const ptyHasForegroundChild = (terminalId: string) => invoke<boolean>("pty_has_foreground_child", { terminalId });
 export const onPtyExit = (cb: (e: PtyExit) => void): Promise<UnlistenFn> =>
   listen<PtyExit>("pty-exit", (e) => cb(e.payload));
 

@@ -188,6 +188,8 @@ export interface DirEntry {
   /** Relative to the project root, `/`-separated. */
   path: string;
   isDir: boolean;
+  /** Matched by a gitignore rule; shown dimmed. */
+  ignored: boolean;
 }
 
 /** `M` modified, `A` added, `D` deleted, `R` renamed, `U` untracked, `C` conflicted. */
@@ -199,7 +201,7 @@ export interface GitChange {
 }
 
 export interface PtyExit {
-  threadId: string;
+  terminalId: string;
   code: number | null;
 }
 
@@ -209,6 +211,7 @@ export type MenuAction =
   | "close_thread"
   | "toggle_terminal"
   | "maximize_terminal"
+  | "new_terminal"
   | "toggle_explorer"
   | "focus_chat"
   | "add_project"

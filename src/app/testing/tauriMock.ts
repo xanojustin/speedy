@@ -31,7 +31,7 @@ export const backend = {
   dirs: new Set<string>(),
   /** Regular files that exist on "disk". */
   files: new Set<string>(),
-  /** threadId -> whether its shell has a foreground child. */
+  /** terminalId -> whether its shell has a foreground child. */
   foreground: {} as Record<string, boolean>,
   calls: [] as Call[],
   listeners: {} as Record<string, Handler[]>,
@@ -40,6 +40,8 @@ export const backend = {
   pendingOpens: [] as string[],
   /** The explorer's view of the selected project: relative path -> text (folders are implied). */
   projectFiles: {} as Record<string, string>,
+  /** Top-level paths `explorer_list` flags as gitignored (and everything under them). */
+  ignoredPaths: [] as string[],
   gitChanges: [] as GitChange[],
 };
 
@@ -53,7 +55,11 @@ function listProjectDir(dir: string) {
     seen.set(name, (seen.get(name) ?? false) || rest.length > 0);
   }
   return [...seen]
-    .map(([name, isDir]) => ({ name, path: prefix + name, isDir }))
+    .map(([name, isDir]) => {
+      const path = prefix + name;
+      const ignored = backend.ignoredPaths.some((p) => path === p || path.startsWith(`${p}/`));
+      return { name, path, isDir, ignored };
+    })
     .sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name));
 }
 
@@ -86,7 +92,7 @@ export const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>):
         p.endsWith("/") ? backend.dirs.has(p.slice(0, -1)) : backend.dirs.has(p) || backend.files.has(p),
       );
     case "pty_has_foreground_child":
-      return backend.foreground[args!.threadId as string] ?? false;
+      return backend.foreground[args!.terminalId as string] ?? false;
     case "sessions_list":
       return [];
     case "open_folders_take":
@@ -170,6 +176,7 @@ export function resetFakeBackend(state: AppState = emptyState()) {
   backend.dragDrop = null;
   backend.pendingOpens = [];
   backend.projectFiles = {};
+  backend.ignoredPaths = [];
   backend.gitChanges = [];
   invoke.mockClear();
   dialog.open.mockReset().mockResolvedValue(null);

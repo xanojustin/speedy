@@ -1,5 +1,5 @@
-// U7: xterm.js terminal bound to the thread's PTY.
-// `visible` false means the pane is hidden (thread not selected or terminal toggled off):
+// U7: xterm.js terminal bound to one PTY (a thread's terminal tab).
+// `visible` false means the pane is hidden (another tab, thread not selected, or panel toggled off):
 // keep the xterm instance and buffer alive, drop the WebGL context (KTD3).
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
@@ -7,32 +7,32 @@ import "./terminal.css";
 import { FindWidget } from "./FindWidget";
 import { attachTerminal, type AttachedTerminal } from "./registry";
 
-export { disposeTerminal } from "./registry";
+export { disposeTerminal, disposeThreadTerminals } from "./registry";
 
-export function TerminalPane({ threadId, cwd, visible }: { threadId: string; cwd: string; visible: boolean }) {
+export function TerminalPane({ terminalId, cwd, visible }: { terminalId: string; cwd: string; visible: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const attached = useRef<AttachedTerminal | null>(null);
   const [findOpen, setFindOpen] = useState(false);
 
   useLayoutEffect(() => {
-    const t = attachTerminal(threadId, cwd, hostRef.current!, visible, () => setFindOpen(true));
+    const t = attachTerminal(terminalId, cwd, hostRef.current!, visible, () => setFindOpen(true));
     attached.current = t;
     return () => {
       t.detach();
       attached.current = null;
     };
-    // cwd is fixed for a thread's lifetime; `visible` changes go through setVisible below.
-  }, [threadId]);
+    // cwd is fixed for a terminal's lifetime; `visible` changes go through setVisible below.
+  }, [terminalId]);
 
-  // Focus when this thread's terminal is toggled open, but not when switching threads.
-  const prev = useRef({ threadId, visible });
+  // Focus when this terminal is shown (panel toggled open or tab selected), not on first mount.
+  const prev = useRef({ terminalId, visible });
   useLayoutEffect(() => {
     attached.current?.setVisible(visible);
-    if (visible && !prev.current.visible && prev.current.threadId === threadId) attached.current?.focus();
-    prev.current = { threadId, visible };
-  }, [visible, threadId]);
+    if (visible && !prev.current.visible && prev.current.terminalId === terminalId) attached.current?.focus();
+    prev.current = { terminalId, visible };
+  }, [visible, terminalId]);
 
-  useEffect(() => setFindOpen(false), [threadId]);
+  useEffect(() => setFindOpen(false), [terminalId]);
 
   const closeFind = () => {
     setFindOpen(false);
@@ -41,7 +41,7 @@ export function TerminalPane({ threadId, cwd, visible }: { threadId: string; cwd
   };
 
   return (
-    <div className="terminal-pane" data-thread={threadId} hidden={!visible}>
+    <div className="terminal-pane" data-thread={terminalId} hidden={!visible}>
       <div className="terminal-host" ref={hostRef} />
       {findOpen && (
         <FindWidget onFind={(q, back, inc) => attached.current?.find(q, back, inc) ?? false} onClose={closeFind} />

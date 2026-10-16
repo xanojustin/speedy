@@ -49,6 +49,21 @@ describe("Explorer", () => {
     expect(explorer()).toBeNull();
   });
 
+  it("lists gitignored entries dimmed, including everything under an ignored folder", async () => {
+    backend.projectFiles = { ...backend.projectFiles, ".env": "SECRET=1\n", "dist/out.js": "" };
+    backend.ignoredPaths = [".env", "dist"];
+    await renderApp();
+    act(() => emitMenu("toggle_explorer"));
+    const tree = await screen.findByRole("tree", { name: "Files in app" });
+    const env = (await within(tree).findByText(".env")).closest("button")!;
+    expect(env).toHaveAttribute("data-ignored");
+    expect(env).toHaveAttribute("title", ".env • Ignored");
+    expect(within(tree).getByText("README.md").closest("button")).not.toHaveAttribute("data-ignored");
+
+    fireEvent.click(within(tree).getByText("dist"));
+    expect((await within(tree).findByText("out.js")).closest("button")).toHaveAttribute("data-ignored");
+  });
+
   it("previews Markdown, edits and saves it, and shows changes vs HEAD", async () => {
     await renderApp();
     act(() => emitMenu("toggle_explorer"));

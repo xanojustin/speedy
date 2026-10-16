@@ -1,6 +1,6 @@
 //! U6: native menu with app-level accelerators (KTD10).
 //! Each custom item emits the app event `menu` with its id as payload:
-//! `new_thread`, `close_thread`, `toggle_terminal`, `maximize_terminal`,
+//! `new_thread`, `close_thread`, `toggle_terminal`, `maximize_terminal`, `new_terminal`,
 //! `toggle_explorer`, `focus_chat`, `switch_thread_1` … `switch_thread_9`, `add_project`, `open_settings`.
 //! Accelerators live on native menu items so WKWebView can't swallow them.
 //! `install_cli` is handled here in Rust (see `cli.rs`).
@@ -22,6 +22,8 @@ const THREAD_ITEMS: &[(&str, &str, &str)] = &[
         "Maximize Terminal",
         "CmdOrCtrl+Shift+J",
     ),
+    // VS Code's shortcut: Control, not Command, on macOS too.
+    ("new_terminal", "New Terminal", "Ctrl+Shift+`"),
     ("toggle_explorer", "Toggle Explorer", "CmdOrCtrl+Shift+E"),
     ("focus_chat", "Focus Chat", "CmdOrCtrl+L"),
 ];
@@ -127,6 +129,7 @@ mod tests {
             "add_project",
             "toggle_terminal",
             "maximize_terminal",
+            "new_terminal",
             "toggle_explorer",
             "focus_chat",
             "open_settings",

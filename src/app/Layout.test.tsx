@@ -110,6 +110,41 @@ describe("Layout", () => {
     expect(chatRegion()).toBeVisible();
   });
 
+  it("adds terminal tabs, switches between them, and hides the panel when the last is killed", async () => {
+    resetBackend(stateWith([project("app")]));
+    await renderApp();
+    expect(screen.queryByRole("tablist", { name: "Terminals" })).toBeNull();
+
+    // New Terminal shows the hidden panel with a second shell, and lists both.
+    act(() => emitMenu("toggle_terminal"));
+    expect(terminalRegion()).not.toBeVisible();
+    act(() => emitMenu("new_terminal"));
+    expect(terminalRegion()).toBeVisible();
+    const tabs = screen.getByRole("tablist", { name: "Terminals" });
+    const tab = (name: string) => within(tabs).getByRole("tab", { name });
+    expect(tab("Terminal 2")).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(callsTo("pty_open").map((c) => c.args?.terminalId)).toContain("app-t1:2"));
+    const panes = () => [...document.querySelectorAll<HTMLElement>(".terminal-pane")].map((p) => !p.hidden);
+    expect(panes()).toEqual([false, true]);
+
+    fireEvent.click(tab("Terminal 1"));
+    expect(panes()).toEqual([true, false]);
+
+    // Killing a tab closes its shell and activates its neighbour; the list goes with one left.
+    fireEvent.click(within(tabs).getByRole("button", { name: "Kill Terminal 1" }));
+    expect(callsTo("pty_close").map((c) => c.args)).toEqual([{ terminalId: "app-t1" }]);
+    expect(screen.queryByRole("tablist", { name: "Terminals" })).toBeNull();
+    expect(panes()).toEqual([true]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Kill Terminal" }));
+    expect(callsTo("pty_close").map((c) => c.args?.terminalId)).toEqual(["app-t1", "app-t1:2"]);
+    expect(terminalRegion()).not.toBeVisible();
+    // Reopening starts a fresh shell.
+    act(() => emitMenu("toggle_terminal"));
+    expect(panes()).toEqual([true]);
+    await waitFor(() => expect(callsTo("pty_open").map((c) => c.args?.terminalId)).toContain("app-t1:3"));
+  });
+
   it("shows an empty state with Add Project Folder when no thread is selected", async () => {
     await renderApp();
     expect(within(screen.getByRole("main")).getByRole("button", { name: "Add Project Folder" })).toBeInTheDocument();
@@ -141,6 +176,18 @@ describe("Close thread (Cmd+W)", () => {
     await renderApp();
     act(() => emitMenu("close_thread"));
     await waitFor(() => expect(dialog.ask).toHaveBeenCalledTimes(1));
+  });
+
+  it("asks when any of the thread's terminals has a foreground process, and closes them all", async () => {
+    resetBackend(stateWith([project("app", [{}, {}])], "app-t1"));
+    backend.foreground["app-t1:2"] = true;
+    dialog.ask.mockResolvedValue(true);
+    await renderApp();
+    act(() => emitMenu("new_terminal"));
+    act(() => emitMenu("close_thread"));
+    await waitFor(() => expect(dialog.ask).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText("app thread 1")).toBeNull());
+    expect(callsTo("pty_close").map((c) => c.args?.terminalId)).toEqual(["app-t1", "app-t1:2"]);
   });
 
   it("archives an idle thread immediately, stops it, and restores it from Archived", async () => {

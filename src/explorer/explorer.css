@@ -95,6 +95,10 @@
   font-weight: 600;
 }
 
+.explorer-row[data-ignored] {
+  color: var(--vscode-gitDecoration-ignoredResourceForeground, var(--vscode-disabledForeground));
+}
+
 [data-git="M"],
 [data-git="R"] {
   color: var(--vscode-gitDecoration-modifiedResourceForeground);

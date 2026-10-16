@@ -187,7 +187,7 @@ fn exit_emits_one_event_with_code_zero_and_frees_the_pty() {
     std::thread::sleep(Duration::from_millis(300));
     let exits = f.exits.lock().unwrap().clone();
     assert_eq!(exits.len(), 1, "{exits:?}");
-    assert_eq!(exits[0].thread_id, "t-exit");
+    assert_eq!(exits[0].terminal_id, "t-exit");
     assert_eq!(exits[0].code, Some(0));
     assert!(!f.host.contains("t-exit"));
     assert!(f.host.write("t-exit", b"x").is_err());

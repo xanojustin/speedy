@@ -169,8 +169,9 @@ function TreeLevel({
               aria-expanded={e.isDir ? open : undefined}
               className="explorer-row"
               data-git={status}
+              data-ignored={e.ignored || undefined}
               style={indent}
-              title={status ? `${e.path} • ${STATUS_LABEL[status]}` : e.path}
+              title={status ? `${e.path} • ${STATUS_LABEL[status]}` : e.ignored ? `${e.path} • Ignored` : e.path}
               onClick={() => (e.isDir ? onToggle(e.path) : onOpen(e.path))}
             >
               <span className={`codicon codicon-${e.isDir ? (open ? "chevron-down" : "chevron-right") : "blank"}`} aria-hidden />

@@ -1,6 +1,6 @@
-// U7: one xterm per thread, alive for the life of the thread and independent of
-// React mounting (KTD2, KTD3). The PTY opens with the xterm, so a hidden thread's
-// shell output keeps landing in its buffer.
+// U7: one xterm per terminal (a thread can have several, see ./tabs.ts), alive until the
+// terminal is killed or its thread archived, and independent of React mounting (KTD2, KTD3).
+// The PTY opens with the xterm, so a hidden terminal's shell output keeps landing in its buffer.
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -8,12 +8,13 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { onPtyExit, openPath, ptyClose, ptyOpen, ptyResize, ptyWrite } from "../ipc/commands";
 import { terminalKeyAction } from "./keys";
+import { useTerminalTabs } from "./tabs";
 import { attachWebgl } from "./webgl";
 
 const RESIZE_DEBOUNCE_MS = 50;
 
 interface Entry {
-  threadId: string;
+  terminalId: string;
   cwd: string;
   term: Terminal;
   fit: FitAddon;
@@ -79,7 +80,7 @@ function listenOnce() {
   if (listening) return;
   listening = true;
   void onPtyExit((e) => {
-    const entry = entries.get(e.threadId);
+    const entry = entries.get(e.terminalId);
     if (!entry) return;
     entry.exited = true;
     const status = e.code == null ? "[Process exited]" : `[Process exited with code ${e.code}]`;
@@ -97,16 +98,16 @@ function listenOnce() {
 // ---- PTY ----
 
 function startPty(entry: Entry) {
-  const { threadId, cwd, term } = entry;
+  const { terminalId, cwd, term } = entry;
   entry.exited = false;
-  ptyOpen(threadId, cwd, term.cols, term.rows, (bytes) => term.write(bytes)).catch((err) => {
-    if (entries.get(threadId) !== entry) return;
+  ptyOpen(terminalId, cwd, term.cols, term.rows, (bytes) => term.write(bytes)).catch((err) => {
+    if (entries.get(terminalId) !== entry) return;
     entry.exited = true;
     term.write(`\r\n\x1b[31m[Failed to start shell: ${String(err)}]\x1b[0m — press Enter to retry\r\n`);
   });
 }
 
-function create(threadId: string, cwd: string): Entry {
+function create(terminalId: string, cwd: string): Entry {
   listenOnce();
   const term = new Terminal({
     allowProposedApi: true, // unicode11
@@ -128,7 +129,7 @@ function create(threadId: string, cwd: string): Entry {
   const container = document.createElement("div");
   container.className = "terminal-instance";
   const entry: Entry = {
-    threadId,
+    terminalId,
     cwd,
     term,
     fit,
@@ -174,13 +175,14 @@ function create(threadId: string, cwd: string): Entry {
       if (data === "\r") startPty(entry);
       return;
     }
-    void ptyWrite(threadId, data).catch(() => {});
+    void ptyWrite(terminalId, data).catch(() => {});
   });
+  term.onTitleChange((title) => useTerminalTabs.getState().setTitle(terminalId, title));
   term.onResize(({ cols, rows }) => {
-    if (!entry.exited) void ptyResize(threadId, cols, rows).catch(() => {});
+    if (!entry.exited) void ptyResize(terminalId, cols, rows).catch(() => {});
   });
 
-  entries.set(threadId, entry);
+  entries.set(terminalId, entry);
   return entry;
 }
 
@@ -201,20 +203,20 @@ export interface AttachedTerminal {
 }
 
 /**
- * Puts the thread's persistent xterm into `host`, creating it and starting its
+ * Puts the terminal's persistent xterm into `host`, creating it and starting its
  * PTY the first time. `detach` removes it from `host` without disposing anything.
  * xterm is opened on the first visible attach, because a `display: none` host
  * can't be measured; output written before that is buffered.
  */
 export function attachTerminal(
-  threadId: string,
+  terminalId: string,
   cwd: string,
   host: HTMLElement,
   initiallyVisible: boolean,
   onFind: () => void,
 ): AttachedTerminal {
-  const existing = entries.get(threadId);
-  const entry = existing ?? create(threadId, cwd);
+  const existing = entries.get(terminalId);
+  const entry = existing ?? create(terminalId, cwd);
   host.appendChild(entry.container);
   entry.onFind = onFind;
   let visible = false;
@@ -273,13 +275,24 @@ export function attachTerminal(
   };
 }
 
-/** Disposes the thread's xterm and closes its shell (thread archived). */
-export function disposeTerminal(threadId: string): void {
-  const entry = entries.get(threadId);
+/** Focuses the terminal if it's open on screen. */
+export function focusTerminal(terminalId: string): void {
+  const entry = entries.get(terminalId);
+  if (entry?.opened) entry.term.focus();
+}
+
+/** Disposes the terminal's xterm and closes its shell (terminal killed or thread archived). */
+export function disposeTerminal(terminalId: string): void {
+  const entry = entries.get(terminalId);
   if (!entry) return;
-  entries.delete(threadId);
+  entries.delete(terminalId);
   entry.releaseWebgl?.();
   entry.container.remove();
   entry.term.dispose();
-  void ptyClose(threadId).catch(() => {});
+  void ptyClose(terminalId).catch(() => {});
+}
+
+/** Disposes every terminal of the thread and forgets its tabs (thread archived). */
+export function disposeThreadTerminals(threadId: string): void {
+  for (const id of useTerminalTabs.getState().forgetThread(threadId)) disposeTerminal(id);
 }

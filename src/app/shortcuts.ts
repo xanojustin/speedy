@@ -6,6 +6,8 @@ import type { MenuAction } from "../ipc/types";
 import { findThread, useAppStore, visibleThreads } from "../store/appStore";
 import { FOCUS_COMPOSER_EVENT, type FocusComposerDetail } from "../composer/focusEvent";
 import { addProjectViaPicker, closeThread, newThread } from "./actions";
+import { disposeTerminal, focusTerminal } from "../terminal/registry";
+import { terminalsOf, useTerminalTabs } from "../terminal/tabs";
 
 export function toggleTerminal(threadId: string) {
   const t = findThread(useAppStore.getState(), threadId)?.thread;
@@ -18,6 +20,26 @@ export function toggleMaximizeTerminal(threadId: string) {
   // Maximizing a hidden terminal shows it maximized.
   const maximize = !t.terminalVisible || !t.terminalMaximized;
   useAppStore.getState().updateThread(threadId, { terminalVisible: true, terminalMaximized: maximize });
+}
+
+/** Adds a terminal tab to the thread, shows the panel, and focuses the new shell. */
+export function newTerminal(threadId: string) {
+  const id = useTerminalTabs.getState().add(threadId);
+  useAppStore.getState().updateThread(threadId, { terminalVisible: true });
+  requestAnimationFrame(() => focusTerminal(id));
+}
+
+/** Kills the terminal's shell and closes its tab. Killing the last one hides the panel, like VS Code. */
+export function killTerminal(threadId: string, terminalId: string) {
+  const tabs = useTerminalTabs.getState();
+  const last = tabs.remove(threadId, terminalId);
+  disposeTerminal(terminalId);
+  if (last) {
+    useAppStore.getState().updateThread(threadId, { terminalVisible: false, terminalMaximized: false });
+    return;
+  }
+  const { active } = terminalsOf(useTerminalTabs.getState().byThread, threadId);
+  requestAnimationFrame(() => focusTerminal(active));
 }
 
 function focusChat(threadId: string) {
@@ -42,6 +64,9 @@ function handleMenuAction(action: MenuAction) {
       return;
     case "maximize_terminal":
       if (selected) toggleMaximizeTerminal(selected);
+      return;
+    case "new_terminal":
+      if (selected) newTerminal(selected);
       return;
     case "toggle_explorer":
       return s.setExplorerOpen(!s.explorerOpen);

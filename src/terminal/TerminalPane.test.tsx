@@ -55,9 +55,9 @@ const press = (init: KeyboardEventInit) => {
 const screenText = () => document.querySelector(".xterm-rows")?.textContent ?? "";
 const written = () => ipc.ptyWrite.mock.calls.map((c) => c[1]);
 const used = new Set<string>();
-const pane = (threadId: string, visible = true) => {
-  used.add(threadId);
-  return <TerminalPane threadId={threadId} cwd={`/proj/${threadId}`} visible={visible} />;
+const pane = (terminalId: string, visible = true) => {
+  used.add(terminalId);
+  return <TerminalPane terminalId={terminalId} cwd={`/proj/${terminalId}`} visible={visible} />;
 };
 
 beforeAll(() => {
@@ -221,7 +221,7 @@ describe("TerminalPane", () => {
   it("reports a shell exit and restarts the PTY on Enter", async () => {
     render(pane("x1"));
     // The registry subscribes to pty-exit once, with its first terminal.
-    act(() => exitListener({ threadId: "x1", code: 0 }));
+    act(() => exitListener({ terminalId: "x1", code: 0 }));
     await vi.waitFor(() => expect(screenText()).toContain("[Process exited with code 0]"));
     press({ key: "a", code: "KeyA", keyCode: 65 });
     expect(ipc.ptyWrite).not.toHaveBeenCalled();
@@ -240,7 +240,7 @@ describe("TerminalPane", () => {
     render(pane("d1"));
     expect(ipc.ptyOpen).toHaveBeenCalledTimes(2);
   });
-  it("focuses the terminal when it is toggled open, not on thread switch", () => {
+  it("focuses the terminal when it is shown, not when another terminal mounts", () => {
     const { rerender } = render(pane("t9", false));
     expect(document.activeElement).not.toBe(textarea());
     rerender(pane("t9", true));

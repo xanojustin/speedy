@@ -1,4 +1,4 @@
-//! U4: one login-shell PTY per thread with coalesced binary output (KTD3, KTD9).
+//! U4: login-shell PTYs (a thread can have several terminals) with coalesced binary output (KTD3, KTD9).
 //! Types and commands are the IPC contract; the Tauri-free core is in `manager`.
 
 pub mod coalesce;
@@ -14,17 +14,17 @@ use tauri::{AppHandle, Emitter};
 
 use crate::env::EnvService;
 
-/// Emitted as the app event `pty-exit` when a thread's shell exits.
+/// Emitted as the app event `pty-exit` when a terminal's shell exits.
 pub const PTY_EXIT_EVENT: &str = "pty-exit";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PtyExit {
-    pub thread_id: String,
+    pub terminal_id: String,
     pub code: Option<i32>,
 }
 
-/// Grace between SIGHUP and SIGKILL when a thread's terminal is closed.
+/// Grace between SIGHUP and SIGKILL when a terminal is closed.
 const CLOSE_GRACE: Duration = Duration::from_secs(3);
 
 pub struct PtyManager {
@@ -45,7 +45,7 @@ impl PtyManager {
     /// Starts `$SHELL -l` in `cwd` with the resolved login env, or rebinds output.
     pub async fn open(
         &self,
-        thread_id: &str,
+        terminal_id: &str,
         cwd: &str,
         cols: u16,
         rows: u16,
@@ -59,7 +59,7 @@ impl PtyManager {
         let sink: manager::OutputSink = Box::new(move |bytes| {
             let _ = on_data.send(InvokeResponseBody::Raw(bytes));
         });
-        self.host.open(thread_id, spec, sink)
+        self.host.open(terminal_id, spec, sink)
     }
 
     /// SIGHUP every PTY's process group, SIGKILL after `grace` (KTD9).
@@ -68,44 +68,44 @@ impl PtyManager {
     }
 }
 
-/// Opens the thread's shell if absent, or rebinds `on_data` if it already runs.
+/// Opens the terminal's shell if absent, or rebinds `on_data` if it already runs.
 /// Output arrives on `on_data` as raw bytes (ArrayBuffer in JS), coalesced per KTD3.
 #[tauri::command]
 pub async fn pty_open(
     ctx: tauri::State<'_, crate::AppCtx>,
-    thread_id: String,
+    terminal_id: String,
     cwd: String,
     cols: u16,
     rows: u16,
     on_data: Channel<InvokeResponseBody>,
 ) -> Result<(), String> {
-    ctx.ptys.open(&thread_id, &cwd, cols, rows, on_data).await.map_err(|e| format!("{e:#}"))
+    ctx.ptys.open(&terminal_id, &cwd, cols, rows, on_data).await.map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
-pub fn pty_write(ctx: tauri::State<'_, crate::AppCtx>, thread_id: String, data: String) -> Result<(), String> {
-    ctx.ptys.host.write(&thread_id, data.as_bytes()).map_err(|e| e.to_string())
+pub fn pty_write(ctx: tauri::State<'_, crate::AppCtx>, terminal_id: String, data: String) -> Result<(), String> {
+    ctx.ptys.host.write(&terminal_id, data.as_bytes()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn pty_resize(
     ctx: tauri::State<'_, crate::AppCtx>,
-    thread_id: String,
+    terminal_id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    ctx.ptys.host.resize(&thread_id, cols, rows).map_err(|e| e.to_string())
+    ctx.ptys.host.resize(&terminal_id, cols, rows).map_err(|e| e.to_string())
 }
 
 /// Returns immediately; the shell's process groups get SIGHUP, then SIGKILL after a grace.
 #[tauri::command]
-pub fn pty_close(ctx: tauri::State<'_, crate::AppCtx>, thread_id: String) -> Result<(), String> {
-    ctx.ptys.host.close(&thread_id, CLOSE_GRACE);
+pub fn pty_close(ctx: tauri::State<'_, crate::AppCtx>, terminal_id: String) -> Result<(), String> {
+    ctx.ptys.host.close(&terminal_id, CLOSE_GRACE);
     Ok(())
 }
 
 /// True when the shell has a foreground child (Cmd+W confirmation, U6).
 #[tauri::command]
-pub fn pty_has_foreground_child(ctx: tauri::State<'_, crate::AppCtx>, thread_id: String) -> bool {
-    ctx.ptys.host.has_foreground_child(&thread_id)
+pub fn pty_has_foreground_child(ctx: tauri::State<'_, crate::AppCtx>, terminal_id: String) -> bool {
+    ctx.ptys.host.has_foreground_child(&terminal_id)
 }

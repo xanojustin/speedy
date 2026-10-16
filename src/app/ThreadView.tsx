@@ -1,10 +1,11 @@
-// The selected thread: chat on top, its terminal docked below like VS Code's panel (R16).
+// The selected thread: chat on top, its terminals docked below like VS Code's panel (R16).
 import { useRef, useState } from "react";
 import { ChatPane } from "../chat/ChatPane";
 import type { Project, Thread } from "../ipc/types";
 import { useAppStore } from "../store/appStore";
 import { TerminalPane } from "../terminal/TerminalPane";
-import { toggleMaximizeTerminal, toggleTerminal } from "./shortcuts";
+import { terminalLabel, terminalsOf, useTerminalTabs } from "../terminal/tabs";
+import { killTerminal, newTerminal, toggleMaximizeTerminal, toggleTerminal } from "./shortcuts";
 
 const MIN_RATIO = 0.1;
 const MAX_RATIO = 0.9;
@@ -16,6 +17,10 @@ export function ThreadView({ project, thread }: { project: Project; thread: Thre
   const splitRef = useRef<HTMLDivElement>(null);
   // While dragging the sash the ratio lives here; it's persisted once on release.
   const [dragRatio, setDragRatio] = useState<number | null>(null);
+  const terminals = useTerminalTabs((s) => terminalsOf(s.byThread, thread.id));
+  const titles = useTerminalTabs((s) => s.titles);
+  const setActiveTerminal = useTerminalTabs((s) => s.setActive);
+  const label = (id: string) => titles[id] || terminalLabel(thread.id, id);
 
   const terminalShown = thread.terminalVisible;
   const maximized = terminalShown && thread.terminalMaximized;
@@ -68,6 +73,18 @@ export function ThreadView({ project, thread }: { project: Project; thread: Thre
         <div className="panel-header">
           <span className="panel-title">Terminal</span>
           <span className="panel-actions">
+            <button type="button" className="icon-button" aria-label="New Terminal" title="New Terminal (⌃⇧`)" onClick={() => newTerminal(thread.id)}>
+              <span className="codicon codicon-add" aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Kill Terminal"
+              title="Kill Terminal"
+              onClick={() => killTerminal(thread.id, terminals.active)}
+            >
+              <span className="codicon codicon-trash" aria-hidden />
+            </button>
             <button
               type="button"
               className="icon-button"
@@ -83,7 +100,39 @@ export function ThreadView({ project, thread }: { project: Project; thread: Thre
           </span>
         </div>
         <div className="terminal-body">
-          <TerminalPane threadId={thread.id} cwd={project.path} visible={terminalShown} />
+          <div className="terminal-stack">
+            {terminals.ids.map((id) => (
+              <TerminalPane key={id} terminalId={id} cwd={project.path} visible={terminalShown && id === terminals.active} />
+            ))}
+          </div>
+          {terminals.ids.length > 1 && (
+            <div className="terminal-tabs" role="tablist" aria-label="Terminals" aria-orientation="vertical">
+              {terminals.ids.map((id) => (
+                <div key={id} className="terminal-tab" data-active={id === terminals.active || undefined}>
+                  <button
+                    type="button"
+                    role="tab"
+                    className="terminal-tab-select"
+                    aria-selected={id === terminals.active}
+                    title={label(id)}
+                    onClick={() => setActiveTerminal(thread.id, id)}
+                  >
+                    <span className="codicon codicon-terminal" aria-hidden />
+                    <span className="terminal-tab-label">{label(id)}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button terminal-tab-kill"
+                    aria-label={`Kill ${label(id)}`}
+                    title="Kill Terminal"
+                    onClick={() => killTerminal(thread.id, id)}
+                  >
+                    <span className="codicon codicon-trash" aria-hidden />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
     </div>

@@ -26,6 +26,8 @@ pub struct DirEntry {
     /// Path relative to the project root, `/`-separated.
     pub path: String,
     pub is_dir: bool,
+    /// Matched by a gitignore rule; listed so it can be shown dimmed.
+    pub ignored: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -38,8 +40,8 @@ pub struct GitChange {
 }
 
 #[tauri::command]
-pub async fn explorer_list(root: String, dir: String, respect_gitignore: Option<bool>) -> Result<Vec<DirEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || list(Path::new(&root), &dir, respect_gitignore.unwrap_or(true)))
+pub async fn explorer_list(root: String, dir: String) -> Result<Vec<DirEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || list(Path::new(&root), &dir))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -87,33 +89,57 @@ pub fn resolve(root: &Path, rel: &str) -> Result<PathBuf, String> {
 }
 
 /// The direct children of `dir` (relative to `root`; `""` is the root), folders first.
-pub fn list(root: &Path, dir: &str, respect_gitignore: bool) -> Result<Vec<DirEntry>, String> {
+/// Gitignored entries are included and flagged; `.ignore` files still hide entries outright.
+pub fn list(root: &Path, dir: &str) -> Result<Vec<DirEntry>, String> {
     let base = resolve(root, dir)?;
-    let mut out = Vec::new();
-    let walker = WalkBuilder::new(&base)
+    // Rules only match an entry's own path, so everything under an ignored folder is ignored too.
+    let under_ignored = ignored_ancestor(root, dir)?;
+    let visible = children(&base, true);
+    let mut out: Vec<DirEntry> = children(&base, false)
+        .into_iter()
+        .map(|(full, name)| {
+            let path = if dir.is_empty() { name.clone() } else { format!("{}/{name}", dir.trim_end_matches('/')) };
+            // Symlinked folders are listed as folders (follow_links only stops the walk descending).
+            let is_dir = full.is_dir();
+            let ignored = under_ignored || !visible.iter().any(|(p, _)| *p == full);
+            DirEntry { name, path, is_dir, ignored }
+        })
+        .collect();
+    out.sort_by_key(|e| (!e.is_dir, e.name.to_lowercase()));
+    Ok(out)
+}
+
+/// Whether `dir` or a folder above it (below `root`) is gitignored.
+fn ignored_ancestor(root: &Path, dir: &str) -> Result<bool, String> {
+    let mut parent = String::new();
+    for name in dir.split('/').filter(|n| !n.is_empty() && *n != ".") {
+        let base = resolve(root, &parent)?;
+        if !children(&base, true).iter().any(|(_, n)| n == name) {
+            return Ok(true);
+        }
+        parent = if parent.is_empty() { name.to_string() } else { format!("{parent}/{name}") };
+    }
+    Ok(false)
+}
+
+/// One level of `base` as `(path, name)`, honouring gitignore rules when `gitignore` is set.
+fn children(base: &Path, gitignore: bool) -> Vec<(PathBuf, String)> {
+    WalkBuilder::new(base)
         .max_depth(Some(1))
         .hidden(false)
         .parents(true)
         .ignore(true)
-        .git_ignore(respect_gitignore)
-        .git_global(respect_gitignore)
-        .git_exclude(respect_gitignore)
+        .git_ignore(gitignore)
+        .git_global(gitignore)
+        .git_exclude(gitignore)
         .require_git(false)
         .follow_links(false)
         .filter_entry(|e| e.file_name() != ".git" && e.file_name() != ".DS_Store")
-        .build();
-    for entry in walker.flatten() {
-        if entry.depth() == 0 {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let path = if dir.is_empty() { name.clone() } else { format!("{}/{name}", dir.trim_end_matches('/')) };
-        // Symlinked folders are listed as folders (follow_links only stops the walk descending).
-        let is_dir = entry.path().is_dir();
-        out.push(DirEntry { name, path, is_dir });
-    }
-    out.sort_by_key(|e| (!e.is_dir, e.name.to_lowercase()));
-    Ok(out)
+        .build()
+        .flatten()
+        .filter(|e| e.depth() > 0)
+        .map(|e| (e.path().to_path_buf(), e.file_name().to_string_lossy().into_owned()))
+        .collect()
 }
 
 pub fn read(root: &Path, rel: &str) -> Result<String, String> {

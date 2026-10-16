@@ -25,23 +25,33 @@ fn git(root: &Path, args: &[&str]) {
 }
 
 #[test]
-fn lists_one_level_folders_first_skipping_git_and_ignored() {
+fn lists_one_level_folders_first_skipping_git_and_flagging_ignored() {
     let dir = tempfile::tempdir().unwrap();
     let r = dir.path();
-    put(r, ".gitignore", "node_modules/\n");
+    put(r, ".gitignore", "node_modules/\n.env\n");
     put(r, ".git/HEAD", "ref: refs/heads/main\n");
+    put(r, ".env", "SECRET=1\n");
     put(r, "b.md", "");
     put(r, "A.md", "");
     put(r, "src/main.rs", "");
     put(r, "node_modules/x.js", "");
 
-    let names: Vec<_> = list(r, "", true).unwrap().into_iter().map(|e| (e.path, e.is_dir)).collect();
+    let names: Vec<_> = list(r, "").unwrap().into_iter().map(|e| (e.path, e.is_dir, e.ignored)).collect();
     assert_eq!(
         names,
-        vec![("src".into(), true), (".gitignore".into(), false), ("A.md".into(), false), ("b.md".into(), false)]
+        vec![
+            ("node_modules".into(), true, true),
+            ("src".into(), true, false),
+            (".env".into(), false, true),
+            (".gitignore".into(), false, false),
+            ("A.md".into(), false, false),
+            ("b.md".into(), false, false),
+        ]
     );
-    let sub: Vec<_> = list(r, "src", true).unwrap().into_iter().map(|e| e.path).collect();
-    assert_eq!(sub, vec!["src/main.rs"]);
+    let sub: Vec<_> = list(r, "src").unwrap().into_iter().map(|e| (e.path, e.ignored)).collect();
+    assert_eq!(sub, vec![("src/main.rs".into(), false)]);
+    let inside: Vec<_> = list(r, "node_modules").unwrap().into_iter().map(|e| (e.path, e.ignored)).collect();
+    assert_eq!(inside, vec![("node_modules/x.js".into(), true)]);
 }
 
 #[test]

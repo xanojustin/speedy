@@ -1,7 +1,7 @@
 //! U4: PTY spawn, write, resize, exit tracking, and process-group teardown.
 //!
 //! Tauri-free so it can be driven directly from tests: `PtySession` is one
-//! shell on one PTY, `PtyHost` maps thread ids to sessions. `PtyManager`
+//! shell on one PTY, `PtyHost` maps terminal ids to sessions. `PtyManager`
 //! (mod.rs) wraps the host with Tauri channels and app events.
 
 use std::collections::HashMap;
@@ -204,7 +204,7 @@ struct Entry {
 
 type Sessions = Arc<Mutex<HashMap<String, Entry>>>;
 
-/// Thread id → PTY session. Reports exits through `on_exit` and forgets the session.
+/// Terminal id → PTY session. Reports exits through `on_exit` and forgets the session.
 pub struct PtyHost {
     sessions: Sessions,
     on_exit: Arc<dyn Fn(PtyExit) + Send + Sync>,
@@ -216,55 +216,55 @@ impl PtyHost {
         PtyHost { sessions: Arc::default(), on_exit: Arc::new(on_exit), next_id: AtomicU64::new(1) }
     }
 
-    /// Starts the thread's shell, or rebinds output (and size) if it already runs.
-    pub fn open(&self, thread_id: &str, spec: PtySpawn, sink: OutputSink) -> anyhow::Result<()> {
+    /// Starts the terminal's shell, or rebinds output (and size) if it already runs.
+    pub fn open(&self, terminal_id: &str, spec: PtySpawn, sink: OutputSink) -> anyhow::Result<()> {
         // Held across spawn so an instant exit can't run before the insert.
         let mut sessions = self.sessions.lock();
-        if let Some(entry) = sessions.get(thread_id) {
+        if let Some(entry) = sessions.get(terminal_id) {
             entry.session.set_sink(sink);
             return entry.session.resize(spec.cols, spec.rows);
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let session = PtySession::spawn(spec, sink, self.exit_callback(thread_id, id))?;
-        sessions.insert(thread_id.to_string(), Entry { id, session: Arc::new(session) });
+        let session = PtySession::spawn(spec, sink, self.exit_callback(terminal_id, id))?;
+        sessions.insert(terminal_id.to_string(), Entry { id, session: Arc::new(session) });
         Ok(())
     }
 
-    fn exit_callback(&self, thread_id: &str, id: u64) -> ExitCallback {
+    fn exit_callback(&self, terminal_id: &str, id: u64) -> ExitCallback {
         let sessions: Weak<Mutex<HashMap<String, Entry>>> = Arc::downgrade(&self.sessions);
         let emit = self.on_exit.clone();
-        let thread_id = thread_id.to_string();
+        let terminal_id = terminal_id.to_string();
         Box::new(move |code| {
             if let Some(sessions) = sessions.upgrade() {
                 let mut map = sessions.lock();
-                if map.get(&thread_id).is_some_and(|e| e.id == id) {
-                    map.remove(&thread_id);
+                if map.get(&terminal_id).is_some_and(|e| e.id == id) {
+                    map.remove(&terminal_id);
                 }
             }
-            emit(PtyExit { thread_id, code });
+            emit(PtyExit { terminal_id, code });
         })
     }
 
-    fn get(&self, thread_id: &str) -> anyhow::Result<Arc<PtySession>> {
+    fn get(&self, terminal_id: &str) -> anyhow::Result<Arc<PtySession>> {
         self.sessions
             .lock()
-            .get(thread_id)
+            .get(terminal_id)
             .map(|e| e.session.clone())
-            .ok_or_else(|| anyhow!("no terminal for thread {thread_id}"))
+            .ok_or_else(|| anyhow!("no terminal {terminal_id}"))
     }
 
-    pub fn write(&self, thread_id: &str, data: &[u8]) -> anyhow::Result<()> {
-        self.get(thread_id)?.write(data);
+    pub fn write(&self, terminal_id: &str, data: &[u8]) -> anyhow::Result<()> {
+        self.get(terminal_id)?.write(data);
         Ok(())
     }
 
-    pub fn resize(&self, thread_id: &str, cols: u16, rows: u16) -> anyhow::Result<()> {
-        self.get(thread_id)?.resize(cols, rows)
+    pub fn resize(&self, terminal_id: &str, cols: u16, rows: u16) -> anyhow::Result<()> {
+        self.get(terminal_id)?.resize(cols, rows)
     }
 
     /// Forgets the session now and tears its process groups down in the background.
-    pub fn close(&self, thread_id: &str, grace: Duration) {
-        let Some(entry) = self.sessions.lock().remove(thread_id) else { return };
+    pub fn close(&self, terminal_id: &str, grace: Duration) {
+        let Some(entry) = self.sessions.lock().remove(terminal_id) else { return };
         let groups = entry.session.process_groups();
         let _ = std::thread::Builder::new().name("pty-close".into()).spawn(move || {
             hangup_then_kill(&groups, grace);
@@ -272,12 +272,12 @@ impl PtyHost {
         });
     }
 
-    pub fn contains(&self, thread_id: &str) -> bool {
-        self.sessions.lock().contains_key(thread_id)
+    pub fn contains(&self, terminal_id: &str) -> bool {
+        self.sessions.lock().contains_key(terminal_id)
     }
 
-    pub fn has_foreground_child(&self, thread_id: &str) -> bool {
-        self.get(thread_id).is_ok_and(|s| s.has_foreground_child())
+    pub fn has_foreground_child(&self, terminal_id: &str) -> bool {
+        self.get(terminal_id).is_ok_and(|s| s.has_foreground_child())
     }
 
     /// Synchronous quit path: SIGHUP every group, wait up to `grace`, SIGKILL survivors.

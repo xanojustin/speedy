@@ -4,7 +4,8 @@ import { claudeStop, openFoldersTake, pathsExist, ptyHasForegroundChild } from "
 import { findThread, useAppStore } from "../store/appStore";
 import { forgetStarted } from "../store/runtime";
 import { getRuntime } from "../store/threadStore";
-import { disposeTerminal } from "../terminal/TerminalPane";
+import { disposeThreadTerminals } from "../terminal/TerminalPane";
+import { terminalsOf, useTerminalTabs } from "../terminal/tabs";
 
 /** Opens the folder picker and adds the chosen folder (R2). */
 export async function addProjectViaPicker(): Promise<void> {
@@ -38,14 +39,20 @@ export function newThread(projectId?: string): void {
   else void addProjectViaPicker();
 }
 
-/** True when closing would kill live work: the agent is Working or the shell runs a foreground job. */
+/** True when the terminal's shell runs a foreground job (e.g. `npm run dev`). */
+export async function terminalBusy(terminalId: string): Promise<boolean> {
+  try {
+    return await ptyHasForegroundChild(terminalId);
+  } catch {
+    return false; // no PTY opened for this terminal yet
+  }
+}
+
+/** True when closing would kill live work: the agent is Working or any of its shells runs a foreground job. */
 async function isBusy(threadId: string): Promise<boolean> {
   if (getRuntime(threadId).status === "working") return true;
-  try {
-    return await ptyHasForegroundChild(threadId);
-  } catch {
-    return false; // no PTY opened for this thread yet
-  }
+  const { ids } = terminalsOf(useTerminalTabs.getState().byThread, threadId);
+  return (await Promise.all(ids.map(terminalBusy))).some(Boolean);
 }
 
 /** Stops a thread's agent and shell. Sessions stay on disk. */
@@ -58,9 +65,9 @@ async function stopThread(threadId: string): Promise<void> {
   // A restored thread must call claude_start again to leave Stopped.
   forgetStarted(threadId);
   try {
-    await disposeTerminal(threadId);
+    disposeThreadTerminals(threadId);
   } catch (err) {
-    console.warn(`disposeTerminal(${threadId}) failed`, err);
+    console.warn(`disposeThreadTerminals(${threadId}) failed`, err);
   }
 }
 
