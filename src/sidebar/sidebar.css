@@ -18,6 +18,12 @@
   color: var(--vscode-sideBarTitle-foreground, var(--vscode-foreground));
 }
 
+.sidebar-title-icon {
+  flex: none;
+  margin-right: 6px;
+  font-size: 14px;
+}
+
 .sidebar-title-label {
   flex: 1;
   margin: 0;
@@ -82,6 +88,27 @@
   flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* The Chats section sits above the Projects title and scrolls on its own once it gets long. */
+.sidebar-chats {
+  flex: 0 1 auto;
+  max-height: 40%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-widget-border, transparent));
+}
+
+/* Thread rows line up under the section title's icon. */
+.sidebar-chats .thread-row,
+.sidebar-chats .archived-toggle,
+.sidebar-chats .thread-empty {
+  padding-left: 18px;
+}
+
+.sidebar-chats .archived-row {
+  padding-left: 34px;
 }
 
 .project-missing {

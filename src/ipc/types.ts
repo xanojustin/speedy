@@ -137,6 +137,8 @@ export interface Project {
   collapsed: boolean;
   /** The group this project is filed under; null (or an unknown id) = ungrouped. */
   groupId?: string | null;
+  /** Speedy's built-in Chats project: threads not tied to any folder, pinned atop the sidebar. */
+  scratch?: boolean;
   threads: Thread[];
 }
 

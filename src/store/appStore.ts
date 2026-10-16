@@ -291,18 +291,20 @@ export function findThread(state: Pick<AppState, "projects">, threadId: string |
 }
 
 export interface SidebarSection {
-  /** null for the ungrouped projects, which come first. */
+  /** null for the Chats project and the ungrouped projects, which come first. */
   group: Group | null;
   projects: Project[];
 }
 
-/** Projects as the sidebar shows them: ungrouped first, then each group in order. */
+/** Projects as the sidebar shows them: Chats, then ungrouped, then each group in order. */
 export function sidebarSections(state: Pick<AppState, "projects" | "groups">): SidebarSection[] {
   const groups = state.groups ?? [];
   const known = new Set(groups.map((g) => g.id));
+  const folders = state.projects.filter((p) => !p.scratch);
   return [
-    { group: null, projects: state.projects.filter((p) => !p.groupId || !known.has(p.groupId)) },
-    ...groups.map((group) => ({ group, projects: state.projects.filter((p) => p.groupId === group.id) })),
+    { group: null, projects: state.projects.filter((p) => p.scratch) },
+    { group: null, projects: folders.filter((p) => !p.groupId || !known.has(p.groupId)) },
+    ...groups.map((group) => ({ group, projects: folders.filter((p) => p.groupId === group.id) })),
   ];
 }
 

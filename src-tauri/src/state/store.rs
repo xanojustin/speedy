@@ -51,6 +51,8 @@ pub struct Project {
     pub collapsed: bool,
     /// The group this project is filed under; None (or an unknown id) = ungrouped.
     pub group_id: Option<String>,
+    /// Speedy's built-in Chats project: threads not tied to any folder, pinned atop the sidebar.
+    pub scratch: bool,
     pub threads: Vec<Thread>,
 }
 
@@ -118,6 +120,24 @@ pub struct LoadResult {
     pub state: AppState,
     /// Set when the state file was corrupt and moved aside.
     pub notice: Option<String>,
+}
+
+/// The Chats project's name, as the sidebar and thread header show it.
+const CHATS_NAME: &str = "No Project";
+
+/// Adds the Chats project (rooted at `dir`) when the state has none, and keeps its path and name current.
+pub fn ensure_chats_project(state: &mut AppState, dir: &Path) {
+    let path = dir.to_string_lossy().into_owned();
+    if let Some(chats) = state.projects.iter_mut().find(|p| p.scratch) {
+        chats.path = path;
+        chats.name = CHATS_NAME.into();
+        return;
+    }
+    let ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    state.projects.insert(
+        0,
+        Project { id: format!("chats-{ms}"), path, name: CHATS_NAME.into(), scratch: true, ..Project::default() },
+    );
 }
 
 const STATE_FILE: &str = "state.json";

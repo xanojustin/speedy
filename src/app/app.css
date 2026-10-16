@@ -282,6 +282,11 @@
   max-width: 340px;
 }
 
+.empty-state-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .empty-state-keys {
   display: grid;
   grid-template-columns: auto auto;

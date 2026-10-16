@@ -290,6 +290,24 @@ describe("Sidebar", () => {
     await within(sidebar()).findByText("dropped");
     expect(useAppStore.getState().projects.map((p) => p.path)).toEqual(["/Users/me/dropped"]);
   });
+  it("lists No Project threads in their own section above the Projects title, with a trimmed menu", async () => {
+    resetBackend({
+      ...stateWith([project("alpha", [{}], { groupId: "g1" }), project("chats", [{}], { scratch: true, groupId: "g1", name: "No Project" }), project("beta")]),
+      groups: [{ id: "g1", name: "Work", collapsed: false, color: "blue" }],
+    });
+    await renderApp();
+    const chats = within(sidebar()).getByRole("tree", { name: "No Project" });
+    expect(within(chats).getByText("chats thread 1")).toBeInTheDocument();
+    expect(chats.compareDocumentPosition(within(sidebar()).getByText("Projects")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(projectNames()).toEqual(["beta", "alpha"]);
+    expect(visibleThreads(useAppStore.getState()).map((t) => t.id)).toEqual(["chats-t1", "beta-t1", "alpha-t1"]);
+
+    fireEvent.contextMenu(within(chats).getByRole("heading", { name: "No Project" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["New Thread", "Show Past Conversations"]);
+    fireEvent.click(within(chats).getByRole("button", { name: "New Thread" }));
+    expect(useAppStore.getState().projects.find((p) => p.scratch)!.threads).toHaveLength(2);
+  });
+
   describe("groups", () => {
     const groupHeader = (name: string) => within(sidebar()).getByText(name).closest<HTMLElement>(".group-header")!;
     const groupMembers = (name: string) =>

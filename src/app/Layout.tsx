@@ -6,7 +6,7 @@ import { Sidebar } from "../sidebar/Sidebar";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import { Explorer } from "../explorer/Explorer";
 import { onOpenFolders } from "../ipc/commands";
-import { addDroppedPaths, addOpenedFolders, addProjectViaPicker } from "./actions";
+import { addDroppedPaths, addOpenedFolders, addProjectViaPicker, newThread } from "./actions";
 import { useAttention } from "./attention";
 import { useMenuShortcuts } from "./shortcuts";
 import { ThreadView } from "./ThreadView";
@@ -129,14 +129,22 @@ function ExplorerPanel({ root, name, onClose }: { root: string; name: string; on
 }
 
 function EmptyState() {
+  const chats = useAppStore((s) => s.projects.find((p) => p.scratch));
   return (
     <div className="empty-state">
       <span className="codicon codicon-comment-discussion empty-state-icon" aria-hidden />
       <h1 className="empty-state-title">Speedy</h1>
       <p className="empty-state-text">Add a project folder to start a Claude Code thread with its own terminal.</p>
-      <button type="button" className="vscode-button" onClick={() => void addProjectViaPicker()}>
-        Add Project Folder
-      </button>
+      <div className="empty-state-actions">
+        <button type="button" className="vscode-button" onClick={() => void addProjectViaPicker()}>
+          Add Project Folder
+        </button>
+        {chats && (
+          <button type="button" className="vscode-button secondary" title="Ask something that doesn't belong to a project" onClick={() => newThread(chats.id)}>
+            New Thread Without a Project
+          </button>
+        )}
+      </div>
       <dl className="empty-state-keys">
         <dt>Add Project Folder</dt>
         <dd>

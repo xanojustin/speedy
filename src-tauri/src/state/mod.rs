@@ -5,7 +5,7 @@ pub mod store;
 
 use std::path::PathBuf;
 
-pub use store::{AppState, Group, LoadResult, Project, StateStore, Thread};
+pub use store::{ensure_chats_project, AppState, Group, LoadResult, Project, StateStore, Thread};
 
 /// `~/Library/Application Support/Speedy/`.
 pub fn default_state_dir() -> PathBuf {
@@ -14,9 +14,20 @@ pub fn default_state_dir() -> PathBuf {
         .join("Speedy")
 }
 
+/// Where Chats threads run: a Speedy-owned folder, so the CLI has a cwd and a session history.
+pub fn chats_dir() -> PathBuf {
+    default_state_dir().join("Chats")
+}
+
 #[tauri::command]
 pub fn state_load(ctx: tauri::State<'_, crate::AppCtx>) -> LoadResult {
-    ctx.store.load()
+    let mut result = ctx.store.load();
+    let dir = chats_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::error!("creating the Chats folder {} failed: {e}", dir.display());
+    }
+    ensure_chats_project(&mut result.state, &dir);
+    result
 }
 
 /// Debounced, atomic save of the whole app state.

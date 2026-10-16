@@ -7,7 +7,8 @@ import { sidebarSections, useAppStore } from "../store/appStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { beginDragReorder } from "./dragReorder";
 import { GroupSection, groupColorVar } from "./GroupSection";
-import { ProjectRow } from "./ProjectRow";
+import { CHATS_LABEL, ProjectRow } from "./ProjectRow";
+import { SectionHeader } from "./SectionHeader";
 import "./sidebar.css";
 
 interface SidebarProps {
@@ -57,7 +58,7 @@ export function Sidebar({ unread }: SidebarProps) {
     const grouped = groups.some((g) => g.id === project.groupId);
     const archivedCount = project.threads.filter((t) => t.archived).length;
     const archivedShown = archivedFor.has(project.id);
-    openMenu(e, [
+    const threadItems: MenuItem[] = [
       { label: "New Thread", onSelect: () => newThread(project.id) },
       { label: "Show Past Conversations", onSelect: () => setHistoryFor(project.id) },
       ...(archivedCount
@@ -68,6 +69,11 @@ export function Sidebar({ unread }: SidebarProps) {
             },
           ]
         : []),
+    ];
+    // Chats has no folder of its own to open, group, or remove.
+    if (project.scratch) return openMenu(e, threadItems);
+    openMenu(e, [
+      ...threadItems,
       "separator",
       { label: "Open in VS Code", onSelect: () => void openInVscode(project.path).catch((err) => console.warn("open_in_vscode failed", err)) },
       ...(project.threads.some((t) => t.worktree) ? [{ label: "Clean Up Worktrees…", onSelect: () => void cleanUpWorktrees(project.id) }] : []),
@@ -153,24 +159,28 @@ export function Sidebar({ unread }: SidebarProps) {
     />
   );
 
+  const [{ projects: chats }, ...folderSections] = sidebarSections({ projects, groups });
+
   return (
     <nav className="sidebar" aria-label="Projects">
-      <div className="sidebar-title">
-        <h2 className="sidebar-title-label">Projects</h2>
-        <span className="sidebar-title-actions">
-          <button type="button" className="icon-button" aria-label="Add Project Folder…" title="Add Project Folder… (⌘O)" onClick={() => void addProjectViaPicker()}>
-            <span className="codicon codicon-new-folder" aria-hidden />
-          </button>
-          <button type="button" className="icon-button" aria-label="New Group" title="New Group" onClick={() => startNewGroup()}>
-            <span className="codicon codicon-new-collection" aria-hidden />
-          </button>
-          <button type="button" className="icon-button" aria-label="Settings" title="Settings (⌘,)" onClick={() => setSettingsOpen(true)}>
-            <span className="codicon codicon-settings-gear" aria-hidden />
-          </button>
-        </span>
-      </div>
+      {chats.length > 0 && (
+        <div className="sidebar-chats" role="tree" aria-label={CHATS_LABEL}>
+          {chats.map(renderProject)}
+        </div>
+      )}
+      <SectionHeader icon="folder-library" label="Projects">
+        <button type="button" className="icon-button" aria-label="Add Project Folder…" title="Add Project Folder… (⌘O)" onClick={() => void addProjectViaPicker()}>
+          <span className="codicon codicon-new-folder" aria-hidden />
+        </button>
+        <button type="button" className="icon-button" aria-label="New Group" title="New Group" onClick={() => startNewGroup()}>
+          <span className="codicon codicon-new-collection" aria-hidden />
+        </button>
+        <button type="button" className="icon-button" aria-label="Settings" title="Settings (⌘,)" onClick={() => setSettingsOpen(true)}>
+          <span className="codicon codicon-settings-gear" aria-hidden />
+        </button>
+      </SectionHeader>
       <div ref={treeRef} className="sidebar-tree" role="tree" aria-label="Projects and threads">
-        {sidebarSections({ projects, groups }).map(({ group, projects: members }) =>
+        {folderSections.map(({ group, projects: members }) =>
           group ? (
             <GroupSection
               key={group.id}

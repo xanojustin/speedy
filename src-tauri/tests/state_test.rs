@@ -7,7 +7,7 @@ use speedy_lib::state::session_index::{
     encode_project_dir, list_sessions, load_session, rename_session_offline,
 };
 use speedy_lib::state::store::STATE_VERSION;
-use speedy_lib::state::{paths_exist, AppState, Group, Project, StateStore, Thread};
+use speedy_lib::state::{ensure_chats_project, paths_exist, AppState, Group, Project, StateStore, Thread};
 
 fn sample_state() -> AppState {
     let projects = (0..2)
@@ -17,6 +17,7 @@ fn sample_state() -> AppState {
             name: format!("proj{p}"),
             collapsed: p == 1,
             group_id: (p == 1).then(|| "g1".into()),
+            scratch: false,
             threads: (0..3)
                 .map(|t| Thread {
                     id: format!("p{p}t{t}"),
@@ -304,4 +305,20 @@ fn session_ids_with_path_characters_are_rejected() {
     assert!(err.contains("invalid session id"), "{err}");
     assert!(rename_session_offline(root.path(), "/p", "../secret", "t").is_err());
     assert_eq!(std::fs::read_to_string(root.path().join("secret.jsonl")).unwrap(), "{\"type\":\"x\"}\n");
+}
+
+#[test]
+fn chats_project_is_added_once_and_follows_its_folder() {
+    let mut state = sample_state();
+    ensure_chats_project(&mut state, Path::new("/data/Speedy/Chats"));
+    assert_eq!(state.projects.len(), 3);
+    let chats = &state.projects[0];
+    assert!(chats.scratch);
+    assert_eq!((chats.name.as_str(), chats.path.as_str()), ("No Project", "/data/Speedy/Chats"));
+    let id = chats.id.clone();
+
+    ensure_chats_project(&mut state, Path::new("/moved/Chats"));
+    assert_eq!(state.projects.iter().filter(|p| p.scratch).count(), 1);
+    assert_eq!(state.projects[0].id, id);
+    assert_eq!(state.projects[0].path, "/moved/Chats");
 }

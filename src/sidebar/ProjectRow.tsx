@@ -3,6 +3,7 @@ import { SessionList } from "../history/SessionList";
 import type { Project } from "../ipc/types";
 import { useAppStore } from "../store/appStore";
 import { beginDragReorder } from "./dragReorder";
+import { SectionHeader } from "./SectionHeader";
 import { ThreadRow } from "./ThreadRow";
 
 interface Props {
@@ -23,6 +24,9 @@ interface Props {
   onNewThread: (projectId: string) => void;
 }
 
+/** The sidebar title of the built-in project for threads that don't belong to a folder. */
+export const CHATS_LABEL = "No Project";
+
 export function ProjectRow(props: Props) {
   const { project, selectedThreadId, missing, unread, renamingId, setRenamingId, historyOpen, setHistoryOpen, archivedOpen, setArchivedOpen } = props;
   const setProjectCollapsed = useAppStore((s) => s.setProjectCollapsed);
@@ -32,7 +36,8 @@ export function ProjectRow(props: Props) {
 
   const live = project.threads.filter((t) => !t.archived);
   const archived = project.threads.filter((t) => t.archived);
-  const expanded = !project.collapsed;
+  // Chats has no header row to collapse it from.
+  const expanded = project.scratch || !project.collapsed;
 
   const onThreadPointerDown = (e: PointerEvent, threadId: string) =>
     beginDragReorder({
@@ -48,55 +53,71 @@ export function ProjectRow(props: Props) {
       },
     });
 
-  return (
-    <div className="project" data-project-id={project.id} data-drag-id={project.id} role="group" aria-label={project.name}>
-      <div
-        role="treeitem"
-        aria-level={1}
-        aria-expanded={expanded}
-        tabIndex={-1}
-        className="project-header sidebar-row"
-        title={missing ? `${project.path} (folder not found)` : project.path}
-        onClick={() => setProjectCollapsed(project.id, expanded)}
-        onContextMenu={(e) => props.onProjectMenu(e, project)}
-        onPointerDown={(e) => props.onProjectPointerDown(e, project.id)}
+  const actions = (
+    <>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label="Show Past Conversations"
+        title="Show Past Conversations"
+        aria-pressed={historyOpen}
+        onClick={(e) => {
+          e.stopPropagation();
+          setHistoryOpen(!historyOpen);
+        }}
       >
-        <span className={`codicon codicon-chevron-${expanded ? "down" : "right"} twistie`} aria-hidden />
-        <span className="project-name">{project.name}</span>
-        {missing && (
-          <span className="project-missing">
-            <span className="codicon codicon-warning" aria-hidden />
-            missing
-          </span>
-        )}
-        <span className="row-actions">
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Show Past Conversations"
-            title="Show Past Conversations"
-            aria-pressed={historyOpen}
-            onClick={(e) => {
-              e.stopPropagation();
-              setHistoryOpen(!historyOpen);
-            }}
-          >
-            <span className="codicon codicon-history" aria-hidden />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="New Thread"
-            title="New Thread"
-            onClick={(e) => {
-              e.stopPropagation();
-              props.onNewThread(project.id);
-            }}
-          >
-            <span className="codicon codicon-add" aria-hidden />
-          </button>
-        </span>
-      </div>
+        <span className="codicon codicon-history" aria-hidden />
+      </button>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label="New Thread"
+        title="New Thread"
+        onClick={(e) => {
+          e.stopPropagation();
+          props.onNewThread(project.id);
+        }}
+      >
+        <span className="codicon codicon-add" aria-hidden />
+      </button>
+    </>
+  );
+
+  return (
+    <div className="project" data-project-id={project.id} data-drag-id={project.id} role="group" aria-label={project.scratch ? CHATS_LABEL : project.name}>
+      {project.scratch ? (
+        // Chats is a sidebar section of its own, titled like the Projects section below it.
+        <SectionHeader
+          icon="comment-discussion"
+          label={CHATS_LABEL}
+          title="Threads that don't belong to a project"
+          onContextMenu={(e) => props.onProjectMenu(e, project)}
+        >
+          {actions}
+        </SectionHeader>
+      ) : (
+        <div
+          role="treeitem"
+          aria-level={1}
+          aria-expanded={expanded}
+          tabIndex={-1}
+          className="project-header sidebar-row"
+          title={missing ? `${project.path} (folder not found)` : project.path}
+          onClick={() => setProjectCollapsed(project.id, expanded)}
+          onContextMenu={(e) => props.onProjectMenu(e, project)}
+          onPointerDown={(e) => props.onProjectPointerDown(e, project.id)}
+        >
+          <span className={`codicon codicon-chevron-${expanded ? "down" : "right"} twistie`} aria-hidden />
+          <span className="project-name">{project.name}</span>
+          {missing && (
+            <span className="project-missing">
+              <span className="codicon codicon-warning" aria-hidden />
+              missing
+            </span>
+          )}
+          <span className="row-actions">{actions}</span>
+        </div>
+      )}
 
       {historyOpen && <HistoryPopover project={project} onClose={() => setHistoryOpen(false)} />}
 
@@ -105,7 +126,7 @@ export function ProjectRow(props: Props) {
           <div ref={listRef} className="thread-list" role="group">
             {live.length === 0 && (
               <button type="button" className="thread-empty sidebar-row" title="Start a new thread" onClick={() => props.onNewThread(project.id)}>
-                No threads
+                {project.scratch ? "Ask anything, no folder needed" : "No threads"}
               </button>
             )}
             {live.map((t) => (
@@ -170,7 +191,7 @@ function HistoryPopover({ project, onClose }: { project: Project; onClose: () =>
     const onPointerDown = (e: globalThis.PointerEvent) => {
       const target = e.target as HTMLElement;
       // The history button toggles the popover itself.
-      if (!ref.current?.contains(target) && !target.closest?.(`[data-project-id="${project.id}"] .project-header`)) onClose();
+      if (!ref.current?.contains(target) && !target.closest?.(`[data-project-id="${project.id}"] :is(.project-header, .sidebar-title)`)) onClose();
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onPointerDown, true);
@@ -181,7 +202,7 @@ function HistoryPopover({ project, onClose }: { project: Project; onClose: () =>
   }, [onClose, project.id]);
 
   return (
-    <div ref={ref} role="dialog" aria-label={`Past conversations in ${project.name}`} className="history-popover">
+    <div ref={ref} role="dialog" aria-label={`Past conversations in ${project.scratch ? CHATS_LABEL : project.name}`} className="history-popover">
       <SessionList projectId={project.id} onClose={onClose} />
     </div>
   );
