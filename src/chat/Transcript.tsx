@@ -1,6 +1,6 @@
 // The virtualized transcript for one thread: view blocks, then inline permission cards, the
 // thread-level error card, and the working spinner. Sticks to the bottom while the user is there.
-import { useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { PermissionCard } from "../permissions/PermissionCard";
 import { useThreadRuntime, type ViewBlock } from "../store/threadStore";
@@ -58,6 +58,10 @@ export function Transcript({ threadId }: { threadId: string }) {
   const settings = useChatSettings();
   const scrollRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  /** Distance from the bottom at the last scroll or content change; kept across viewport resizes. */
+  const fromBottom = useRef(0);
+  /** The viewport height the scroll position was last taken at; 0 while hidden. */
+  const viewHeight = useRef(0);
 
   const stamps = useMemo(() => userStamps(rt.blocks, settings.showMessageTimestamps), [rt.blocks, settings.showMessageTimestamps]);
 
@@ -98,13 +102,38 @@ export function Transcript({ threadId }: { threadId: string }) {
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el && stick.current && rows.length > 0) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    if (stick.current && rows.length > 0) el.scrollTop = el.scrollHeight;
+    if (el.clientHeight > 0) fromBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight;
   }, [rows, totalSize]);
+
+  // Opening, closing or maximizing the terminal (and dragging the sash or composer growth) resizes
+  // the viewport from below. Keep the same distance from the bottom, so the line next to the
+  // terminal stays put and a transcript at the bottom stays there. While hidden it has no height;
+  // the position is restored when it reappears.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    viewHeight.current = el.clientHeight;
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const h = el.clientHeight;
+      if (h === viewHeight.current) return;
+      viewHeight.current = h;
+      if (h === 0) return;
+      el.scrollTop = stick.current ? el.scrollHeight : el.scrollHeight - h - fromBottom.current;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const onScroll = () => {
     const el = scrollRef.current;
-    if (!el) return;
-    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD;
+    // Scrolls caused by a resize (the browser clamping, or hiding resetting it) aren't the user's;
+    // the observer above restores the position instead.
+    if (!el || el.clientHeight === 0 || el.clientHeight !== viewHeight.current) return;
+    fromBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stick.current = fromBottom.current < STICK_THRESHOLD;
   };
 
   const render = (row: Row): ReactNode => {

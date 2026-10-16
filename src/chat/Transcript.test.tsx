@@ -187,6 +187,99 @@ describe("Transcript", () => {
   });
 });
 
+describe("Transcript scroll position across resizes", () => {
+  // The scroller's geometry, driven by the test; a ResizeObserver stub fires on demand.
+  let view = { clientHeight: 600, scrollHeight: 3000, scrollTop: 0 };
+  const observers = new Set<{ fire(t: HTMLElement): void }>();
+  const restore: (() => void)[] = [];
+
+  beforeEach(() => {
+    view = { clientHeight: 600, scrollHeight: 3000, scrollTop: 0 };
+    for (const key of ["clientHeight", "scrollHeight", "scrollTop"] as const) {
+      const prev = Object.getOwnPropertyDescriptor(HTMLElement.prototype, key) ?? Object.getOwnPropertyDescriptor(Element.prototype, key)!;
+      Object.defineProperty(HTMLElement.prototype, key, {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.classList.contains("transcript") ? view[key] : prev.get?.call(this);
+        },
+        set(this: HTMLElement, v: number) {
+          if (this.classList.contains("transcript")) view[key] = Math.max(0, Math.min(v, view.scrollHeight - view.clientHeight));
+          else prev.set?.call(this, v);
+        },
+      });
+      restore.push(() => delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key]);
+    }
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        targets = new Set<Element>();
+        constructor(private cb: ResizeObserverCallback) {
+          observers.add(this);
+        }
+        observe(t: Element) {
+          this.targets.add(t);
+        }
+        unobserve(t: Element) {
+          this.targets.delete(t);
+        }
+        disconnect() {
+          observers.delete(this);
+        }
+        fire(t: HTMLElement) {
+          if (!this.targets.has(t)) return;
+          const size = { inlineSize: 800, blockSize: view.clientHeight };
+          const entry = { target: t, contentRect: { width: 800, height: view.clientHeight }, borderBoxSize: [size], contentBoxSize: [size] };
+          this.cb([entry as unknown as ResizeObserverEntry], this as unknown as ResizeObserver);
+        }
+      },
+    );
+  });
+  afterEach(() => {
+    observers.clear();
+    for (const r of restore.splice(0)) r();
+    vi.unstubAllGlobals();
+  });
+
+  const scroller = () => document.querySelector(".transcript") as HTMLElement;
+  const scrollTo = (top: number) => {
+    view.scrollTop = top;
+    fireEvent.scroll(scroller());
+  };
+  const resize = (clientHeight: number) => {
+    view.clientHeight = clientHeight;
+    view.scrollTop = Math.min(view.scrollTop, Math.max(0, view.scrollHeight - clientHeight));
+    act(() => {
+      for (const o of observers) o.fire(scroller());
+    });
+  };
+
+  it("keeps the distance from the bottom when the terminal opens and closes", () => {
+    render(<Transcript threadId={threadId} />);
+    scrollTo(1000); // 1,400 px above the bottom
+    resize(400); // terminal opens
+    expect(view.scrollTop).toBe(3000 - 400 - 1400);
+    resize(600); // and closes
+    expect(view.scrollTop).toBe(1000);
+  });
+
+  it("stays at the bottom when it was there", () => {
+    render(<Transcript threadId={threadId} />);
+    scrollTo(2400);
+    resize(400);
+    expect(view.scrollTop).toBe(2600);
+  });
+
+  it("restores the position after being hidden while the terminal is maximized", () => {
+    render(<Transcript threadId={threadId} />);
+    scrollTo(1000);
+    resize(0);
+    scrollTo(0); // hiding resets scrollTop
+    expect(view.scrollTop).toBe(0);
+    resize(400); // restored next to the terminal
+    expect(view.scrollTop).toBe(3000 - 400 - 1400);
+  });
+});
+
 describe("Markdown safety", () => {
   it("renders raw HTML in assistant text as literal text", () => {
     render(<Transcript threadId={threadId} />);
