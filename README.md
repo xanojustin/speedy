@@ -1,97 +1,131 @@
+<p align="center">
+  <img src="assets/icon.png" alt="Speedy icon" width="128" height="128">
+</p>
+
 # Speedy
 
-Speedy is a fast, standalone Mac app for running Claude Code agents in parallel across project folders. Each thread gets a chat panel modeled on the Claude Code VS Code extension and a real terminal docked below it. It drives your installed `claude` CLI under your own login. Your settings, MCP servers, hooks, and session history carry over, and Speedy never touches your credentials.
+Speedy is a fast, native Mac app for running several Claude Code agents at once, across as many project folders as you like. Each thread gets a chat panel that looks and behaves like the Claude Code VS Code extension, with real terminals docked below it.
 
-The plan is in [docs/plans/2026-10-14-2022-feat-speedy-claude-desktop-plan.md](docs/plans/2026-10-14-2022-feat-speedy-claude-desktop-plan.md).
+Speedy drives the `claude` CLI you already have installed, under your own login. Your settings, MCP servers, hooks, skills, and session history carry over unchanged, and Speedy never reads or stores your credentials.
 
-## Build and install
+## Why
 
-Prerequisites: Rust (rustup), Bun, Xcode Command Line Tools, and the `claude` CLI, logged in.
+The VS Code extension is a good place to talk to Claude, but running five agents in parallel there means five editor tabs, five terminals, and a lot of window juggling. Speedy keeps each conversation in its own thread, tells you when a hidden one needs you, and launches in well under a second.
+
+## Features
+
+- **Parallel threads.** Group projects in the sidebar and run a thread per task. Threads that finish or ask for permission while hidden are flagged in the sidebar and on the Dock badge, and post a notification.
+- **Familiar chat.** Same colors, fonts, tool cards, thinking rows, todo list, and permission cards as the VS Code extension, in light and dark.
+- **Composer.** `/` command menu (plugin commands match by short name, so `/ce-plan` finds `/compound-engineering:ce-plan`), `@` file mentions, pasted images, queued messages, Esc to interrupt, Shift+Tab to cycle permission modes, plus model and effort pickers.
+- **Permissions.** Inline cards for edits (with diffs), Bash, plan approval, and questions. "Always allow" names the settings file the rule is saved to.
+- **Terminals.** A real PTY per thread with multiple tabs, WebGL rendering, search, and links. Shells are killed when you quit.
+- **History.** Browse and resume sessions started in VS Code or the CLI, rename them, and fork a conversation with its code rewound to an earlier turn.
+- **Worktrees.** Optionally start a thread on its own branch in a separate git worktree, so parallel agents don't step on each other's files.
+- **File explorer** and a `speedy .` shell command, like VS Code's `code .`.
+
+## Requirements
+
+- macOS 13 or later
+- The [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), installed and logged in (`claude` works in your terminal)
+- To build: [Rust](https://rustup.rs), [Bun](https://bun.sh), and the Xcode Command Line Tools
+
+## Install
+
+There are no prebuilt releases yet, so build it from source:
+
+```sh
+git clone https://github.com/xanojustin/speedy.git
+cd speedy
+./scripts/reinstall.sh
+```
+
+The script installs dependencies, builds `Speedy.app` (ad-hoc signed), quits any running copy, installs it to `/Applications`, and opens it. Run it again to update after pulling. Pass `--no-open` to skip launching.
+
+To do it by hand:
 
 ```sh
 bun install
-bun run tauri build          # → src-tauri/target/release/bundle/macos/Speedy.app (ad-hoc signed)
+bun run tauri build
 cp -R src-tauri/target/release/bundle/macos/Speedy.app /Applications/
-open /Applications/Speedy.app
 ```
 
-To open folders from a terminal like VS Code's `code .`, choose **Speedy > Install 'speedy' Command in PATH…** once. Then `speedy .` (or `speedy ~/a ~/b`) adds each folder as a project, or selects it if it's already open. The command goes through LaunchServices, so it needs the bundled app, not `tauri dev`.
+On first launch Speedy finds `claude` through your login shell, so CLIs installed with nvm, Homebrew, or similar work even when the app is opened from the Dock. If the CLI is missing or logged out, the setup screen tells you what to do.
 
-For development, run `bun run tauri dev`. Notifications only work from the bundled `.app`. Under `tauri dev`, the log reports them as unavailable.
+### The `speedy` command
 
-## Checks
+Choose **Speedy > Install 'speedy' Command in PATH…** once. After that, `speedy .` (or `speedy ~/a ~/b`) adds each folder as a project, or selects it if it's already open. It works whether or not Speedy is running.
 
-| Gate | Command |
+## Keyboard shortcuts
+
+| Shortcut | Action |
 |---|---|
-| Rust tests | `cargo test --manifest-path src-tauri/Cargo.toml` |
-| Rust lint | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` |
+| Cmd+N | New thread |
+| Cmd+W | Close thread (archives it; asks first if it's working) |
+| Cmd+O | Add project folder |
+| Cmd+1 … Cmd+9 | Switch to thread 1–9 |
+| Cmd+L | Focus chat |
+| Cmd+J | Toggle terminal |
+| Cmd+Shift+J | Maximize terminal |
+| Ctrl+Shift+` | New terminal tab |
+| Cmd+Shift+E | Toggle file explorer |
+| Cmd+, | Settings |
+
+In the composer: Enter sends, Shift+Enter (or Ctrl+J) adds a newline, Esc interrupts, and Shift+Tab cycles permission modes.
+
+## Worktrees
+
+Before a thread's first message, the composer footer has a **Worktree** toggle. When it's on, the first message puts the thread on a new `speedy/<thread-id>` branch, created from the project's `HEAD`, in its own worktree under `~/Library/Application Support/Speedy/worktrees/`. Rename the branch whenever you like with `git branch -m`.
+
+A few things to know:
+
+- The choice is locked after the first message. Forks keep their thread's worktree.
+- Speedy never deletes worktrees (archived threads can be restored), so clean them up with `git worktree remove`.
+- Gitignored files such as `.env` and `node_modules` aren't copied into a new worktree.
+- Sessions from worktree threads don't show up in the project's history list, because the CLI files them under the worktree's path.
+
+## Known limitations
+
+- Effort can only be changed during a live session, and isn't saved per thread.
+- You can paste images into the composer, but not drag image files onto it.
+- "Fork conversation" always opens the fork in a new thread.
+- If you relaunch before sending the first message in a forked thread, that thread opens blank. The original thread is unaffected.
+- Notifications only work from the bundled app, not under `tauri dev`.
+
+## Development
+
+```sh
+bun install
+bun run tauri dev
+```
+
+| Check | Command |
+|---|---|
 | UI tests | `bun run test` |
 | Typecheck | `bun run typecheck` |
-| Protocol drift (real CLI; denies every tool, uses haiku) | `cargo test --manifest-path src-tauri/Cargo.toml --test claude_actor_test -- --ignored` |
-| Theme regeneration | `bun scripts/gen-vscode-theme.ts` |
+| Rust tests | `cargo test --manifest-path src-tauri/Cargo.toml` |
+| Rust lint | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` |
+| Protocol drift (real CLI, denies every tool, uses Haiku) | `cargo test --manifest-path src-tauri/Cargo.toml --test claude_actor_test -- --ignored` |
+| Regenerate theme tokens | `bun scripts/gen-vscode-theme.ts` |
 
-Run the protocol drift test whenever the setup screen warns that your CLI version differs from the last version it passed against (2.1.301; fixtures recorded against 2.1.296).
+Speedy talks to the CLI over its stream-json protocol, which can change between CLI releases. When the setup screen warns that your CLI version differs from the last one tested, run the protocol drift test.
 
-## Layout
+### Layout
 
-- `src-tauri/src/`: the Rust core.
-  - `env.rs`: login-shell env, CLI discovery, extension settings
-  - `claude/`: per-thread CLI actor, stream-json protocol, permission diffs
-  - `pty/`: per-thread shell
+- `src-tauri/src/`: the Rust core
+  - `claude/`: one CLI process per thread, the stream-json protocol, and permission diffs
+  - `pty/`: terminal shells
   - `state/`: app state and the CLI session index
-  - `files.rs`: @-mention search
-  - `attention.rs`: notifications and Dock badge
-  - `menu.rs`: native menu
-  - `cli.rs`: `speedy .` command and folders opened from Finder or the Dock
-- `src/`: the React webview.
-  - `app/`, `sidebar/`: shell, layout, shortcuts
-  - `theme/`: generated `--vscode-*` tokens
-  - `store/`: thread store, reducer, runtime bridge
-  - `chat/`: transcript
-  - `composer/`
-  - `permissions/`
-  - `history/`
-  - `terminal/`
+  - `env.rs`: login-shell environment and CLI discovery
+  - `files.rs`: `@` mention search
+  - `attention.rs`: notifications and the Dock badge
+  - `menu.rs`: native menu and shortcuts
+  - `cli.rs`: the `speedy` command and folders opened from Finder or the Dock
+- `src/`: the React webview
+  - `app/`, `sidebar/`, `settings/`: shell, layout, and shortcuts
+  - `chat/`, `composer/`, `permissions/`, `history/`, `terminal/`, `explorer/`
+  - `store/`: thread store, reducer, and runtime bridge
+  - `theme/`: `--vscode-*` tokens generated from VS Code's built-in themes
 
-## Manual test checklist
+Performance notes are in [docs/perf.md](docs/perf.md), and the original design plan is in [docs/plans/](docs/plans/).
 
-Tauri's WebDriver doesn't support macOS, so these checks are manual. Start with the U1 gates (`spike/RESULTS.md`). If one of them fails, the plan says to stop and re-plan.
-
-**U1 gates**
-- [ ] Terminal: `cat` a 50 MB file and check the UI stays responsive. Keystroke echo should feel instant (about 30 ms or less).
-- [ ] Terminal: vim (including mouse scrolling), htop, less, `git log` paging, and the `claude` TUI all work. Option+B and Option+F jump by word.
-- [ ] Shortcuts: Cmd+K (clear), Cmd+F (find), Cmd+C and Cmd+V reach the terminal. Cmd+N, Cmd+1 and Cmd+J still fire while the terminal has focus.
-- [ ] Notifications: the first launch of the bundled app asks for permission. A permission request in a hidden thread posts a banner, and clicking it opens that thread.
-
-**Setup**
-- [ ] Launching from the Dock or Finder finds the nvm-installed `claude`. After `claude auth logout`, the setup screen asks you to log in.
-
-**Chat parity** (compare side by side with the VS Code panel, in light and dark)
-- [ ] Colors, fonts, spacing, codicons: empty state, sidebar, transcript, tool cards, thinking rows, todo list, spinner verbs, code blocks.
-- [ ] Composer: Enter and Shift+Enter, `/` menu, `@` file search, pasting an image, queued messages, Esc to interrupt, Shift+Tab mode cycling.
-- [ ] Model picker, permission modes, the Effort row, and the context ring (it appears above 50% usage).
-- [ ] Permission cards: Edit, Write to a new file, Bash, plan-mode exit, AskUserQuestion. Always-allow names where the rule is saved, and the rule lands in that settings file.
-- [ ] Stale diff: while a diff card is open, edit the same file from another thread, then accept. The card refreshes and asks again.
-- [ ] History: sessions from VS Code and the CLI are listed. Resuming works in both directions without losing turns. Rename survives, and offline renames show up in `claude --resume`. The live-elsewhere warning appears for a session active in the last 60 s.
-- [ ] Rewind: "Fork conversation and rewind code" restores the files and continues in a new thread.
-
-**`speedy .`**
-- [ ] The menu item installs `/usr/local/bin/speedy`, asking for a password if needed. `speedy .` works with Speedy quit (cold launch) and running, and brings the window forward.
-
-**Parallel work**
-- [ ] Three agents run in hidden threads. Every permission request and completion is surfaced through the sidebar status, the unread glyph, the Dock badge, and a notification.
-- [ ] Cmd+W on a working thread asks first. On an idle thread it archives, and the thread can be restored from Archived.
-- [ ] Quitting with a dev server running in a terminal kills it. Quitting with a pending permission denies it, and the agent reports the denial after a resume.
-
-**Performance**
-- [ ] Fill in the 5-thread comparison against VS Code in [docs/perf.md](docs/perf.md).
-
-## Known gaps and decisions
-
-- Queued messages appear above the composer, as the plan asked. The extension shows them at the end of the transcript.
-- Effort can only be changed during a live session (`apply_flag_settings`). It isn't persisted per thread.
-- Images can be pasted into the composer, but dragging an image file onto it isn't supported, because Tauri's native drop handling delivers only file paths.
-- "Fork conversation" opens the fork in a new thread, because a thread is never rebound to another session. The extension reuses the same tab by default.
-- If you relaunch before sending the first message in a forked thread, that thread opens blank. The original thread is unaffected.
-- The `--vscode-*` theme tokens are generated from VS Code's built-in theme JSON and color registry, not captured from a running VS Code webview (see `scripts/gen-vscode-theme.ts`).
-- Before a thread's first message, the composer footer has a "Worktree" toggle next to the model. When it's on, the first message puts the thread on a new `speedy/<thread-id>` branch (from the project folder's `HEAD`) in its own git worktree under `~/Library/Application Support/Speedy/worktrees/<repo>/<branch>`. Rename the branch whenever you like with `git branch -m`. After the first message the choice is locked. Forks keep their thread's worktree. Speedy never removes worktrees (archiving keeps them so the thread can be restored), so prune them with `git worktree remove`. Gitignored files such as `.env` and `node_modules` aren't copied into a new worktree. Past conversations from worktree threads don't appear in the project's history list, because the CLI files them under the worktree's path.
+Speedy is an independent project and isn't affiliated with or endorsed by Anthropic.
