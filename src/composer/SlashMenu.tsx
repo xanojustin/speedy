@@ -40,6 +40,45 @@ function shortName(name: string): string {
 }
 
 /** Prefix match on the full name or, for plugin commands, the name after the namespace (like the CLI). */
+const CACHE_KEY = "speedy.slashCommands";
+const CACHE_PROJECTS = 20;
+
+function readCache(): Record<string, SlashCommand[]> {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(CACHE_KEY) ?? "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, SlashCommand[]>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Saves the list a project's CLI reported, so new threads there have a menu before their first send. */
+export function rememberCommands(projectPath: string, commands: SlashCommand[]) {
+  const cache = readCache();
+  if (JSON.stringify(cache[projectPath]) === JSON.stringify(commands)) return;
+  delete cache[projectPath];
+  cache[projectPath] = commands;
+  const keys = Object.keys(cache);
+  for (const k of keys.slice(0, Math.max(0, keys.length - CACHE_PROJECTS))) delete cache[k];
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Storage full or unavailable: the menu just waits for the session again.
+  }
+}
+
+/**
+ * The project's last reported list, else the most recently saved one from any project (user and
+ * plugin commands are global, so it's close). Null when nothing has been saved yet.
+ */
+export function cachedCommands(projectPath: string): SlashCommand[] | null {
+  const cache = readCache();
+  const own = cache[projectPath];
+  if (Array.isArray(own)) return own;
+  const last = Object.values(cache).at(-1);
+  return Array.isArray(last) ? last : null;
+}
+
 export function filterSlash(commands: SlashCommand[], prefix: string): SlashCommand[] {
   const p = prefix.toLowerCase();
   const full = commands.filter((c) => c.name.toLowerCase().startsWith(p));

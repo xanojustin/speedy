@@ -69,6 +69,7 @@ async function renderComposer() {
 
 beforeEach(() => {
   seq = 0;
+  localStorage.clear();
   settings = {
     "claudeCode.useCtrlEnterToSend": false,
     "claudeCode.respectGitIgnore": true,
@@ -181,6 +182,22 @@ describe("slash menu", () => {
     expect(opts.map((o) => o.querySelector(".slash-name")?.textContent)).toEqual(["/custom-skill"]);
     await user.keyboard("{Tab}");
     expect(input.value).toBe("/custom-skill ");
+  });
+
+  it("before the session starts it offers the project's last reported commands", async () => {
+    dispatch(
+      initialized({ commands: [{ name: "compound-engineering:ce-plan", description: "Create structured plans", argumentHint: "" }], models: MODELS }),
+      status("idle"),
+    );
+    const first = await renderComposer();
+    first.unmount();
+
+    threadId = useAppStore.getState().createThread(findThread(useAppStore.getState(), threadId)!.project.id);
+    const { user, input } = await renderComposer();
+    await user.type(input, "/ce");
+    const opts = within(screen.getByRole("listbox", { name: "Slash commands" })).getAllByRole("option");
+    expect(opts.map((o) => o.querySelector(".slash-name")?.textContent)).toEqual(["/compound-engineering:ce-plan"]);
+    expect(calls("claude_start")).toHaveLength(0);
   });
 
   it("matches plugin commands by the name after the namespace and expands the short form on send", async () => {

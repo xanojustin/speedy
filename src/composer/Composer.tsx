@@ -1,7 +1,7 @@
 // U9: the composer for one thread (R9, R10): auto-growing input with the extension's send keys,
 // `/` command menu, @-mention file search, image paste, the queue, Esc-to-interrupt, and the
 // footer's model / mode / effort / context-usage controls.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { isLiveStatus, type FileHit, type PermissionMode } from "../ipc/types";
 import { useWorktreeChoosable } from "../chat/git";
 import { findThread, threadCwd, useAppStore } from "../store/appStore";
@@ -25,7 +25,7 @@ import {
 import { QueueList } from "./QueueList";
 import { useSessionControls, type EffortLevel } from "./sessionControls";
 import { useComposerSettings } from "./settings";
-import { SlashMenu, expandSlash, filterSlash, slashCommands, type SlashCommand } from "./SlashMenu";
+import { SlashMenu, cachedCommands, expandSlash, filterSlash, rememberCommands, slashCommands, type SlashCommand } from "./SlashMenu";
 import "./composer.css";
 
 /** Image types the Messages API accepts. */
@@ -66,6 +66,7 @@ function notice(threadId: string, text: string) {
 export function Composer({ threadId }: { threadId: string }) {
   const rt = useThreadRuntime(threadId);
   const thread = useAppStore((s) => findThread(s, threadId)?.thread ?? null);
+  const projectPath = useAppStore((s) => findThread(s, threadId)?.project.path ?? null);
   const root = useAppStore((s) => {
     const found = findThread(s, threadId);
     return found ? threadCwd(found.project, found.thread) : null;
@@ -95,7 +96,12 @@ export function Composer({ threadId }: { threadId: string }) {
   const slashQuery = slashMatch && !dismissed ? slashMatch[1] : null;
   const mentionQuery = mentionMatch && !dismissed ? mentionMatch[1] : null;
 
-  const commands = slashCommands(rt.init, rt.systemInit);
+  const liveCommands = useMemo(() => slashCommands(rt.init, rt.systemInit), [rt.init, rt.systemInit]);
+  useEffect(() => {
+    if (liveCommands && projectPath) rememberCommands(projectPath, liveCommands);
+  }, [liveCommands, projectPath]);
+  // Before the session starts, the last list this project (or any project) reported.
+  const commands = useMemo(() => liveCommands ?? (projectPath ? cachedCommands(projectPath) : null), [liveCommands, projectPath]);
   const slashItems: SlashCommand[] = slashQuery !== null && commands ? filterSlash(commands, slashQuery) : [];
   const hits = useFileMentions(root, mentionQuery, settings?.respectGitIgnore ?? true);
   const menu = slashQuery !== null ? "slash" : mentionQuery !== null ? "mention" : null;
