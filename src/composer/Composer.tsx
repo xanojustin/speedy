@@ -25,7 +25,7 @@ import {
 import { QueueList } from "./QueueList";
 import { useSessionControls, type EffortLevel } from "./sessionControls";
 import { useComposerSettings } from "./settings";
-import { SlashMenu, filterSlash, slashCommands, type SlashCommand } from "./SlashMenu";
+import { SlashMenu, expandSlash, filterSlash, slashCommands, type SlashCommand } from "./SlashMenu";
 import "./composer.css";
 
 /** Image types the Messages API accepts. */
@@ -149,7 +149,7 @@ export function Composer({ threadId }: { threadId: string }) {
   const canSend = text.trim() !== "" || images.length > 0;
 
   const submit = () => {
-    const trimmed = text.trim();
+    const trimmed = expandSlash(text.trim(), commands);
     if (!trimmed && images.length === 0) return;
     const content: unknown[] = [
       ...images.map((img) => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } })),

@@ -182,6 +182,29 @@ describe("slash menu", () => {
     await user.keyboard("{Tab}");
     expect(input.value).toBe("/custom-skill ");
   });
+
+  it("matches plugin commands by the name after the namespace and expands the short form on send", async () => {
+    dispatch(
+      initialized({
+        commands: [
+          { name: "compound-engineering:ce-plan", description: "Create structured plans", argumentHint: "" },
+          { name: "compound-engineering:ce-work", description: "Execute a plan", argumentHint: "" },
+        ],
+        models: MODELS,
+      }),
+      msg({ type: "system", subtype: "init", slash_commands: [] }),
+      status("idle"),
+    );
+    const { user, input } = await renderComposer();
+    await user.type(input, "/ce-p");
+    const opts = within(screen.getByRole("listbox", { name: "Slash commands" })).getAllByRole("option");
+    expect(opts.map((o) => o.querySelector(".slash-name")?.textContent)).toEqual(["/compound-engineering:ce-plan"]);
+
+    await user.type(input, "lan add caching");
+    await user.keyboard("{Escape}{Enter}");
+    await waitFor(() => expect(calls("claude_send_user")).toHaveLength(1));
+    expect(calls("claude_send_user")[0].content).toEqual([{ type: "text", text: "/compound-engineering:ce-plan add caching" }]);
+  });
 });
 
 describe("@-mentions", () => {
