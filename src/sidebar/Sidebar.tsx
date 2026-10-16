@@ -1,7 +1,7 @@
 // Projects and their threads, with a live status glyph per thread (R2, R3, R5).
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { addProjectViaPicker, closeThread, newThread, removeProject } from "../app/actions";
-import { pathsExist } from "../ipc/commands";
+import { openInVscode, pathsExist } from "../ipc/commands";
 import { GROUP_COLORS, type Group, type Project } from "../ipc/types";
 import { sidebarSections, useAppStore } from "../store/appStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -68,6 +68,8 @@ export function Sidebar({ unread }: SidebarProps) {
             },
           ]
         : []),
+      "separator",
+      { label: "Open in VS Code", onSelect: () => void openInVscode(project.path).catch((err) => console.warn("open_in_vscode failed", err)) },
       "separator",
       ...groups
         .filter((g) => g.id !== project.groupId)

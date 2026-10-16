@@ -86,6 +86,7 @@ pub fn run() {
             attention::attention_set_prefs,
             attention::play_sound,
             open_path,
+            open_in_vscode,
             cli::open_folders_take,
         ])
         .build(tauri::generate_context!())
@@ -122,6 +123,21 @@ fn open_path(path: String) -> Result<(), String> {
         cmd.args(["-t", "--"]).arg(canon);
     }
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Opens a folder in VS Code by bundle id, so it works without the `code` CLI on PATH.
+#[tauri::command]
+fn open_in_vscode(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.is_absolute() || !p.is_dir() {
+        return Err(format!("cannot open {path} in VS Code: not an existing folder"));
+    }
+    let status = std::process::Command::new("open")
+        .args(["-b", "com.microsoft.VSCode", "--"])
+        .arg(p)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() { Ok(()) } else { Err("VS Code isn't installed".into()) }
 }
 
 fn is_web_link(path: &str) -> bool {

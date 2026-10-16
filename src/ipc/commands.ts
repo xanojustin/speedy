@@ -107,3 +107,4 @@ export const onOpenFolders = (cb: () => void): Promise<UnlistenFn> => listen("op
 
 // ---- misc ----
 export const openPath = (path: string) => invoke<void>("open_path", { path });
+export const openInVscode = (path: string) => invoke<void>("open_in_vscode", { path });

@@ -4,7 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 import { Markdown } from "../chat/markdown/Markdown";
 import { highlight } from "../chat/markdown/highlight";
-import { explorerGitDiff, explorerGitStatus, explorerList, explorerRead, explorerWrite } from "../ipc/commands";
+import { explorerGitDiff, explorerGitStatus, explorerList, explorerRead, explorerWrite, openInVscode } from "../ipc/commands";
 import type { DirEntry, FileDiff, GitStatus } from "../ipc/types";
 import { DiffView } from "../permissions/DiffView";
 import "../permissions/permissions.css";
@@ -84,6 +84,15 @@ export function Explorer({ root, name, onClose }: { root: string; name: string; 
           Explorer: {name}
         </span>
         <span className="panel-actions">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Open in VS Code"
+            title="Open in VS Code"
+            onClick={() => void openInVscode(root).catch((err) => console.warn("open_in_vscode failed", err))}
+          >
+            <span className="codicon codicon-vscode" aria-hidden />
+          </button>
           {openPath === null && (
             <button type="button" className="icon-button" aria-label="Refresh Explorer" title="Refresh" onClick={reload}>
               <span className="codicon codicon-refresh" aria-hidden />

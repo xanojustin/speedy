@@ -102,4 +102,25 @@ describe("Explorer", () => {
     expect(await screen.findByRole("tree", { name: "Files in app" })).toBeInTheDocument();
     expect(backend.projectFiles["README.md"]).toBe("# Hello\n");
   });
+
+  it("opens the folder it is showing in VS Code: the thread's worktree if it has one", async () => {
+    resetBackend(
+      stateWith([
+        project("app", [{}, { worktree: { path: "/Users/me/.worktrees/app-feature", branch: "feature" } }]),
+      ]),
+    );
+    await renderApp();
+    act(() => emitMenu("toggle_explorer"));
+    fireEvent.click(within(explorer()!).getByRole("button", { name: "Open in VS Code" }));
+    await waitFor(() => expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([{ path: "/Users/me/app" }]));
+
+    fireEvent.click(screen.getByText("app thread 2"));
+    fireEvent.click(within(await waitFor(() => explorer()!)).getByRole("button", { name: "Open in VS Code" }));
+    await waitFor(() =>
+      expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([
+        { path: "/Users/me/app" },
+        { path: "/Users/me/.worktrees/app-feature" },
+      ]),
+    );
+  });
 });

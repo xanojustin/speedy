@@ -98,6 +98,15 @@ describe("Sidebar", () => {
     expect(lastSaved()!.projects[0].threads.map((t) => t.id)).toEqual(["app-t2", "app-t1"]);
   });
 
+  it("opens a project's folder in VS Code from its context menu", async () => {
+    resetBackend(stateWith([project("alpha")]));
+    await renderApp();
+    fireEvent.contextMenu(projectHeader("alpha"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open in VS Code" }));
+
+    await waitFor(() => expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([{ path: useAppStore.getState().projects[0].path }]));
+  });
+
   it("removes a project from the sidebar, stops its threads, and leaves its sessions alone", async () => {
     resetBackend(stateWith([project("alpha", [{}, {}]), project("beta")]));
     await renderApp();
