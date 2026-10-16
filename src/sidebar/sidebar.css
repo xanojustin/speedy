@@ -371,7 +371,8 @@
 }
 
 .context-menu-item:hover,
-.context-menu-item:focus {
+.context-menu-item:focus,
+.context-menu-item.open {
   outline: none;
   background: var(--vscode-menu-selectionBackground);
   color: var(--vscode-menu-selectionForeground);
@@ -381,6 +382,13 @@
 .context-menu-check {
   position: absolute;
   left: 8px;
+  line-height: 24px;
+  font-size: 14px;
+}
+
+.context-menu-chevron {
+  position: absolute;
+  right: 6px;
   line-height: 24px;
   font-size: 14px;
 }

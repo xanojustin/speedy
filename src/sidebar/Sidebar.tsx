@@ -78,32 +78,40 @@ export function Sidebar({ unread }: SidebarProps) {
       { label: "Open in VS Code", onSelect: () => void openInVscode(project.path).catch((err) => console.warn("open_in_vscode failed", err)) },
       ...(project.threads.some((t) => t.worktree) ? [{ label: "Clean Up Worktrees…", onSelect: () => void cleanUpWorktrees(project.id) }] : []),
       "separator",
-      ...groups
-        .filter((g) => g.id !== project.groupId)
-        .map((g): MenuItem => ({ label: `Move to ${g.name}`, onSelect: () => setProjectGroup(project.id, g.id) })),
-      { label: "Move to New Group…", onSelect: () => startNewGroup(project.id) },
-      ...(grouped ? [{ label: "Remove from Group", onSelect: () => setProjectGroup(project.id, null) }] : []),
+      {
+        label: "Move to Group",
+        submenu: [
+          ...groups.map((g): MenuItem => ({
+            label: g.name,
+            swatch: groupColorVar(g),
+            checked: g.id === project.groupId,
+            onSelect: () => setProjectGroup(project.id, g.id),
+          })),
+          ...(groups.length ? ["separator" as const] : []),
+          { label: "New Group…", onSelect: () => startNewGroup(project.id) },
+          ...(grouped ? [{ label: "Remove from Group", onSelect: () => setProjectGroup(project.id, null) }] : []),
+        ],
+      },
       "separator",
       { label: "Remove Project", onSelect: () => void removeProject(project.id) },
     ]);
   };
 
-  const onGroupMenu = (e: MouseEvent, group: Group) => {
-    const { x, y } = { x: e.clientX, y: e.clientY };
-    const colorMenu: MenuItem[] = GROUP_COLORS.map((color) => ({
-      label: color[0].toUpperCase() + color.slice(1),
-      swatch: groupColorVar({ color }),
-      checked: group.color === color,
-      onSelect: () => useAppStore.getState().setGroupColor(group.id, color),
-    }));
+  const onGroupMenu = (e: MouseEvent, group: Group) =>
     openMenu(e, [
       { label: "Rename", onSelect: () => setRenamingId(group.id) },
-      // The menu closes before onSelect runs; reopen it in place with the palette.
-      { label: "Change Color…", onSelect: () => setTimeout(() => setMenu({ x, y, items: colorMenu })) },
+      {
+        label: "Color",
+        submenu: GROUP_COLORS.map((color) => ({
+          label: color[0].toUpperCase() + color.slice(1),
+          swatch: groupColorVar({ color }),
+          checked: group.color === color,
+          onSelect: () => useAppStore.getState().setGroupColor(group.id, color),
+        })),
+      },
       "separator",
       { label: "Delete Group", onSelect: () => useAppStore.getState().deleteGroup(group.id) },
     ]);
-  };
 
   const onThreadMenu = (e: MouseEvent, threadId: string) =>
     openMenu(e, [

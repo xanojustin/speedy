@@ -317,7 +317,8 @@ describe("Sidebar", () => {
       resetBackend(stateWith([project("alpha"), project("beta")]));
       await renderApp();
       fireEvent.contextMenu(projectHeader("beta"));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Move to New Group…" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Move to Group" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "New Group…" }));
       const input = screen.getByRole("textbox", { name: "Group name" });
       fireEvent.change(input, { target: { value: "Work" } });
       fireEvent.keyDown(input, { key: "Enter" });
@@ -340,11 +341,13 @@ describe("Sidebar", () => {
       await renderApp();
       expect(groupMembers("Work")).toEqual(["alpha"]);
       fireEvent.contextMenu(projectHeader("alpha"));
-      expect(screen.queryByRole("menuitem", { name: "Move to Work" })).toBeNull();
-      fireEvent.click(screen.getByRole("menuitem", { name: "Move to Personal" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Move to Group" }));
+      expect(screen.getByRole("menuitemradio", { name: "Work" })).toHaveAttribute("aria-checked", "true");
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Personal" }));
       expect(groupMembers("Personal")).toEqual(["alpha"]);
 
       fireEvent.contextMenu(projectHeader("alpha"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Move to Group" }));
       fireEvent.click(screen.getByRole("menuitem", { name: "Remove from Group" }));
       expect(groupMembers("Personal")).toEqual([]);
       expect(lastSaved()!.projects.find((p) => p.name === "alpha")!.groupId).toBeNull();
@@ -386,8 +389,8 @@ describe("Sidebar", () => {
       expect(useAppStore.getState().groups[2].color).toBe("orange");
 
       fireEvent.contextMenu(groupHeader("Work"));
-      fireEvent.click(screen.getByRole("menuitem", { name: "Change Color…" }));
-      const purple = await screen.findByRole("menuitemradio", { name: "Purple" });
+      fireEvent.click(screen.getByRole("menuitem", { name: "Color" }));
+      const purple = screen.getByRole("menuitemradio", { name: "Purple" });
       expect(screen.getByRole("menuitemradio", { name: "Blue" })).toHaveAttribute("aria-checked", "true");
       fireEvent.click(purple);
       expect(lastSaved()!.groups[0].color).toBe("purple");
