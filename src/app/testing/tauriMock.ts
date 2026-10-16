@@ -3,7 +3,7 @@
 // not import anything that imports a mocked module (the factory would wait on itself).
 // Store resets live in ./reset.ts.
 import { vi } from "vitest";
-import type { AppState, GitChange, MenuAction, Project, SetupState, Thread } from "../../ipc/types";
+import type { AppState, GitChange, MenuAction, Project, SetupState, Thread, UnusedWorktree, WorktreeCleanReport } from "../../ipc/types";
 
 type Handler = (event: { payload: unknown }) => void;
 
@@ -43,6 +43,8 @@ export const backend = {
   /** Top-level paths `explorer_list` flags as gitignored (and everything under them). */
   ignoredPaths: [] as string[],
   gitChanges: [] as GitChange[],
+  worktreeUnused: [] as UnusedWorktree[],
+  worktreeClean: { removed: [], skipped: [], deletedBranches: [] } as WorktreeCleanReport,
 };
 
 /** Direct children of `dir` in `backend.projectFiles`, folders first. */
@@ -106,6 +108,10 @@ export const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>):
       return undefined;
     case "explorer_git_status":
       return backend.gitChanges;
+    case "worktree_unused":
+      return backend.worktreeUnused;
+    case "worktree_clean":
+      return backend.worktreeClean;
     case "explorer_git_diff":
       return { path: args!.path, isNewFile: false, unified: "--- a\n+++ a\n@@ -1 +1 @@\n-old\n+new\n", baseFingerprint: "" };
     default:
@@ -143,11 +149,13 @@ export const webviewMock = {
 export const dialog = {
   open: vi.fn(async (): Promise<string | string[] | null> => null),
   ask: vi.fn(async (): Promise<boolean> => true),
+  message: vi.fn(async (): Promise<void> => {}),
 };
 
 export const dialogMock = {
   open: (...a: unknown[]) => (dialog.open as (...x: unknown[]) => Promise<unknown>)(...a),
   ask: (...a: unknown[]) => (dialog.ask as (...x: unknown[]) => Promise<unknown>)(...a),
+  message: (...a: unknown[]) => (dialog.message as (...x: unknown[]) => Promise<unknown>)(...a),
 };
 
 export function emitMenu(action: MenuAction) {
@@ -178,9 +186,12 @@ export function resetFakeBackend(state: AppState = emptyState()) {
   backend.projectFiles = {};
   backend.ignoredPaths = [];
   backend.gitChanges = [];
+  backend.worktreeUnused = [];
+  backend.worktreeClean = { removed: [], skipped: [], deletedBranches: [] };
   invoke.mockClear();
   dialog.open.mockReset().mockResolvedValue(null);
   dialog.ask.mockReset().mockResolvedValue(true);
+  dialog.message.mockReset().mockResolvedValue(undefined);
 }
 
 let n = 0;

@@ -79,6 +79,8 @@ pub fn run() {
             explorer::explorer_git_status,
             explorer::explorer_git_branch,
             worktree::worktree_create,
+            worktree::worktree_unused,
+            worktree::worktree_clean,
             explorer::explorer_git_diff,
             attention::attention_set_visible,
             attention::attention_mark_read,

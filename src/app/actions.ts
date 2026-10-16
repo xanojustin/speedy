@@ -1,6 +1,7 @@
 // App-level flows shared by the sidebar, the empty state, and the menu shortcuts.
-import { ask, open } from "@tauri-apps/plugin-dialog";
-import { claudeStop, openFoldersTake, pathsExist, ptyHasForegroundChild } from "../ipc/commands";
+import { ask, message, open } from "@tauri-apps/plugin-dialog";
+import { claudeStop, openFoldersTake, pathsExist, ptyHasForegroundChild, worktreeClean, worktreeUnused } from "../ipc/commands";
+import type { UnusedWorktree } from "../ipc/types";
 import { findThread, useAppStore } from "../store/appStore";
 import { forgetStarted } from "../store/runtime";
 import { getRuntime } from "../store/threadStore";
@@ -108,4 +109,71 @@ export async function removeProject(projectId: string): Promise<boolean> {
   await Promise.all(live.map((t) => stopThread(t.id)));
   useAppStore.getState().removeProject(projectId);
   return true;
+}
+
+/**
+ * Removes the project repository's Speedy worktrees that no open thread uses (archived threads'
+ * and leftovers), after listing them for confirmation. Git keeps worktrees with uncommitted
+ * changes; their branches go only when merged.
+ */
+export async function cleanUpWorktrees(projectId: string): Promise<void> {
+  const project = useAppStore.getState().projects.find((p) => p.id === projectId);
+  if (!project) return;
+  // Every project counts: another project can sit in the same repository.
+  const keep = useAppStore
+    .getState()
+    .projects.flatMap((p) => p.threads)
+    .flatMap((t) => (!t.archived && t.worktree ? [t.worktree.path] : []));
+  const failed = async (err: unknown) => void (await message(String(err), { title: "Couldn't clean up worktrees", kind: "error" }));
+
+  let unused;
+  try {
+    unused = await worktreeUnused(project.path, keep);
+  } catch (err) {
+    return failed(err);
+  }
+  const removable = unused.filter((w) => !w.dirty);
+  const dirty = unused.filter((w) => w.dirty);
+  const kept = dirty.length ? ["", "Kept because they have uncommitted changes:", ...bullets(dirty.map(worktreeName))] : [];
+  if (!removable.length) {
+    await message(["No worktrees to clean up.", ...kept].join("\n"), { title: "Worktrees", kind: "info" });
+    return;
+  }
+  const ok = await ask(
+    [
+      ...bullets(removable.map((w) => `${worktreeName(w)} — ${!w.branch ? "detached" : w.merged ? "branch deleted (merged)" : "branch kept (unmerged commits)"}`)),
+      ...kept,
+    ].join("\n"),
+    {
+      title: `Remove ${removable.length} worktree${removable.length === 1 ? "" : "s"} from "${project.name}"?`,
+      kind: "warning",
+      okLabel: "Remove",
+      cancelLabel: "Cancel",
+    },
+  );
+  if (!ok) return;
+
+  let report;
+  try {
+    report = await worktreeClean(project.path, removable.map((w) => w.path));
+  } catch (err) {
+    return failed(err);
+  }
+  // Archived threads whose worktree is gone fall back to the project folder if restored.
+  const removed = (path: string) => report.removed.some((r) => path === r || path.startsWith(`${r}/`));
+  for (const t of project.threads) {
+    if (t.archived && t.worktree && removed(t.worktree.path)) useAppStore.getState().updateThread(t.id, { worktree: null });
+  }
+  // The confirmation already said what would happen; speak up only when git refused something.
+  if (report.skipped.length) {
+    await message(report.skipped.map((s) => `Kept ${s.path}: ${s.reason}`).join("\n\n"), { title: "Some worktrees were kept", kind: "warning" });
+  }
+}
+
+const worktreeName = (w: UnusedWorktree) => w.branch ?? w.path.split("/").pop()!;
+
+/** A bulleted list that stays short enough for a dialog. */
+function bullets(items: string[], max = 12): string[] {
+  const shown = items.slice(0, max).map((s) => `• ${s}`);
+  return items.length > max ? [...shown, `…and ${items.length - max} more`] : shown;
 }

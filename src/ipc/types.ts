@@ -175,6 +175,24 @@ export interface ThreadWorktree {
   branch: string;
 }
 
+/** A worktree a cleanup would remove, shown before anything happens. */
+export interface UnusedWorktree {
+  path: string;
+  /** Null for a detached HEAD. */
+  branch: string | null;
+  /** Uncommitted or untracked changes: git won't remove it. */
+  dirty: boolean;
+  /** The branch holds no unmerged commits, so the cleanup deletes it too. */
+  merged: boolean;
+}
+
+export interface WorktreeCleanReport {
+  removed: string[];
+  /** Worktrees git refused to remove (changed since the preview, locked, …), with git's reason. */
+  skipped: { path: string; reason: string }[];
+  deletedBranches: string[];
+}
+
 export interface LoadResult {
   state: AppState;
   notice: string | null;

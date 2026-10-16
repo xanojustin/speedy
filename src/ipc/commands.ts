@@ -19,6 +19,8 @@ import type {
   StartOptions,
   ThreadStatus,
   ThreadWorktree,
+  UnusedWorktree,
+  WorktreeCleanReport,
 } from "./types";
 
 // ---- env ----
@@ -79,6 +81,10 @@ export const explorerWrite = (root: string, path: string, content: string) =>
 export const explorerGitStatus = (root: string) => invoke<GitChange[]>("explorer_git_status", { root });
 export const explorerGitBranch = (root: string) => invoke<string | null>("explorer_git_branch", { root });
 export const worktreeCreate = (root: string, branch: string) => invoke<ThreadWorktree>("worktree_create", { root, branch });
+/** Speedy's worktrees of `root`'s repository that hold no path in `keep`. Changes nothing. */
+export const worktreeUnused = (root: string, keep: string[]) => invoke<UnusedWorktree[]>("worktree_unused", { root, keep });
+/** Removes the listed worktrees (Speedy's own only) and their merged branches. */
+export const worktreeClean = (root: string, paths: string[]) => invoke<WorktreeCleanReport>("worktree_clean", { root, paths });
 export const explorerGitDiff = (root: string, path: string) => invoke<FileDiff>("explorer_git_diff", { root, path });
 
 // ---- attention ----

@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/webview", async () => (await import("../app/testing/tau
 vi.mock("@tauri-apps/plugin-dialog", async () => (await import("../app/testing/tauriMock")).dialogMock);
 
 import { App } from "../app/App";
-import { backend, callsTo, lastSaved, project, stateWith } from "../app/testing/tauriMock";
+import { backend, callsTo, dialog, lastSaved, project, stateWith } from "../app/testing/tauriMock";
 import { resetBackend, runtime } from "../app/testing/reset";
 import type { ThreadStatus } from "../ipc/types";
 import { useAppStore, visibleThreads } from "../store/appStore";
@@ -105,6 +105,75 @@ describe("Sidebar", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Open in VS Code" }));
 
     await waitFor(() => expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([{ path: useAppStore.getState().projects[0].path }]));
+  });
+
+  describe("Clean Up Worktrees", () => {
+    const wt = (name: string) => ({ path: `/data/worktrees/alpha/${name}`, branch: `speedy/${name}` });
+    const unused = (name: string, extra: { dirty?: boolean; merged?: boolean } = {}) => ({ ...wt(name), dirty: false, merged: true, ...extra });
+    const cleanUp = async () => {
+      await renderApp();
+      fireEvent.contextMenu(projectHeader("alpha"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Clean Up Worktrees…" }));
+    };
+    beforeEach(() => {
+      resetBackend(stateWith([project("alpha", [{ worktree: wt("live") }, { archived: true, worktree: wt("done") }, { archived: true, worktree: wt("dirty") }])]));
+      backend.worktreeUnused = [unused("done"), unused("wip", { merged: false }), unused("dirty", { dirty: true })];
+    });
+
+    it("lists what it will remove, then removes exactly that", async () => {
+      backend.worktreeClean = { removed: ["/data/worktrees/alpha/done", "/data/worktrees/alpha/wip"], skipped: [], deletedBranches: ["speedy/done"] };
+      await cleanUp();
+
+      await waitFor(() => expect(dialog.ask).toHaveBeenCalled());
+      expect(callsTo("worktree_unused").map((c) => c.args)).toEqual([{ root: "/Users/me/alpha", keep: ["/data/worktrees/alpha/live"] }]);
+      const [text, opts] = vi.mocked(dialog.ask).mock.calls[0] as unknown as [string, { title: string }];
+      expect(opts.title).toBe('Remove 2 worktrees from "alpha"?');
+      expect(text).toBe(
+        [
+          "• speedy/done — branch deleted (merged)",
+          "• speedy/wip — branch kept (unmerged commits)",
+          "",
+          "Kept because they have uncommitted changes:",
+          "• speedy/dirty",
+        ].join("\n"),
+      );
+
+      await waitFor(() => expect(callsTo("worktree_clean")).toHaveLength(1));
+      expect(callsTo("worktree_clean")[0].args).toEqual({ root: "/Users/me/alpha", paths: ["/data/worktrees/alpha/done", "/data/worktrees/alpha/wip"] });
+      await waitFor(() => expect(useAppStore.getState().projects[0].threads.map((t) => t.worktree?.branch ?? null)).toEqual(["speedy/live", null, "speedy/dirty"]));
+      expect(dialog.message).not.toHaveBeenCalled();
+    });
+
+    it("removes nothing when cancelled", async () => {
+      vi.mocked(dialog.ask).mockResolvedValue(false);
+      await cleanUp();
+      await waitFor(() => expect(dialog.ask).toHaveBeenCalled());
+      await act(async () => {});
+      expect(callsTo("worktree_clean")).toEqual([]);
+    });
+
+    it("says so when there's nothing to remove", async () => {
+      backend.worktreeUnused = [unused("dirty", { dirty: true })];
+      await cleanUp();
+      await waitFor(() => expect(dialog.message).toHaveBeenCalled());
+      expect(dialog.message).toHaveBeenCalledWith(expect.stringContaining("No worktrees to clean up."), expect.anything());
+      expect(dialog.ask).not.toHaveBeenCalled();
+      expect(callsTo("worktree_clean")).toEqual([]);
+    });
+
+    it("reports worktrees git refused to remove after confirming", async () => {
+      backend.worktreeClean = { removed: [], skipped: [{ path: "/data/worktrees/alpha/done", reason: "contains modified files" }], deletedBranches: [] };
+      await cleanUp();
+      await waitFor(() => expect(dialog.message).toHaveBeenCalled());
+      expect(dialog.message).toHaveBeenCalledWith("Kept /data/worktrees/alpha/done: contains modified files", expect.anything());
+    });
+  });
+
+  it("offers worktree cleanup only for projects that used worktrees", async () => {
+    resetBackend(stateWith([project("alpha")]));
+    await renderApp();
+    fireEvent.contextMenu(projectHeader("alpha"));
+    expect(screen.queryByRole("menuitem", { name: "Clean Up Worktrees…" })).toBeNull();
   });
 
   it("removes a project from the sidebar, stops its threads, and leaves its sessions alone", async () => {

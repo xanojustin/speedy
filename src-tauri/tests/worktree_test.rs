@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use speedy_lib::worktree::create;
+use speedy_lib::worktree::{clean, create, unused};
 
 fn put(root: &Path, rel: &str, body: &str) {
     let p = root.join(rel);
@@ -75,4 +75,60 @@ fn reports_git_errors_and_bad_names() {
 
     let plain = tempfile::tempdir().unwrap();
     assert_eq!(create(plain.path(), "x", &base).unwrap_err(), "This project isn't in a git repository");
+}
+
+#[test]
+fn lists_unused_speedy_worktrees_then_removes_only_the_confirmed_ones() {
+    let dir = repo();
+    let repo = dir.path().join("myrepo");
+    let base = dir.path().join("worktrees");
+    let live = create(&repo.join("app"), "live", &base).unwrap();
+    let done = create(&repo, "done", &base).unwrap();
+    let unmerged = create(&repo, "unmerged", &base).unwrap();
+    put(Path::new(&unmerged.path), "new.md", "new\n");
+    git(Path::new(&unmerged.path), &["add", "."]);
+    git(Path::new(&unmerged.path), &["commit", "-qm", "work"]);
+    let dirty = create(&repo, "dirty", &base).unwrap();
+    put(Path::new(&dirty.path), "wip.md", "wip\n");
+    // A worktree the user made themselves, outside Speedy's folder.
+    let own = dir.path().join("own");
+    git(&repo, &["worktree", "add", "-q", "-b", "own", own.to_str().unwrap()]);
+
+    let found = unused(&repo.join("app"), std::slice::from_ref(&live.path), &base).unwrap();
+    let summary: Vec<_> = found.iter().map(|u| (u.branch.as_deref().unwrap(), u.dirty, u.merged)).collect();
+    assert_eq!(summary, [("dirty", true, true), ("done", false, true), ("unmerged", false, false)]);
+    // Listing changes nothing.
+    assert!(Path::new(&done.path).exists());
+
+    // The user confirms everything but the dirty one; the user's own worktree is never Speedy's to remove.
+    let mut paths: Vec<String> = found.iter().filter(|u| !u.dirty).map(|u| u.path.clone()).collect();
+    paths.push(own.to_string_lossy().into_owned());
+    let report = clean(&repo, &paths, &base).unwrap();
+
+    assert_eq!(report.removed.len(), 2);
+    assert!(report.skipped.is_empty());
+    assert!(!Path::new(&done.path).exists());
+    assert!(!Path::new(&unmerged.path).exists());
+    assert!(Path::new(&dirty.path).join("wip.md").exists());
+    assert!(Path::new(&live.path).exists());
+    assert!(own.exists());
+    // Merged branches go; one with its own commits stays, so nothing is lost.
+    assert_eq!(report.deleted_branches, ["done"]);
+    let branches = git(&repo, &["branch", "--format=%(refname:short)"]);
+    assert_eq!(branches.lines().collect::<Vec<_>>(), ["dirty", "live", "main", "own", "unmerged"]);
+}
+
+#[test]
+fn clean_reports_worktrees_git_refuses_to_remove() {
+    let dir = repo();
+    let repo = dir.path().join("myrepo");
+    let base = dir.path().join("worktrees");
+    let wt = create(&repo, "late", &base).unwrap();
+    // Changed after the preview.
+    put(Path::new(&wt.path), "late.md", "late\n");
+
+    let report = clean(&repo, std::slice::from_ref(&wt.path), &base).unwrap();
+    assert!(report.removed.is_empty());
+    assert_eq!(report.skipped.len(), 1);
+    assert!(Path::new(&wt.path).join("late.md").exists());
 }
