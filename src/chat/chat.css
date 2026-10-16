@@ -589,13 +589,19 @@
   color: var(--chat-spinner);
   animation: chat-fade-in 0.3s ease-in-out;
 }
+/* The glyph sits centred in the timeline's dot column, so the text lines up with assistant rows. */
 .spinner-glyph {
   display: inline-block;
-  width: 1em;
+  width: 25px;
+  margin-right: -1px;
   text-align: center;
   font-size: 16px;
 }
 .spinner-text {
+  white-space: pre;
+}
+.spinner-bg {
+  color: var(--chat-fg-secondary);
   white-space: pre;
 }
 @keyframes chat-fade-in {

@@ -17,6 +17,7 @@ interface Props {
 
 export function ThreadRow({ thread, selected, unread, renaming, onRenameDone, onStartRename, onContextMenu, onPointerDown }: Props) {
   const status = useThreadStore((s) => s.threads[thread.id]?.status) ?? "not_started";
+  const background = useThreadStore((s) => s.threads[thread.id]?.backgroundTasks.length ?? 0);
   const selectThread = useAppStore((s) => s.selectThread);
 
   return (
@@ -38,7 +39,7 @@ export function ThreadRow({ thread, selected, unread, renaming, onRenameDone, on
         }
       }}
     >
-      <StatusGlyph status={status} unread={unread} />
+      <StatusGlyph status={status} unread={unread} background={background} />
       {renaming ? (
         <RenameInput
           initial={thread.title}

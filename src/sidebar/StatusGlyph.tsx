@@ -15,11 +15,15 @@ const GLYPHS: Record<ThreadStatus, { icon: string; label: string; spin?: boolean
 /** A finished thread the user hasn't looked at yet. */
 const UNREAD = { icon: "circle-filled", label: "Finished, unread" };
 
-export function StatusGlyph({ status, unread = false }: { status: ThreadStatus; unread?: boolean }) {
+/** An idle thread whose background agents or shells are still running. */
+const backgroundGlyph = (n: number) => ({ icon: "loading", label: `${n} running in the background`, spin: true });
+
+export function StatusGlyph({ status, unread = false, background = 0 }: { status: ThreadStatus; unread?: boolean; background?: number }) {
   // A busy or failing thread keeps its own glyph; unread only replaces the quiet states.
-  const showUnread = unread && (status === "idle" || status === "stopped" || status === "not_started");
-  const g = showUnread ? UNREAD : GLYPHS[status];
-  const classes = ["status-glyph", "codicon", `codicon-${g.icon}`, `status-${showUnread ? "unread" : status}`];
+  const busyInBackground = status === "idle" && background > 0;
+  const showUnread = unread && !busyInBackground && (status === "idle" || status === "stopped" || status === "not_started");
+  const g = showUnread ? UNREAD : busyInBackground ? backgroundGlyph(background) : GLYPHS[status];
+  const classes = ["status-glyph", "codicon", `codicon-${g.icon}`, `status-${showUnread ? "unread" : busyInBackground ? "working" : status}`];
   if (showUnread) classes.push("unread");
   if ("spin" in g && g.spin) classes.push("codicon-modifier-spin");
   return <span role="img" aria-label={g.label} title={g.label} className={classes.join(" ")} />;

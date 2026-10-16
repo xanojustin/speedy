@@ -69,7 +69,8 @@ export function Transcript({ threadId }: { threadId: string }) {
     const out: Row[] = blockRows.slice();
     for (const p of rt.pendingPermissions) out.push({ key: `perm:${p.requestId}`, type: "permission", requestId: p.requestId });
     if (showsErrorCard(rt)) out.push({ key: "error-card", type: "error-card" });
-    if (rt.status === "working") out.push({ key: "spinner", type: "spinner" });
+    // Background agents outlive the turn's result, so they keep the spinner up after it.
+    if (rt.status === "working" || rt.backgroundTasks.length > 0) out.push({ key: "spinner", type: "spinner" });
     return out;
   }, [rt, blockRows]);
 
@@ -116,7 +117,7 @@ export function Transcript({ threadId }: { threadId: string }) {
       case "error-card":
         return <ErrorCard threadId={threadId} />;
       case "spinner":
-        return <Spinner verbs={settings.spinnerVerbs} />;
+        return <Spinner verbs={settings.spinnerVerbs} working={rt.status === "working"} background={rt.backgroundTasks} />;
     }
   };
 

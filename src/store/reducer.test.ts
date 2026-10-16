@@ -184,6 +184,26 @@ describe("reducer: errors, notices, unknown types", () => {
 });
 
 describe("reducer: runtime state", () => {
+  it("replaces the background task set on each change, skips ambient tasks, and clears it on restart", () => {
+    const st = (status: "idle" | "starting"): ThreadAction => ({ kind: "status", seq: ++seq, status, detail: null, stderr_tail: null, reconnecting: false });
+    const bg = (tasks: Record<string, unknown>[]) => m({ type: "system", subtype: "background_tasks_changed", tasks });
+    let s = run([
+      st("idle"),
+      bg([
+        { task_id: "a", task_type: "local_agent", description: "Research Xano" },
+        { task_id: "b", task_type: "local_agent", description: "Review backend" },
+        { task_id: "w", task_type: "monitor", description: "watcher", ambient: true },
+      ]),
+      result(),
+    ]);
+    expect(s.status).toBe("idle");
+    expect(s.backgroundTasks.map((t) => t.taskId)).toEqual(["a", "b"]);
+    s = run([bg([{ task_id: "b", task_type: "local_agent", description: "Review backend" }])], s);
+    expect(s.backgroundTasks.map((t) => t.taskId)).toEqual(["b"]);
+    s = run([st("starting")], s);
+    expect(s.backgroundTasks).toEqual([]);
+  });
+
   it("tracks status, init, system/init, permissions, and a bounded stderr tail", () => {
     let s = run([
       { kind: "status", seq: 1, status: "starting", detail: null, stderr_tail: null, reconnecting: false },

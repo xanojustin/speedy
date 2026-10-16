@@ -86,6 +86,13 @@ export interface PendingPermission {
   seq: number;
 }
 
+/** A live background task (subagent, shell, workflow…) from the CLI's `background_tasks_changed`. */
+export interface BackgroundTask {
+  taskId: string;
+  taskType: string;
+  description: string;
+}
+
 export interface QueuedMessage {
   id: string;
   content: unknown[];
@@ -106,6 +113,8 @@ export interface ThreadRuntime {
   blocks: ViewBlock[];
   pendingPermissions: PendingPermission[];
   queue: QueuedMessage[];
+  /** Live, non-ambient background tasks; they keep running after the turn's result. */
+  backgroundTasks: BackgroundTask[];
   model: string | null;
   permissionMode: PermissionMode | null;
   contextUsage: unknown | null;
@@ -138,6 +147,7 @@ export function initialRuntime(): ThreadRuntime {
     blocks: [],
     pendingPermissions: [],
     queue: [],
+    backgroundTasks: [],
     model: null,
     permissionMode: null,
     contextUsage: null,
@@ -203,7 +213,6 @@ const SILENT_SYSTEM = new Set([
   "notification",
   "files_persisted",
   "session_state_changed",
-  "background_tasks_changed",
   "memory_recall",
   "elicitation_complete",
   "plugin_install",
@@ -643,6 +652,15 @@ function onSystem(s: ThreadRuntime, raw: RawMessage, now: number, seeding: boole
         ...s,
         blocks: [...s.blocks, { kind: "error", id: `refusal-${String(raw.uuid ?? now)}`, title: "Request refused", message: String(raw.content ?? ""), ts }],
       };
+    case "background_tasks_changed": {
+      // A level signal with replace semantics, so a missed task_* bookend can't wedge the indicator.
+      const tasks = Array.isArray(raw.tasks) ? (raw.tasks as Record<string, unknown>[]) : [];
+      const backgroundTasks = tasks
+        .filter((t) => t.ambient !== true && typeof t.task_id === "string")
+        .map((t) => ({ taskId: String(t.task_id), taskType: String(t.task_type ?? ""), description: String(t.description ?? "") }));
+      if (backgroundTasks.length === 0 && s.backgroundTasks.length === 0) return s;
+      return { ...s, backgroundTasks };
+    }
     case "task_progress":
     case "task_notification": {
       const toolId = typeof raw.tool_use_id === "string" ? raw.tool_use_id : null;
@@ -702,6 +720,9 @@ function onMessage(s: ThreadRuntime, raw: RawMessage, now: number, seeding = fal
 
 // ---------- the reducer ----------
 
+/** The background set is per-process: a (re)starting or dead process has none until the CLI says so. */
+const resetsBackground = (status: ThreadStatus) => status !== "idle" && status !== "working" && status !== "awaiting_user";
+
 const withSeq = (s: ThreadRuntime, seq: number) => (seq > s.lastSeq ? { ...s, lastSeq: seq } : s);
 
 export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRuntime {
@@ -730,6 +751,7 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
           retrying: done ? false : s.retrying,
           // A turn that ended by crash/stop leaves nothing streaming.
           streams: done ? {} : s.streams,
+          backgroundTasks: resetsBackground(a.status) ? [] : s.backgroundTasks,
         },
         a.seq,
       );
@@ -779,7 +801,7 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
     case "local_notice":
       return { ...s, blocks: [...s.blocks, { kind: "notice", id: `local-${now}-${s.blocks.length}`, variant: a.variant, text: a.text, ts: now }] };
     case "local_status":
-      return { ...s, status: a.status, detail: a.detail ?? s.detail };
+      return { ...s, status: a.status, detail: a.detail ?? s.detail, backgroundTasks: resetsBackground(a.status) ? [] : s.backgroundTasks };
     case "retrying":
       return { ...s, retrying: true };
     case "permission_answered":

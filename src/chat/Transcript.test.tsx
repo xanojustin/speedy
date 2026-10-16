@@ -275,4 +275,18 @@ describe("ChatPane", () => {
     send(status("working"));
     expect(await screen.findByText(/Speedrunning/)).toBeInTheDocument();
   });
+
+  it("keeps the spinner up with an agent count while background agents outlive the turn", async () => {
+    render(<ChatPane threadId={threadId} />);
+    const tasks = [
+      { task_id: "a", task_type: "local_agent", description: "Research" },
+      { task_id: "b", task_type: "local_agent", description: "Review" },
+    ];
+    send(status("working"), m({ type: "system", subtype: "background_tasks_changed", tasks }));
+    expect(await screen.findByText(/2 agents running/)).toBeInTheDocument();
+    send(m({ type: "result", subtype: "success", is_error: false }), status("idle"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("2 agents running in the background"));
+    send(m({ type: "system", subtype: "background_tasks_changed", tasks: [] }));
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+  });
 });
