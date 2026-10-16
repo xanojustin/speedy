@@ -9,9 +9,10 @@ import {
   claudeSendUser,
   claudeStart,
   sessionLoad,
+  worktreeCreate,
 } from "../ipc/commands";
 import type { ClaudeEvent, PermissionOutcome, PermissionResult, StartOptions, ThreadStatus } from "../ipc/types";
-import { findThread, newId, useAppStore } from "./appStore";
+import { findThread, newId, threadCwd, useAppStore } from "./appStore";
 import { __resetThreadEventsForTests, getRuntime, queueThreadEvent, useThreadStore, type ThreadAction } from "./threadStore";
 
 const started = new Map<string, Promise<void>>();
@@ -66,22 +67,26 @@ export function ensureStarted(threadId: string, fork?: ForkFrom): Promise<void> 
   if (existing) return existing;
   const found = findThread(useAppStore.getState(), threadId);
   if (!found) return Promise.reject(new Error(`unknown thread ${threadId}`));
-  const { project, thread } = found;
   // Only this run's own stop or failure may clear its cache entry, not a later run's.
   const isCurrent = () => started.get(threadId) === p;
-  const p: Promise<void> = claudeStart(
-    threadId,
-    { cwd: project.path, resumeSessionId: thread.sessionId, model: thread.model, permissionMode: thread.permissionMode, ...fork },
-    (ev) => {
-      if (ev.kind === "status" && ev.status === "stopped" && isCurrent()) started.delete(threadId);
-      handleEvent(threadId, ev);
-    },
-  ).then(
+  const p: Promise<void> = prepareWorktree(threadId)
+    .then(() => {
+      const { project, thread } = findThread(useAppStore.getState(), threadId) ?? found;
+      return claudeStart(
+        threadId,
+        { cwd: threadCwd(project, thread), resumeSessionId: thread.sessionId, model: thread.model, permissionMode: thread.permissionMode, ...fork },
+        (ev) => {
+          if (ev.kind === "status" && ev.status === "stopped" && isCurrent()) started.delete(threadId);
+          handleEvent(threadId, ev);
+        },
+      );
+    })
+    .then(
     (status: ThreadStatus) => {
       // Channel events may already have moved the status on; only fill in the initial one
-      // (or replace the previous run's "stopped" on a restart).
+      // (or replace the previous run's "stopped" on a restart, or the worktree step's "starting").
       const cur = getRuntime(threadId).status;
-      if (cur === "not_started" || cur === "stopped") dispatch(threadId, { kind: "local_status", status });
+      if (cur === "not_started" || cur === "stopped" || cur === "starting") dispatch(threadId, { kind: "local_status", status });
       if (status === "idle") flushQueue(threadId);
     },
     (err: unknown) => {
@@ -92,6 +97,20 @@ export function ensureStarted(threadId: string, fork?: ForkFrom): Promise<void> 
   );
   started.set(threadId, p);
   return p;
+}
+
+/**
+ * Gives a thread that asked for a worktree its own checkout before its first start, on a new
+ * `speedy/<id>` branch from the project folder's `HEAD`. Rename it later with `git branch -m`.
+ */
+async function prepareWorktree(threadId: string): Promise<void> {
+  const found = findThread(useAppStore.getState(), threadId);
+  if (!found?.thread.worktreeRequested || found.thread.worktree || found.thread.sessionId) return;
+  dispatch(threadId, { kind: "local_status", status: "starting" });
+  const worktree = await worktreeCreate(found.project.path, `speedy/${threadId.slice(0, 8)}`).catch((err: unknown) => {
+    throw new Error(`Couldn't create a worktree: ${String(err)}`);
+  });
+  useAppStore.getState().updateThread(threadId, { worktree, worktreeRequested: false });
 }
 
 function textOf(content: unknown[]): string {
@@ -185,7 +204,7 @@ export async function loadSessionHistory(threadId: string): Promise<void> {
   if (!found?.thread.sessionId || rt.seed !== "none" || rt.blocks.length > 0) return;
   dispatch(threadId, { kind: "seed_state", seed: "loading" });
   try {
-    const lines = await sessionLoad(found.project.path, found.thread.sessionId);
+    const lines = await sessionLoad(threadCwd(found.project, found.thread), found.thread.sessionId);
     seedTranscript(threadId, lines);
   } catch (err) {
     dispatch(threadId, { kind: "seed_state", seed: "failed" });

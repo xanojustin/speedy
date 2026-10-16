@@ -3,7 +3,7 @@
 import { ask } from "@tauri-apps/plugin-dialog";
 import { sessionLoad, sessionRenameOffline } from "../ipc/commands";
 import { isLiveStatus, type SessionMeta, type Thread } from "../ipc/types";
-import { useAppStore } from "../store/appStore";
+import { threadCwd, useAppStore } from "../store/appStore";
 import { controlRequest, ensureStarted, seedTranscript } from "../store/runtime";
 import { getRuntime } from "../store/threadStore";
 
@@ -67,7 +67,7 @@ export async function renameSession(projectId: string, sessionId: string, title:
   const project = projectOf(projectId);
   const bound = boundThread(projectId, sessionId);
   if (bound && hasLiveActor(bound.id)) await controlRequest(bound.id, { subtype: "rename_session", title });
-  else await sessionRenameOffline(project.path, sessionId, title);
+  else await sessionRenameOffline(bound ? threadCwd(project, bound) : project.path, sessionId, title);
   if (bound) useAppStore.getState().updateThread(bound.id, { title });
 }
 

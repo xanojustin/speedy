@@ -1,7 +1,7 @@
 // U11: the extension's per-message action on a user message: fork the conversation from here,
 // rewind code to here, or both. Code rewinds show the files that will be restored first.
 import { useEffect, useRef, useState } from "react";
-import { useAppStore } from "../store/appStore";
+import { findThread, threadCwd, useAppStore } from "../store/appStore";
 import { useThreadStore } from "../store/threadStore";
 import { forkConversation, previewRewind, rewindCode, type RewindFilesResult } from "./rewind";
 import "./history.css";
@@ -17,7 +17,10 @@ function relativeTo(root: string | undefined, path: string) {
 }
 
 function RewindDialog({ threadId, uuid, mode, onClose }: { threadId: string; uuid: string; mode: Mode; onClose: () => void }) {
-  const projectPath = useAppStore((s) => s.projects.find((p) => p.threads.some((t) => t.id === threadId))?.path);
+  const projectPath = useAppStore((s) => {
+    const found = findThread(s, threadId);
+    return found ? threadCwd(found.project, found.thread) : undefined;
+  });
   const [check, setCheck] = useState<{ ok: true; result: RewindFilesResult } | { ok: false; error: string } | null>(null);
   const [running, setRunning] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);

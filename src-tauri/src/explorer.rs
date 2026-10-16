@@ -68,6 +68,13 @@ pub async fn explorer_git_status(root: String) -> Result<Vec<GitChange>, String>
 }
 
 #[tauri::command]
+pub async fn explorer_git_branch(root: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(git_branch(Path::new(&root))))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn explorer_git_diff(root: String, path: String) -> Result<FileDiff, String> {
     tauri::async_runtime::spawn_blocking(move || git_diff(Path::new(&root), &path))
         .await
@@ -173,6 +180,15 @@ fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
 fn repo_prefix(root: &Path) -> Option<String> {
     let out = git(root, &["rev-parse", "--show-prefix"])?;
     Some(String::from_utf8_lossy(&out).trim().to_string())
+}
+
+/// The checked-out branch, or the short commit when `HEAD` is detached. `None` outside a repository.
+pub fn git_branch(root: &Path) -> Option<String> {
+    // `symbolic-ref` also names the branch of a repository with no commits yet.
+    let out = git(root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .or_else(|| git(root, &["rev-parse", "--short", "HEAD"]))?;
+    let name = String::from_utf8_lossy(&out).trim().to_string();
+    (!name.is_empty()).then_some(name)
 }
 
 /// Uncommitted changes under `root`. Empty when `root` isn't in a git repository.

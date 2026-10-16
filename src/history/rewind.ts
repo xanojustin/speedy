@@ -5,7 +5,7 @@
 //   `--resume <session> --resume-session-at <previous message> --fork-session`. The original thread
 //   and its session stay as they were.
 import { sessionLoad } from "../ipc/commands";
-import { findThread, useAppStore } from "../store/appStore";
+import { findThread, threadCwd, useAppStore } from "../store/appStore";
 import { controlRequest, ensureStarted, seedTranscript } from "../store/runtime";
 
 /** The CLI's `rewind_files` response. */
@@ -76,12 +76,14 @@ export function forkPoint(lines: Line[], userMessageId: string): { anchor: strin
 export async function forkConversation(threadId: string, userMessageId: string): Promise<string> {
   const { project, thread } = threadOrThrow(threadId);
   if (!thread.sessionId) throw new Error("This conversation has no session to fork yet");
-  const lines = await sessionLoad(project.path, thread.sessionId);
+  const lines = await sessionLoad(threadCwd(project, thread), thread.sessionId);
   const { anchor, history } = forkPoint(lines, userMessageId);
   const app = useAppStore.getState();
-  if (!anchor) return app.createThread(project.id); // Nothing before the first message: a fresh conversation.
+  // The fork shares the thread's worktree: its session file lives under that folder.
+  const worktree = thread.worktree ?? null;
+  if (!anchor) return app.createThread(project.id, { worktree }); // Nothing before the first message: a fresh conversation.
 
-  const forkId = app.createThread(project.id, { title: thread.title });
+  const forkId = app.createThread(project.id, { title: thread.title, worktree });
   seedTranscript(forkId, history);
   // The fork's own session id binds on its first turn (session_bound); start errors show on the thread.
   void ensureStarted(forkId, { resumeSessionId: thread.sessionId, resumeSessionAt: anchor, forkSession: true }).catch(() => {});

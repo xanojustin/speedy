@@ -11,6 +11,7 @@ pub mod menu;
 pub mod proc_group;
 pub mod pty;
 pub mod state;
+pub mod worktree;
 
 use std::sync::Arc;
 
@@ -76,6 +77,8 @@ pub fn run() {
             explorer::explorer_read,
             explorer::explorer_write,
             explorer::explorer_git_status,
+            explorer::explorer_git_branch,
+            worktree::worktree_create,
             explorer::explorer_git_diff,
             attention::attention_set_visible,
             attention::attention_mark_read,

@@ -79,6 +79,18 @@ pub struct Thread {
     pub terminal_maximized: bool,
     pub model: Option<String>,
     pub permission_mode: Option<String>,
+    /// Set when the thread runs in its own git worktree instead of the project folder.
+    pub worktree: Option<ThreadWorktree>,
+    /// Create a worktree when the thread starts (set before its first message).
+    pub worktree_requested: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ThreadWorktree {
+    /// The thread's working directory inside the worktree.
+    pub path: String,
+    pub branch: String,
 }
 
 impl Default for Thread {
@@ -94,6 +106,8 @@ impl Default for Thread {
             terminal_maximized: false,
             model: None,
             permission_mode: None,
+            worktree: None,
+            worktree_requested: false,
         }
     }
 }

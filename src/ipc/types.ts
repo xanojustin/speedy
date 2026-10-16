@@ -163,6 +163,16 @@ export interface Thread {
   terminalMaximized: boolean;
   model: string | null;
   permissionMode: PermissionMode | null;
+  /** Set when the thread runs in its own git worktree instead of the project folder. */
+  worktree?: ThreadWorktree | null;
+  /** Create a worktree when the thread starts (set before its first message). */
+  worktreeRequested?: boolean;
+}
+
+export interface ThreadWorktree {
+  /** The thread's working directory inside the worktree. */
+  path: string;
+  branch: string;
 }
 
 export interface LoadResult {

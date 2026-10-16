@@ -57,6 +57,20 @@
   text-overflow: ellipsis;
   font-weight: 600;
 }
+.chat-header-branch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 40%;
+  color: var(--vscode-descriptionForeground);
+}
+.chat-header-branch span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .chat-header-actions {
   display: flex;
   gap: 2px;

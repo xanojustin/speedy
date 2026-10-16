@@ -18,6 +18,7 @@ import type {
   SetupState,
   StartOptions,
   ThreadStatus,
+  ThreadWorktree,
 } from "./types";
 
 // ---- env ----
@@ -76,6 +77,8 @@ export const explorerRead = (root: string, path: string) => invoke<string>("expl
 export const explorerWrite = (root: string, path: string, content: string) =>
   invoke<void>("explorer_write", { root, path, content });
 export const explorerGitStatus = (root: string) => invoke<GitChange[]>("explorer_git_status", { root });
+export const explorerGitBranch = (root: string) => invoke<string | null>("explorer_git_branch", { root });
+export const worktreeCreate = (root: string, branch: string) => invoke<ThreadWorktree>("worktree_create", { root, branch });
 export const explorerGitDiff = (root: string, path: string) => invoke<FileDiff>("explorer_git_diff", { root, path });
 
 // ---- attention ----

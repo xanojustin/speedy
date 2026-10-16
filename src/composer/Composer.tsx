@@ -3,7 +3,8 @@
 // footer's model / mode / effort / context-usage controls.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { isLiveStatus, type FileHit, type PermissionMode } from "../ipc/types";
-import { findThread, useAppStore } from "../store/appStore";
+import { useWorktreeChoosable } from "../chat/git";
+import { findThread, threadCwd, useAppStore } from "../store/appStore";
 import { controlRequest, interruptThread, removeQueued, sendUserMessage } from "../store/runtime";
 import { getRuntime, useThreadRuntime, useThreadStore } from "../store/threadStore";
 import { FOCUS_COMPOSER_EVENT, type FocusComposerDetail } from "./focusEvent";
@@ -65,7 +66,11 @@ function notice(threadId: string, text: string) {
 export function Composer({ threadId }: { threadId: string }) {
   const rt = useThreadRuntime(threadId);
   const thread = useAppStore((s) => findThread(s, threadId)?.thread ?? null);
-  const root = useAppStore((s) => findThread(s, threadId)?.project.path ?? null);
+  const root = useAppStore((s) => {
+    const found = findThread(s, threadId);
+    return found ? threadCwd(found.project, found.thread) : null;
+  });
+  const worktreeChoosable = useWorktreeChoosable(threadId);
   const settings = useComposerSettings();
   const acked = useSessionControls((s) => s.modes[threadId]);
   const effort = useSessionControls((s) => s.effort[threadId] ?? null);
@@ -371,6 +376,22 @@ export function Composer({ threadId }: { threadId: string }) {
             </button>
             <ContextUsage usage={rt.contextUsage} onCompact={() => void sendUserMessage(threadId, [{ type: "text", text: "/compact" }])} />
             <ModelPicker label={modelLabel} effortLabel={effortLabel} options={options} current={current} onSelect={(o) => void selectModel(o)} />
+            {worktreeChoosable && thread && (
+              <button
+                type="button"
+                className={`worktree-pill${thread.worktreeRequested ? " on" : ""}`}
+                aria-pressed={thread.worktreeRequested ?? false}
+                title={
+                  thread.worktreeRequested
+                    ? "This thread will start on a new branch in its own git worktree"
+                    : "Start this thread on a new branch in its own git worktree"
+                }
+                onClick={() => useAppStore.getState().updateThread(threadId, { worktreeRequested: !thread.worktreeRequested })}
+              >
+                <i className="codicon codicon-repo-forked" aria-hidden="true" />
+                Worktree
+              </button>
+            )}
             <div className="composer-spacer" />
             <ModeMenu mode={mode} modes={modes} onSelect={(m) => void setMode(m)} effort={effortControl} />
             <button

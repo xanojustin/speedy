@@ -1,7 +1,7 @@
 // Sidebar + the selected thread's chat/terminal split (KTD2: only the selected thread is mounted).
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect, useState } from "react";
-import { findThread, useAppStore } from "../store/appStore";
+import { findThread, threadCwd, useAppStore } from "../store/appStore";
 import { Sidebar } from "../sidebar/Sidebar";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import { Explorer } from "../explorer/Explorer";
@@ -74,7 +74,9 @@ export function Layout() {
         {selected ? <ThreadView key={selected.thread.id} project={selected.project} thread={selected.thread} /> : <EmptyState />}
       </main>
       {explorerOpen && selected && (
-        <ExplorerPanel key={selected.project.path} root={selected.project.path} name={selected.project.name} onClose={() => setExplorerOpen(false)} />
+        <ExplorerPanel
+          key={threadCwd(selected.project, selected.thread)}
+          root={threadCwd(selected.project, selected.thread)} name={selected.project.name} onClose={() => setExplorerOpen(false)} />
       )}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </div>

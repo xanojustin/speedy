@@ -30,7 +30,7 @@ export interface AppStore extends AppState {
   setGroupCollapsed(groupId: string, collapsed: boolean): void;
   setGroupColor(groupId: string, color: GroupColor): void;
 
-  createThread(projectId: string, init?: Partial<Pick<Thread, "title" | "sessionId">>): string;
+  createThread(projectId: string, init?: Partial<Pick<Thread, "title" | "sessionId" | "worktree">>): string;
   updateThread(threadId: string, patch: Partial<Omit<Thread, "id">>): void;
   archiveThread(threadId: string): void;
   restoreThread(threadId: string): void;
@@ -59,6 +59,8 @@ export function makeThread(init?: Partial<Thread>): Thread {
     terminalMaximized: false,
     model: null,
     permissionMode: null,
+    worktree: null,
+    worktreeRequested: false,
     ...init,
   };
 }
@@ -274,6 +276,11 @@ export const useAppStore = create<AppStore>((set, get) => {
 });
 
 /** The project and thread for a thread id. */
+/** Where a thread works: its own worktree when it has one, else the project folder. */
+export function threadCwd(project: Pick<Project, "path">, thread: Pick<Thread, "worktree">): string {
+  return thread.worktree?.path ?? project.path;
+}
+
 export function findThread(state: Pick<AppState, "projects">, threadId: string | null) {
   if (!threadId) return null;
   for (const project of state.projects) {

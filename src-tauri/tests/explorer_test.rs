@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use speedy_lib::explorer::{git_diff, git_status, list, read, resolve, write};
+use speedy_lib::explorer::{git_branch, git_diff, git_status, list, read, resolve, write};
 
 fn put(root: &Path, rel: &str, body: &str) {
     let p = root.join(rel);
@@ -115,4 +115,24 @@ fn no_git_status_outside_a_repository() {
     let dir = tempfile::tempdir().unwrap();
     put(dir.path(), "a.md", "");
     assert!(git_status(dir.path()).is_empty());
+}
+
+#[test]
+fn git_branch_names_the_branch_or_detached_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    assert_eq!(git_branch(repo), None);
+
+    git(repo, &["init", "-q", "-b", "main"]);
+    assert_eq!(git_branch(repo).as_deref(), Some("main"), "unborn branch");
+
+    put(repo, "sub/a.md", "a\n");
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-qm", "init"]);
+    git(repo, &["checkout", "-qb", "justin/DEV-1/thing"]);
+    assert_eq!(git_branch(&repo.join("sub")).as_deref(), Some("justin/DEV-1/thing"));
+
+    git(repo, &["checkout", "-q", "--detach"]);
+    let detached = git_branch(repo).unwrap();
+    assert!(detached.chars().all(|c| c.is_ascii_hexdigit()), "{detached}");
 }

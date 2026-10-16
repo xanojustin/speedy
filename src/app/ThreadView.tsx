@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import { ChatPane } from "../chat/ChatPane";
 import type { Project, Thread } from "../ipc/types";
-import { useAppStore } from "../store/appStore";
+import { threadCwd, useAppStore } from "../store/appStore";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { terminalLabel, terminalsOf, useTerminalTabs } from "../terminal/tabs";
 import { killTerminal, newTerminal, toggleMaximizeTerminal, toggleTerminal } from "./shortcuts";
@@ -102,7 +102,7 @@ export function ThreadView({ project, thread }: { project: Project; thread: Thre
         <div className="terminal-body">
           <div className="terminal-stack">
             {terminals.ids.map((id) => (
-              <TerminalPane key={id} terminalId={id} cwd={project.path} visible={terminalShown && id === terminals.active} />
+              <TerminalPane key={id} terminalId={id} cwd={threadCwd(project, thread)} visible={terminalShown && id === terminals.active} />
             ))}
           </div>
           {terminals.ids.length > 1 && (

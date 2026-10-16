@@ -287,6 +287,36 @@
 .model-pill:hover {
   background: color-mix(in srgb, var(--composer-fg) 16%, transparent);
 }
+.worktree-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-height: 18px;
+  margin-left: 6px;
+  padding: 0 8px;
+  border: 1px dashed color-mix(in srgb, var(--composer-fg) 22%, transparent);
+  border-radius: 9999px;
+  background: none;
+  color: var(--composer-fg-secondary);
+  font: inherit;
+  font-size: 0.85em;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.worktree-pill .codicon {
+  font-size: 12px;
+}
+.worktree-pill:hover {
+  color: var(--composer-fg);
+}
+.worktree-pill.on {
+  border-style: solid;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--composer-fg) 10%, transparent);
+  color: var(--composer-fg);
+}
 .model-pill-effort {
   margin-left: 4px;
   color: var(--composer-fg-secondary);
