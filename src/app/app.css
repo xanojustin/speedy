@@ -4,6 +4,8 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* The native title bar shares the sidebar's color; a hairline keeps them apart. */
+  border-top: 1px solid var(--vscode-titleBar-border, var(--vscode-widget-border, var(--vscode-panel-border)));
 }
 
 .app-loading {

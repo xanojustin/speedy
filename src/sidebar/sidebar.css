@@ -8,6 +8,7 @@
   background: var(--vscode-sideBar-background);
   color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
   border-right: 1px solid var(--vscode-sideBar-border, transparent);
+  padding-top: 4px;
 }
 
 .sidebar-title {
