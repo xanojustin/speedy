@@ -13,6 +13,8 @@ export interface AppStore extends AppState {
   /** The file explorer panel is open (not persisted: it starts hidden). */
   explorerOpen: boolean;
   explorerWidth: number;
+  /** A file the explorer should open, from a transcript link; the explorer takes it (not persisted). */
+  explorerReveal: { path: string; line: number | null } | null;
 
   load(): Promise<void>;
   addProject(path: string): string; // returns the new thread id
@@ -42,6 +44,10 @@ export interface AppStore extends AppState {
   setSettingsOpen(open: boolean): void;
   setExplorerOpen(open: boolean): void;
   setExplorerWidth(width: number): void;
+  /** Opens the explorer on `path` (relative to the thread's folder, or absolute) at `line`. */
+  revealInExplorer(path: string, line: number | null): void;
+  /** Hands the pending reveal to the explorer and clears it. */
+  takeExplorerReveal(): { path: string; line: number | null } | null;
   dismissNotice(): void;
 }
 
@@ -126,6 +132,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     notice: null,
     settingsOpen: false,
     explorerOpen: false,
+    explorerReveal: null,
     explorerWidth: 380,
 
     async load() {
@@ -267,6 +274,16 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     setExplorerWidth(width) {
       set({ explorerWidth: width });
+    },
+
+    revealInExplorer(path, line) {
+      set({ explorerOpen: true, explorerReveal: { path, line } });
+    },
+
+    takeExplorerReveal() {
+      const reveal = get().explorerReveal;
+      if (reveal) set({ explorerReveal: null });
+      return reveal;
     },
 
     dismissNotice() {

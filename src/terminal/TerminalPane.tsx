@@ -9,13 +9,33 @@ import { attachTerminal, type AttachedTerminal } from "./registry";
 
 export { disposeTerminal, disposeThreadTerminals } from "./registry";
 
-export function TerminalPane({ terminalId, cwd, visible }: { terminalId: string; cwd: string; visible: boolean }) {
+export function TerminalPane({
+  terminalId,
+  cwd,
+  visible,
+  onAddToChat,
+}: {
+  terminalId: string;
+  cwd: string;
+  visible: boolean;
+  /** Cmd+L over a selection hands it here. */
+  onAddToChat?: (text: string) => void;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const attached = useRef<AttachedTerminal | null>(null);
   const [findOpen, setFindOpen] = useState(false);
+  const addToChat = useRef(onAddToChat);
+  addToChat.current = onAddToChat;
 
   useLayoutEffect(() => {
-    const t = attachTerminal(terminalId, cwd, hostRef.current!, visible, () => setFindOpen(true));
+    const t = attachTerminal(
+      terminalId,
+      cwd,
+      hostRef.current!,
+      visible,
+      () => setFindOpen(true),
+      (text) => addToChat.current?.(text),
+    );
     attached.current = t;
     return () => {
       t.detach();

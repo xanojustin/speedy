@@ -697,3 +697,8 @@
   opacity: 0.6;
   cursor: default;
 }
+
+/* file references in assistant prose open in the explorer; linked inline code reads as a link */
+.md a.md-file-link code {
+  color: var(--chat-link);
+}

@@ -1,9 +1,12 @@
 // Model output is untrusted and this webview can reach a PTY. Markdown is lexed with `marked`
 // (the extension's library) and rendered to React elements, never to an HTML string: raw HTML
 // shows as literal text, only http(s) links are live, and they open through `open_path`.
+// File references (`src/a.ts:42`) open in Speedy's own explorer, never through the OS.
 import { memo, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Lexer, type Token, type Tokens } from "marked";
 import { openPath } from "../../ipc/commands";
+import { useAppStore } from "../../store/appStore";
+import { parseFileHref, parseFileRef, splitFileRefs, type FileRef } from "./fileRefs";
 import { highlight } from "./highlight";
 
 export function safeHref(href: string | undefined | null): string | null {
@@ -22,9 +25,31 @@ function openLink(e: MouseEvent, href: string) {
   void openPath(href).catch(() => {});
 }
 
+function FileLink({ fileRef, children }: { fileRef: FileRef; children: ReactNode }) {
+  const where = `${fileRef.path}${fileRef.line ? `:${fileRef.line}` : ""}`;
+  return (
+    <a
+      href="#"
+      className="md-file-link"
+      title={`Open ${where} in the Explorer`}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        useAppStore.getState().revealInExplorer(fileRef.path, fileRef.line);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
 export function SafeLink({ href, title, children }: { href: string | null; title?: string | null; children: ReactNode }) {
   const safe = safeHref(href);
-  if (!safe) return <span className="md-link-inert">{children}</span>;
+  if (!safe) {
+    const fileRef = href ? parseFileHref(href) : null;
+    if (fileRef) return <FileLink fileRef={fileRef}>{children}</FileLink>;
+    return <span className="md-link-inert">{children}</span>;
+  }
   return (
     <a href={safe} title={title ?? safe} onClick={(e) => openLink(e, safe)}>
       {children}
@@ -94,34 +119,45 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   );
 }
 
-function inline(tokens: Token[] | undefined, key = ""): ReactNode[] {
+/** `inLink`: inside a link's text, where file references must not nest another link. */
+function inline(tokens: Token[] | undefined, key = "", inLink = false): ReactNode[] {
   if (!tokens) return [];
-  return tokens.map((t, i) => renderInline(t, `${key}${i}`));
+  return tokens.map((t, i) => renderInline(t, `${key}${i}`, inLink));
 }
 
-function renderInline(t: Token, key: string): ReactNode {
+function renderInline(t: Token, key: string, inLink = false): ReactNode {
   switch (t.type) {
     case "text": {
       const tt = t as Tokens.Text;
-      return tt.tokens?.length ? <span key={key}>{inline(tt.tokens, `${key}.`)}</span> : decode(tt.text, key);
+      if (tt.tokens?.length) return <span key={key}>{inline(tt.tokens, `${key}.`, inLink)}</span>;
+      return inLink ? decode(tt.text, key) : linkified(tt.text, key);
     }
     case "escape":
       return decode((t as Tokens.Escape).text, key);
     case "strong":
-      return <strong key={key}>{inline((t as Tokens.Strong).tokens, `${key}.`)}</strong>;
+      return <strong key={key}>{inline((t as Tokens.Strong).tokens, `${key}.`, inLink)}</strong>;
     case "em":
-      return <em key={key}>{inline((t as Tokens.Em).tokens, `${key}.`)}</em>;
+      return <em key={key}>{inline((t as Tokens.Em).tokens, `${key}.`, inLink)}</em>;
     case "del":
-      return <del key={key}>{inline((t as Tokens.Del).tokens, `${key}.`)}</del>;
-    case "codespan":
-      return <code key={key}>{(t as Tokens.Codespan).text}</code>;
+      return <del key={key}>{inline((t as Tokens.Del).tokens, `${key}.`, inLink)}</del>;
+    case "codespan": {
+      const code = <code key={key}>{(t as Tokens.Codespan).text}</code>;
+      const fileRef = inLink ? null : parseFileRef((t as Tokens.Codespan).text);
+      return fileRef ? (
+        <FileLink key={key} fileRef={fileRef}>
+          {code}
+        </FileLink>
+      ) : (
+        code
+      );
+    }
     case "br":
       return <br key={key} />;
     case "link": {
       const l = t as Tokens.Link;
       return (
         <SafeLink key={key} href={l.href} title={l.title}>
-          {inline(l.tokens, `${key}.`)}
+          {inline(l.tokens, `${key}.`, true)}
         </SafeLink>
       );
     }
@@ -147,6 +183,25 @@ function renderInline(t: Token, key: string): ReactNode {
 // marked (v18) leaves token text unescaped; React escapes it when rendered as a text node.
 function decode(s: string, key: string): ReactNode {
   return <span key={key}>{s}</span>;
+}
+
+/** Prose with its file references linked. */
+function linkified(s: string, key: string): ReactNode {
+  const pieces = splitFileRefs(s);
+  if (pieces.length === 1 && typeof pieces[0] === "string") return decode(s, key);
+  return (
+    <span key={key}>
+      {pieces.map((p, i) =>
+        typeof p === "string" ? (
+          p
+        ) : (
+          <FileLink key={i} fileRef={p.ref}>
+            {p.text}
+          </FileLink>
+        ),
+      )}
+    </span>
+  );
 }
 
 function renderBlock(t: Token, key: string): ReactNode {

@@ -124,6 +124,7 @@
 /* ---- attachments ---- */
 .composer-attachments {
   display: flex;
+  align-items: flex-start;
   gap: 4px;
   overflow-x: auto;
   padding: 6px;
@@ -166,6 +167,44 @@
 .composer-thumb:hover .composer-thumb-remove,
 .composer-thumb-remove:focus-visible {
   opacity: 0.9;
+}
+
+.composer-snippet {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 2px 0 6px;
+  border: 1px solid var(--composer-border);
+  border-radius: 6px;
+  color: var(--composer-fg-secondary);
+  font-size: 0.85em;
+  white-space: nowrap;
+  cursor: default;
+}
+.composer-snippet .codicon {
+  font-size: 12px;
+}
+.composer-snippet-label {
+  color: var(--composer-fg);
+}
+.composer-snippet-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--composer-fg-secondary);
+  cursor: pointer;
+}
+.composer-snippet-remove:hover {
+  background: var(--composer-hover-bg);
+  color: var(--composer-fg);
 }
 
 /* ---- footer ---- */
@@ -322,25 +361,91 @@
   color: var(--composer-fg-secondary);
 }
 
-/* context usage ring */
+/* context usage meter */
 .context-usage {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 26px;
+  gap: 4px;
   height: 26px;
-  padding: 0;
+  padding: 0 6px;
   border: none;
   border-radius: 5px;
   background: transparent;
-  color: var(--composer-fg);
+  color: var(--composer-fg-secondary);
+  font: inherit;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
-.context-usage:hover {
+.context-usage:hover,
+.context-usage[aria-expanded="true"] {
   background: var(--composer-hover-bg);
+  color: var(--composer-fg);
 }
 .context-usage-arc {
+  stroke: var(--composer-fg-secondary);
+}
+.context-usage[data-level="medium"] .context-usage-arc {
   stroke: var(--composer-send-bg);
+}
+.context-usage[data-level="high"] .context-usage-arc {
+  stroke: var(--composer-danger);
+}
+.context-usage[data-level="high"] {
+  color: var(--composer-danger);
+}
+.context-menu {
+  width: 280px;
+}
+.context-bar {
+  position: relative;
+  height: 6px;
+  margin: 2px 8px 8px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--composer-menu-fg) 12%, transparent);
+}
+.context-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--composer-menu-fg);
+  opacity: 0.6;
+}
+.context-bar-fill[data-level="medium"] {
+  background: var(--composer-send-bg);
+  opacity: 1;
+}
+.context-bar-fill[data-level="high"] {
+  background: var(--composer-danger);
+  opacity: 1;
+}
+/* where auto-compact kicks in */
+.context-bar-mark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--composer-menu-fg);
+  opacity: 0.5;
+}
+.context-rows {
+  margin: 0;
+  padding: 0 8px;
+  list-style: none;
+}
+.context-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+.context-row-tokens {
+  color: var(--composer-fg-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.context-note {
+  padding: 6px 8px 2px;
+  color: var(--composer-fg-secondary);
+  font-size: 0.9em;
 }
 
 /* ---- popups (slash, mentions, footer menus) ---- */

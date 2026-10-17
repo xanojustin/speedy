@@ -103,6 +103,12 @@ export const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>):
       return listProjectDir(args!.dir as string);
     case "explorer_read":
       return backend.projectFiles[args!.path as string];
+    case "files_search": {
+      const q = (args!.query as string).toLowerCase();
+      return Object.keys(backend.projectFiles)
+        .filter((p) => p.toLowerCase().includes(q))
+        .map((path) => ({ path, isDir: false }));
+    }
     case "explorer_write":
       backend.projectFiles[args!.path as string] = args!.content as string;
       return undefined;

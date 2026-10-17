@@ -15,6 +15,7 @@ import { findThread, useAppStore } from "../store/appStore";
 import { __resetRuntimeForTests } from "../store/runtime";
 import { useThreadStore } from "../store/threadStore";
 import { Composer } from "./Composer";
+import { ADD_TO_COMPOSER_EVENT } from "./focusEvent";
 import { __resetSessionControlsForTests } from "./sessionControls";
 
 let threadId = "";
@@ -471,17 +472,89 @@ describe("model and effort", () => {
 });
 
 describe("context usage", () => {
-  it("is requested after each result and rendered", async () => {
-    goLive();
-    handlers.claude_control = (args) =>
-      (args.request as { subtype: string }).subtype === "get_context_usage" ? { percentage: 72, totalTokens: 144000, maxTokens: 200000, categories: [] } : {};
+  const usage = {
+    percentage: 72,
+    totalTokens: 144000,
+    maxTokens: 200000,
+    autoCompactThreshold: 167000,
+    isAutoCompactEnabled: true,
+    categories: [
+      { name: "System prompt", tokens: 3000, kind: "used" },
+      { name: "Messages", tokens: 141000, kind: "used" },
+      { name: "MCP tools (deferred)", tokens: 90000, kind: "deferred" },
+      { name: "Autocompact buffer", tokens: 33000, kind: "buffer" },
+      { name: "Free space", tokens: 23000, kind: "free" },
+    ],
+  };
+
+  it("is requested when the session starts and after each result", async () => {
+    handlers.claude_control = (args) => ((args.request as { subtype: string }).subtype === "get_context_usage" ? usage : {});
     await renderComposer();
     expect(controlCalls("get_context_usage")).toHaveLength(0);
     expect(screen.queryByRole("button", { name: /context used/ })).toBeNull();
 
-    dispatch(status("working"), msg({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "s1" }), status("idle"));
+    goLive();
     await waitFor(() => expect(controlCalls("get_context_usage")).toHaveLength(1));
-    const indicator = await screen.findByRole("button", { name: /72% context used/ });
-    expect(indicator).toHaveAttribute("title", expect.stringContaining("28% of context remaining"));
+    const indicator = await screen.findByRole("button", { name: "72% context used" });
+    expect(indicator).toHaveTextContent("72%");
+
+    dispatch(status("working"), msg({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "s1" }), status("idle"));
+    await waitFor(() => expect(controlCalls("get_context_usage")).toHaveLength(2));
+  });
+
+  it("shows even when little context is used", async () => {
+    handlers.claude_control = (args) =>
+      (args.request as { subtype: string }).subtype === "get_context_usage" ? { ...usage, percentage: 4, totalTokens: 8000 } : {};
+    goLive();
+    await renderComposer();
+    expect(await screen.findByRole("button", { name: "4% context used" })).toBeInTheDocument();
+  });
+
+  it("opens a breakdown of what fills the window, and compacts from it", async () => {
+    handlers.claude_control = (args) => ((args.request as { subtype: string }).subtype === "get_context_usage" ? usage : {});
+    goLive();
+    const { user } = await renderComposer();
+    await user.click(await screen.findByRole("button", { name: "72% context used" }));
+    const panel = screen.getByRole("dialog", { name: "Context window" });
+    expect(panel).toHaveTextContent("144k / 200k tokens");
+    expect(within(panel).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Messages141k", "System prompt3k"]);
+    expect(panel).toHaveTextContent("Auto-compacts at 167k tokens.");
+
+    await user.click(within(panel).getByRole("button", { name: /Compact conversation/ }));
+    expect(screen.queryByRole("dialog", { name: "Context window" })).toBeNull();
+    await waitFor(() => expect(calls("claude_send_user").map((c) => c.content)).toEqual([[{ type: "text", text: "/compact" }]]));
+  });
+});
+
+describe("terminal output", () => {
+  const addOutput = (text: string, source = "Terminal 1", forThread = threadId) =>
+    act(() => {
+      window.dispatchEvent(new CustomEvent(ADD_TO_COMPOSER_EVENT, { detail: { threadId: forThread, text, source } }));
+    });
+
+  it("attaches as a chip and is sent after the typed message", async () => {
+    goLive();
+    const { user, input } = await renderComposer();
+    addOutput("$ bun test\nFAIL a.test.ts  \n");
+    addOutput("ignored", "Terminal 1", "other-thread");
+    expect(screen.getByText("Terminal 1 · 2 lines")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+
+    await user.type(input, "why does this fail?{Enter}");
+    await waitFor(() =>
+      expect(calls("claude_send_user").map((c) => c.content)).toEqual([
+        [{ type: "text", text: "why does this fail?\n\nOutput from my terminal (Terminal 1):\n```\n$ bun test\nFAIL a.test.ts\n```" }],
+      ]),
+    );
+    expect(screen.queryByText(/Terminal 1 ·/)).toBeNull();
+  });
+
+  it("can be removed before sending", async () => {
+    goLive();
+    const { user } = await renderComposer();
+    addOutput("boom");
+    await user.click(screen.getByRole("button", { name: "Remove output from Terminal 1" }));
+    expect(screen.queryByText(/Terminal 1 ·/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   });
 });

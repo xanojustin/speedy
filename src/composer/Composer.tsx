@@ -7,7 +7,7 @@ import { useWorktreeChoosable } from "../chat/git";
 import { findThread, threadCwd, useAppStore } from "../store/appStore";
 import { controlRequest, interruptThread, removeQueued, sendUserMessage } from "../store/runtime";
 import { getRuntime, useThreadRuntime, useThreadStore } from "../store/threadStore";
-import { FOCUS_COMPOSER_EVENT, type FocusComposerDetail } from "./focusEvent";
+import { ADD_TO_COMPOSER_EVENT, FOCUS_COMPOSER_EVENT, type AddToComposerDetail, type FocusComposerDetail } from "./focusEvent";
 import { MentionMenu, useFileMentions } from "./Mentions";
 import {
   ContextUsage,
@@ -25,6 +25,7 @@ import {
 import { QueueList } from "./QueueList";
 import { useSessionControls, type EffortLevel } from "./sessionControls";
 import { useComposerSettings } from "./settings";
+import { makeSnippet, snippetPrompt, type Snippet } from "./snippets";
 import { SlashMenu, cachedCommands, expandSlash, filterSlash, rememberCommands, slashCommands, type SlashCommand } from "./SlashMenu";
 import "./composer.css";
 
@@ -79,6 +80,7 @@ export function Composer({ threadId }: { threadId: string }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
   const [images, setImages] = useState<Attachment[]>([]);
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   /** The input text at which the user dismissed the open menu with Esc. */
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
@@ -135,8 +137,18 @@ export function Composer({ threadId }: { threadId: string }) {
     const onFocus = (e: Event) => {
       if ((e as CustomEvent<Partial<FocusComposerDetail>>).detail?.threadId === threadId) focusInput();
     };
+    const onAdd = (e: Event) => {
+      const { detail } = e as CustomEvent<AddToComposerDetail>;
+      if (detail?.threadId !== threadId) return;
+      const s = makeSnippet(detail.text, detail.source);
+      if (s) setSnippets((prev) => [...prev, s]);
+    };
     window.addEventListener(FOCUS_COMPOSER_EVENT, onFocus);
-    return () => window.removeEventListener(FOCUS_COMPOSER_EVENT, onFocus);
+    window.addEventListener(ADD_TO_COMPOSER_EVENT, onAdd);
+    return () => {
+      window.removeEventListener(FOCUS_COMPOSER_EVENT, onFocus);
+      window.removeEventListener(ADD_TO_COMPOSER_EVENT, onAdd);
+    };
   }, [threadId, focusInput]);
 
   const selectSlash = (c: SlashCommand) => {
@@ -152,17 +164,20 @@ export function Composer({ threadId }: { threadId: string }) {
   };
 
   // ---------- sending ----------
-  const canSend = text.trim() !== "" || images.length > 0;
+  const canSend = text.trim() !== "" || images.length > 0 || snippets.length > 0;
 
   const submit = () => {
     const trimmed = expandSlash(text.trim(), commands);
-    if (!trimmed && images.length === 0) return;
+    if (!trimmed && images.length === 0 && snippets.length === 0) return;
+    // The typed text leads, so a slash command still runs (and takes the output as its arguments).
+    const body = [trimmed, ...snippets.map(snippetPrompt)].filter(Boolean).join("\n\n");
     const content: unknown[] = [
       ...images.map((img) => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } })),
-      ...(trimmed ? [{ type: "text", text: trimmed }] : []),
+      ...(body ? [{ type: "text", text: body }] : []),
     ];
     applyText("", 0);
     setImages([]);
+    setSnippets([]);
     void sendUserMessage(threadId, content);
   };
 
@@ -242,15 +257,15 @@ export function Composer({ threadId }: { threadId: string }) {
       : null;
   const effortLabel = (current ? current.supportsEffort : true) && shownEffort ? EFFORT_LABEL[shownEffort] : null;
 
-  // ---------- context usage: refresh after every result ----------
+  // ---------- context usage: refresh once the session starts and after every result ----------
   const liveRef = useRef(live);
   liveRef.current = live;
   useEffect(() => {
-    if (!rt.lastResult || !liveRef.current) return;
+    if (!rt.init || !liveRef.current) return;
     controlRequest(threadId, { subtype: "get_context_usage" }).catch(() => {
       // Older CLIs lack get_context_usage; the indicator just stays hidden.
     });
-  }, [rt.lastResult, threadId]);
+  }, [rt.init, rt.lastResult, threadId]);
 
   // ---------- keys ----------
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -334,8 +349,24 @@ export function Composer({ threadId }: { threadId: string }) {
         )}
         {menu === "mention" && <MentionMenu hits={hits} activeIndex={activeIndex} onSelect={selectMention} onHover={setActiveIndex} />}
         <div className="composer-box" data-permission-mode={mode}>
-          {images.length > 0 && (
+          {(images.length > 0 || snippets.length > 0) && (
             <div className="composer-attachments">
+              {snippets.map((s) => (
+                <div key={s.id} className="composer-snippet" title={s.text.length > 600 ? `${s.text.slice(0, 600)}…` : s.text}>
+                  <i className="codicon codicon-terminal" aria-hidden="true" />
+                  <span className="composer-snippet-label">
+                    {s.source} · {s.lines} {s.lines === 1 ? "line" : "lines"}
+                  </span>
+                  <button
+                    type="button"
+                    className="composer-snippet-remove"
+                    aria-label={`Remove output from ${s.source}`}
+                    onClick={() => setSnippets((prev) => prev.filter((x) => x.id !== s.id))}
+                  >
+                    <i className="codicon codicon-close" aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
               {images.map((img) => (
                 <div key={img.id} className="composer-thumb" title={img.name}>
                   <img src={img.dataUrl} alt={img.name} />

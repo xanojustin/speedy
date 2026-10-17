@@ -25,6 +25,11 @@ describe("terminalKeyAction", () => {
     expect(terminalKeyAction(cmd("v"), false)).toEqual({ type: "native" });
   });
 
+  it("Cmd+L adds a selection to the chat, otherwise focuses the chat through the menu", () => {
+    expect(terminalKeyAction(cmd("l"), true)).toEqual({ type: "addToChat" });
+    expect(terminalKeyAction(cmd("l"), false)).toEqual({ type: "native" });
+  });
+
   it("Cmd+A selects all, Cmd+F opens find", () => {
     expect(terminalKeyAction(cmd("a"), false)).toEqual({ type: "selectAll" });
     expect(terminalKeyAction(cmd("f"), false)).toEqual({ type: "find" });

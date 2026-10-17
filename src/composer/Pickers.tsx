@@ -285,43 +285,143 @@ export function ModelPicker({
 
 // ---------- context usage ----------
 
-/** `get_context_usage` response (SDKControlGetContextUsageResponse), read defensively. */
-function contextPercentage(usage: unknown): number | null {
-  if (!usage || typeof usage !== "object") return null;
-  const { percentage, totalTokens, maxTokens } = usage as { percentage?: unknown; totalTokens?: unknown; maxTokens?: unknown };
-  if (typeof percentage === "number" && Number.isFinite(percentage)) return Math.min(100, Math.max(0, percentage));
-  if (typeof totalTokens === "number" && typeof maxTokens === "number" && maxTokens > 0) return Math.min(100, (totalTokens / maxTokens) * 100);
-  return null;
+interface ContextCategory {
+  name: string;
+  tokens: number;
+  kind?: "used" | "free" | "buffer" | "deferred";
 }
 
-/** Like the extension: hidden until half the context is used; click compacts. */
+export interface ContextSummary {
+  percentage: number;
+  totalTokens: number | null;
+  maxTokens: number | null;
+  autoCompactThreshold: number | null;
+  /** What occupies the window, largest first; deferred tool schemas are left out. */
+  used: ContextCategory[];
+}
+
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+/** `get_context_usage` response (SDKControlGetContextUsageResponse), read defensively. */
+export function contextSummary(usage: unknown): ContextSummary | null {
+  if (!usage || typeof usage !== "object") return null;
+  const u = usage as Record<string, unknown>;
+  const totalTokens = num(u.totalTokens);
+  const maxTokens = num(u.maxTokens);
+  let percentage = num(u.percentage);
+  if (percentage === null && totalTokens !== null && maxTokens) percentage = (totalTokens / maxTokens) * 100;
+  if (percentage === null) return null;
+  const used = (Array.isArray(u.categories) ? u.categories : [])
+    .filter((c): c is ContextCategory => !!c && typeof c === "object" && typeof c.name === "string" && num(c.tokens) !== null)
+    // Older CLIs don't send `kind`; fall back to the names the CLI uses for the non-content rows.
+    .filter((c) => (c.kind ? c.kind === "used" : !/deferred|free space|buffer/i.test(c.name)))
+    .filter((c) => c.tokens > 0)
+    .sort((a, b) => b.tokens - a.tokens);
+  return {
+    percentage: Math.min(100, Math.max(0, percentage)),
+    totalTokens,
+    maxTokens,
+    autoCompactThreshold: u.isAutoCompactEnabled === false ? null : num(u.autoCompactThreshold),
+    used,
+  };
+}
+
+/** 35097 -> "35.1k", 1000000 -> "1M". */
+export function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${+(n / 1000).toFixed(1)}k`;
+  return String(Math.round(n));
+}
+
+/** The footer's context meter: a ring and the percentage used; click for the breakdown and Compact. */
 export function ContextUsage({ usage, onCompact }: { usage: unknown; onCompact(): void }): ReactNode {
-  const used = contextPercentage(usage);
-  if (used === null || used < 50) return null;
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const popup = useRef<HTMLDivElement>(null);
+  const refs = useRef([button, popup]).current;
+  const close = useRef(() => setOpen(false)).current;
+  useDismiss(open, close, refs);
+
+  const summary = contextSummary(usage);
+  if (!summary) return null;
+  const { percentage, totalTokens, maxTokens, autoCompactThreshold, used } = summary;
+  const shown = Math.round(percentage);
+  const level = percentage >= 80 ? "high" : percentage >= 50 ? "medium" : "low";
   const r = 6;
   const c = 2 * Math.PI * r;
+  const ofMax = totalTokens !== null && maxTokens ? `${formatTokenCount(totalTokens)} / ${formatTokenCount(maxTokens)} tokens` : null;
+
   return (
-    <button
-      type="button"
-      className="context-usage"
-      aria-label={`${Math.round(used)}% context used — click to compact`}
-      title={`${Math.round(100 - used)}% of context remaining until auto-compact. Click to compact now.`}
-      onClick={onCompact}
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-        <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeOpacity="0.15" strokeWidth="1.5" />
-        <circle
-          cx="8"
-          cy="8"
-          r={r}
-          fill="none"
-          className="context-usage-arc"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeDasharray={`${(used / 100) * c} ${c}`}
-          transform="rotate(-90 8 8)"
-        />
-      </svg>
-    </button>
+    <div className="composer-menu-host">
+      <button
+        ref={button}
+        type="button"
+        className="context-usage"
+        data-level={level}
+        aria-label={`${shown}% context used`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={`${shown}% of context used${ofMax ? ` (${ofMax})` : ""}. Click for details.`}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2" />
+          <circle
+            cx="8"
+            cy="8"
+            r={r}
+            fill="none"
+            className="context-usage-arc"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeDasharray={`${(percentage / 100) * c} ${c}`}
+            transform="rotate(-90 8 8)"
+          />
+        </svg>
+        <span className="context-usage-pct">{shown}%</span>
+      </button>
+      {open && (
+        <div ref={popup} className="composer-menu context-menu" role="dialog" aria-label="Context window">
+          <div className="composer-menu-header">
+            <span className="composer-menu-title">Context window</span>
+            <span className="composer-menu-hint">{ofMax ?? `${shown}% used`}</span>
+          </div>
+          <div className="context-bar" aria-hidden="true">
+            <div className="context-bar-fill" data-level={level} style={{ width: `${percentage}%` }} />
+            {autoCompactThreshold !== null && maxTokens ? (
+              <div className="context-bar-mark" style={{ left: `${Math.min(100, (autoCompactThreshold / maxTokens) * 100)}%` }} />
+            ) : null}
+          </div>
+          {used.length > 0 && (
+            <ul className="context-rows">
+              {used.map((cat) => (
+                <li key={cat.name} className="context-row">
+                  <span className="context-row-name">{cat.name}</span>
+                  <span className="context-row-tokens">{formatTokenCount(cat.tokens)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {autoCompactThreshold !== null && (
+            <div className="context-note">Auto-compacts at {formatTokenCount(autoCompactThreshold)} tokens.</div>
+          )}
+          <div className="composer-menu-divider" />
+          <button
+            type="button"
+            className="composer-menu-item"
+            onClick={() => {
+              setOpen(false);
+              onCompact();
+            }}
+          >
+            <i className="codicon codicon-fold composer-menu-icon" aria-hidden="true" />
+            <span className="composer-menu-text">
+              <span className="composer-menu-label">Compact conversation</span>
+              <span className="composer-menu-description">Summarize the conversation so far to free up context</span>
+            </span>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

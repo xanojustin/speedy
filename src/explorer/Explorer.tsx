@@ -1,12 +1,14 @@
 // A minimal file explorer for the selected thread's project: browse the tree, read and edit text
 // files (Markdown previews rendered), and see uncommitted git changes against HEAD.
 import { ask } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Markdown } from "../chat/markdown/Markdown";
 import { highlight } from "../chat/markdown/highlight";
 import { explorerGitDiff, explorerGitStatus, explorerList, explorerRead, explorerWrite, openInVscode } from "../ipc/commands";
 import type { DirEntry, FileDiff, GitStatus } from "../ipc/types";
 import { DiffView } from "../permissions/DiffView";
+import { useAppStore } from "../store/appStore";
+import { resolveReveal } from "./reveal";
 import "../permissions/permissions.css";
 import "./explorer.css";
 
@@ -58,9 +60,23 @@ function folderStatus(changes: Map<string, GitStatus>, dir: string): GitStatus |
   return found;
 }
 
+/** An open file and the line to show; `seq` re-scrolls when the same line is asked for again. */
+interface OpenFile {
+  path: string;
+  line: number | null;
+  seq: number;
+}
+
 export function Explorer({ root, name, onClose }: { root: string; name: string; onClose: () => void }) {
   const { changes, refresh } = useGitChanges(root);
-  const [openPath, setOpenPath] = useState<string | null>(null);
+  const [open, setOpen] = useState<OpenFile | null>(null);
+  const openPath = open?.path ?? null;
+  const setOpenPath = useCallback((path: string | null) => setOpen((prev) => (path === null ? null : { path, line: null, seq: (prev?.seq ?? 0) + 1 })), []);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const dirty = useRef(false);
+  const onDirty = useCallback((d: boolean) => {
+    dirty.current = d;
+  }, []);
   const [treeVersion, setTreeVersion] = useState(0);
   // Lives here so expanded folders survive opening a file and going back.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
@@ -76,6 +92,26 @@ export function Explorer({ root, name, onClose }: { root: string; name: string; 
     refresh();
     setTreeVersion((v) => v + 1);
   };
+
+  // A file link clicked in the transcript.
+  const reveal = useAppStore((s) => s.explorerReveal);
+  useEffect(() => {
+    if (!reveal) return;
+    const target = useAppStore.getState().takeExplorerReveal();
+    if (!target) return;
+    void (async () => {
+      const path = await resolveReveal(root, target.path);
+      if (path === null) {
+        setRevealError(`${target.path} is outside this thread's folder.`);
+        return;
+      }
+      if (dirty.current && path !== openPath) {
+        if (!(await ask("Discard unsaved changes?", { title: "Unsaved Changes", kind: "warning" }))) return;
+      }
+      setRevealError(null);
+      setOpen((prev) => ({ path, line: target.line, seq: (prev?.seq ?? 0) + 1 }));
+    })();
+  }, [reveal, root, openPath]);
 
   return (
     <div className="explorer" aria-label="Explorer">
@@ -103,14 +139,18 @@ export function Explorer({ root, name, onClose }: { root: string; name: string; 
           </button>
         </span>
       </div>
-      {openPath !== null ? (
+      {revealError && <div className="explorer-error">{revealError}</div>}
+      {open !== null ? (
         <FileView
-          key={openPath}
+          key={open.path}
           root={root}
-          path={openPath}
-          status={changes.get(openPath)}
+          path={open.path}
+          line={open.line}
+          seq={open.seq}
+          status={changes.get(open.path)}
           onBack={() => setOpenPath(null)}
           onSaved={refresh}
+          onDirty={onDirty}
         />
       ) : (
         <div className="explorer-tree" role="tree" aria-label={`Files in ${name}`}>
@@ -211,15 +251,21 @@ type Mode = "preview" | "edit" | "changes";
 function FileView({
   root,
   path,
+  line,
+  seq,
   status,
   onBack,
   onSaved,
+  onDirty,
 }: {
   root: string;
   path: string;
+  line: number | null;
+  seq: number;
   status: GitStatus | undefined;
   onBack: () => void;
   onSaved: () => void;
+  onDirty: (dirty: boolean) => void;
 }) {
   const [mode, setMode] = useState<Mode>("preview");
   const [saved, setSaved] = useState<string | null>(null);
@@ -228,6 +274,13 @@ function FileView({
   const [saving, setSaving] = useState(false);
   const dirty = saved !== null && draft !== saved;
   const name = path.split("/").pop() ?? path;
+  useEffect(() => onDirty(dirty), [dirty, onDirty]);
+  useEffect(() => () => onDirty(false), [onDirty]);
+  // A link to a line shows the source, where the line can be found.
+  useEffect(() => {
+    if (line !== null && !dirty) setMode("preview");
+    // Only when a new reveal arrives.
+  }, [seq]);
 
   useEffect(() => {
     let live = true;
@@ -309,12 +362,12 @@ function FileView({
         />
       ) : mode === "changes" ? (
         <ChangesView root={root} path={path} version={saved} />
-      ) : isMarkdown(path) ? (
+      ) : isMarkdown(path) && line === null ? (
         <div className="explorer-preview">
           <Markdown text={draft} />
         </div>
       ) : (
-        <CodePreview text={draft} lang={extOf(path)} />
+        <CodePreview text={draft} lang={extOf(path)} line={line} seq={seq} />
       )}
     </div>
   );
@@ -371,8 +424,9 @@ function ChangesView({ root, path, version }: { root: string; path: string; vers
   );
 }
 
-function CodePreview({ text, lang }: { text: string; lang: string | undefined }) {
+function CodePreview({ text, lang, line, seq }: { text: string; lang: string | undefined; line: number | null; seq: number }) {
   const [html, setHtml] = useState<string | null>(null);
+  const ref = useRef<HTMLElement | null>(null);
   useEffect(() => {
     setHtml(null);
     if (text.length > MAX_HIGHLIGHT_CHARS) return;
@@ -382,10 +436,33 @@ function CodePreview({ text, lang }: { text: string; lang: string | undefined })
       live = false;
     };
   }, [text, lang]);
-  return html ? (
+
+  // Scroll the target line into view and mark it, in either rendering (both emit `.line` spans).
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || line === null) return;
+    el.querySelector(".explorer-line-target")?.classList.remove("explorer-line-target");
+    const lines = el.querySelectorAll(".line");
+    const target = lines[Math.min(line, lines.length) - 1];
+    if (!target) return;
+    target.classList.add("explorer-line-target");
+    target.scrollIntoView?.({ block: "center" });
+  }, [html, line, seq]);
+
+  if (html) {
     // Shiki escapes the source text; same trust model as Markdown code blocks.
-    <div className="explorer-code" dangerouslySetInnerHTML={{ __html: html }} />
-  ) : (
-    <pre className="explorer-code">{text}</pre>
+    return <div ref={ref as RefObject<HTMLDivElement>} className="explorer-code" dangerouslySetInnerHTML={{ __html: html }} />;
+  }
+  return (
+    <pre ref={ref as RefObject<HTMLPreElement>} className="explorer-code">
+      {line === null
+        ? text
+        : text.split("\n").map((l, i) => [
+            i > 0 && "\n",
+            <span key={i} className="line">
+              {l}
+            </span>,
+          ])}
+    </pre>
   );
 }

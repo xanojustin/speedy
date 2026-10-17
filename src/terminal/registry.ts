@@ -25,6 +25,7 @@ interface Entry {
   exited: boolean;
   releaseWebgl: (() => void) | null;
   onFind: (() => void) | null;
+  onAddToChat: ((text: string) => void) | null;
 }
 
 const entries = new Map<string, Entry>();
@@ -139,6 +140,7 @@ function create(terminalId: string, cwd: string): Entry {
     exited: false,
     releaseWebgl: null,
     onFind: null,
+    onAddToChat: null,
   };
 
   term.attachCustomKeyEventHandler((e) => {
@@ -157,6 +159,10 @@ function create(terminalId: string, cwd: string): Entry {
         break;
       case "find":
         entry.onFind?.();
+        break;
+      case "addToChat":
+        entry.onAddToChat?.(term.getSelection());
+        term.clearSelection();
         break;
       case "send":
         term.input(action.data);
@@ -207,6 +213,7 @@ export interface AttachedTerminal {
  * PTY the first time. `detach` removes it from `host` without disposing anything.
  * xterm is opened on the first visible attach, because a `display: none` host
  * can't be measured; output written before that is buffered.
+ * `onAddToChat` receives the selection when the user presses Cmd+L over one.
  */
 export function attachTerminal(
   terminalId: string,
@@ -214,11 +221,13 @@ export function attachTerminal(
   host: HTMLElement,
   initiallyVisible: boolean,
   onFind: () => void,
+  onAddToChat: (text: string) => void,
 ): AttachedTerminal {
   const existing = entries.get(terminalId);
   const entry = existing ?? create(terminalId, cwd);
   host.appendChild(entry.container);
   entry.onFind = onFind;
+  entry.onAddToChat = onAddToChat;
   let visible = false;
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -258,6 +267,7 @@ export function attachTerminal(
       observer?.disconnect();
       dropWebgl();
       if (entry.onFind === onFind) entry.onFind = null;
+      if (entry.onAddToChat === onAddToChat) entry.onAddToChat = null;
       entry.container.remove();
     },
     find(query, backwards, incremental = false) {

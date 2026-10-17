@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { onMenu } from "../ipc/commands";
 import type { MenuAction } from "../ipc/types";
 import { findThread, useAppStore, visibleThreads } from "../store/appStore";
-import { FOCUS_COMPOSER_EVENT, type FocusComposerDetail } from "../composer/focusEvent";
+import { ADD_TO_COMPOSER_EVENT, FOCUS_COMPOSER_EVENT, type AddToComposerDetail, type FocusComposerDetail } from "../composer/focusEvent";
 import { addProjectViaPicker, closeThread, newThread } from "./actions";
 import { disposeTerminal, focusTerminal } from "../terminal/registry";
 import { terminalsOf, useTerminalTabs } from "../terminal/tabs";
@@ -57,6 +57,13 @@ function focusChat(threadId: string) {
   const t = findThread(useAppStore.getState(), threadId)?.thread;
   if (t?.terminalMaximized) useAppStore.getState().updateThread(threadId, { terminalMaximized: false });
   focusComposer(threadId);
+}
+
+/** Attaches terminal output to the thread's composer and moves focus there to write the message. */
+export function addToChat(threadId: string, text: string, source: string) {
+  if (!text.trim()) return;
+  window.dispatchEvent(new CustomEvent<AddToComposerDetail>(ADD_TO_COMPOSER_EVENT, { detail: { threadId, text, source } }));
+  focusChat(threadId);
 }
 
 function handleMenuAction(action: MenuAction) {

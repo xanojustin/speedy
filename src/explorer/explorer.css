@@ -221,3 +221,11 @@
   line-height: 1.5;
   tab-size: 2;
 }
+
+/* the line a transcript link pointed at */
+.explorer-code .explorer-line-target {
+  display: inline-block;
+  min-width: 100%;
+  background: var(--vscode-editor-lineHighlightBackground, color-mix(in srgb, currentColor 10%, transparent));
+  outline: 1px solid var(--vscode-editor-lineHighlightBorder, transparent);
+}

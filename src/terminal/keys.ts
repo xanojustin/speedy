@@ -16,6 +16,7 @@ export type KeyAction =
   | { type: "copy" }
   | { type: "selectAll" }
   | { type: "find" }
+  | { type: "addToChat" }
   | { type: "send"; data: string };
 
 /**
@@ -40,6 +41,9 @@ export function terminalKeyAction(e: KeyLike, hasSelection: boolean): KeyAction 
       return { type: "selectAll" };
     case "f":
       return { type: "find" };
+    case "l":
+      // With a selection, Cmd+L attaches it to the chat; otherwise it's the menu's Focus Chat.
+      return hasSelection ? { type: "addToChat" } : { type: "native" };
     case "ArrowLeft":
       return { type: "send", data: "\x01" };
     case "ArrowRight":

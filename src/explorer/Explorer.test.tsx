@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/plugin-dialog", async () => (await import("../app/testing/t
 import { App } from "../app/App";
 import { backend, callsTo, dialog, emitMenu, project, stateWith } from "../app/testing/tauriMock";
 import { resetBackend } from "../app/testing/reset";
-import { makeThread } from "../store/appStore";
+import { makeThread, useAppStore } from "../store/appStore";
 
 const explorer = () => screen.queryByLabelText("Explorer");
 
@@ -122,5 +122,42 @@ describe("Explorer", () => {
         { path: "/Users/me/.worktrees/app-feature" },
       ]),
     );
+  });
+});
+
+describe("Explorer reveal (transcript file links)", () => {
+  const reveal = (path: string, line: number | null) => act(() => useAppStore.getState().revealInExplorer(path, line));
+
+  it("opens the explorer on a path relative to the thread's folder", async () => {
+    backend.files.add("/Users/me/app/src/main.ts");
+    await renderApp();
+    reveal("src/main.ts", 1);
+    expect(await screen.findByTitle("src/main.ts")).toHaveTextContent("main.ts");
+    expect(useAppStore.getState().explorerReveal).toBeNull();
+  });
+
+  it("finds a bare file name or an absolute path inside the folder", async () => {
+    await renderApp();
+    reveal("main.ts", 1);
+    expect(await screen.findByTitle("src/main.ts")).toBeInTheDocument();
+
+    backend.files.add("/Users/me/app/README.md");
+    reveal("/Users/me/app/README.md", null);
+    expect(await screen.findByTitle("README.md")).toBeInTheDocument();
+  });
+
+  it("marks the linked line", async () => {
+    backend.projectFiles["src/main.ts"] = "one\ntwo\nthree\n";
+    backend.files.add("/Users/me/app/src/main.ts");
+    await renderApp();
+    reveal("src/main.ts", 2);
+    await screen.findByTitle("src/main.ts");
+    await waitFor(() => expect(document.querySelector(".explorer-line-target")).toHaveTextContent("two"));
+  });
+
+  it("refuses paths outside the folder", async () => {
+    await renderApp();
+    reveal("/etc/passwd.txt", null);
+    expect(await screen.findByText("/etc/passwd.txt is outside this thread's folder.")).toBeInTheDocument();
   });
 });
