@@ -15,7 +15,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use speedy_core::claude::STOP_GRACE;
+use speedy_core::claude::{STOP_GRACE, ThreadStatus};
 use speedy_core::env::EnvService;
 use speedy_core::host::log::Cursor;
 use speedy_core::host::{Host, NewProject, NewThread, ThreadPatch, ThreadReplay};
@@ -299,6 +299,7 @@ impl Agent {
             "pty_has_foreground_child" => ok(self.ptys.host.has_foreground_child(&args::<TerminalArg>(params)?.terminal_id)),
 
             // Setup.
+            "agent_busy" => Ok(self.busy().into()),
             "get_setup_state" => self.setup_state().await,
             "set_claude_token" => {
                 let a: TokenArg = args(params)?;
@@ -358,6 +359,13 @@ impl Agent {
             }
             _ => Err(format!("unknown method {method}")),
         }
+    }
+
+    /// Whether replacing the agent now would interrupt work: a thread working or waiting on
+    /// a prompt, or a terminal running a command (KTD9).
+    fn busy(&self) -> bool {
+        let threads = self.host.snapshot().statuses.values().any(|s| matches!(s, ThreadStatus::Working | ThreadStatus::AwaitingUser));
+        threads || self.terminals.lock().keys().any(|id| self.ptys.host.has_foreground_child(id))
     }
 
     /// The core setup state, plus how the agent runs: a Background-domain agent can't read

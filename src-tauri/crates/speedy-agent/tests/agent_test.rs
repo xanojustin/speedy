@@ -346,6 +346,7 @@ idle"#
     let (stream, _) = a.subscribe(Value::Null).await;
     a.call("claude_send_user", json!({"threadId": "t1", "content": text("go")})).await.unwrap();
     a.event(stream, "permission_request").await;
+    assert_eq!(a.call("agent_busy", json!({})).await.unwrap(), true, "a prompt is waiting");
     let stopping = agent.clone();
     let started = std::time::Instant::now();
     tokio::task::spawn_blocking(move || stopping.shut_down()).await.unwrap();
@@ -360,6 +361,7 @@ async fn setup_reports_how_the_agent_runs_and_never_echoes_the_token() {
     let fx = Fixture::new(&format!("{INIT}\nidle"));
     let agent = fx.agent();
     let mut a = Client::connect(&agent, 1 << 20).await;
+    assert_eq!(a.call("agent_busy", json!({})).await.unwrap(), false, "nothing is running");
     let setup = a.call("get_setup_state", json!({})).await.unwrap();
     assert!(setup["launchDomain"].is_string(), "{setup}");
     assert_eq!(setup["tokenPresent"], false);
