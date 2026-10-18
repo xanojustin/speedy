@@ -128,6 +128,8 @@ export interface AppState {
   notificationsEnabled: boolean;
   /** System sound played when a thread needs attention (src-tauri/src/attention.rs `SOUNDS`); null = silent. */
   completionSound: string | null;
+  /** Show the activity panel (the agent's todos and subagents) above the composer. */
+  activityPanelVisible: boolean;
 }
 
 export interface Project {

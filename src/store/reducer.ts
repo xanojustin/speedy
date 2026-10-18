@@ -23,6 +23,8 @@ export interface ToolResultView {
 }
 
 export interface TaskProgress {
+  /** The CLI's task id (matches `BackgroundTask.taskId`). */
+  taskId: string | null;
   description: string | null;
   lastToolName: string | null;
   toolUses: number | null;
@@ -673,6 +675,7 @@ function onSystem(s: ThreadRuntime, raw: RawMessage, now: number, seeding: boole
           const t = b as ToolBlock;
           const prev = t.progress;
           const progress: TaskProgress = {
+            taskId: typeof raw.task_id === "string" ? raw.task_id : prev?.taskId ?? null,
             description: typeof raw.description === "string" ? raw.description : prev?.description ?? null,
             lastToolName: typeof raw.last_tool_name === "string" ? raw.last_tool_name : prev?.lastToolName ?? null,
             toolUses: usage.tool_uses ?? prev?.toolUses ?? null,

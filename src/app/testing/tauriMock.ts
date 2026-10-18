@@ -75,6 +75,7 @@ export function emptyState(): AppState {
     sidebarWidth: 260,
     notificationsEnabled: true,
     completionSound: null,
+    activityPanelVisible: false,
   };
 }
 

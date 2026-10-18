@@ -702,3 +702,115 @@
 .md a.md-file-link code {
   color: var(--chat-link);
 }
+
+/* ---- activity panel (optional; todos and subagents above the composer) ---- */
+.activity-panel {
+  flex-shrink: 0;
+  margin: 0 12px 6px;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--chat-radius);
+  background: var(--chat-tool-bg);
+  font-size: 12px;
+}
+.activity-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.activity-title {
+  font-weight: 600;
+}
+.activity-summary,
+.activity-current {
+  color: var(--chat-fg-secondary);
+  white-space: nowrap;
+}
+.activity-current {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.activity-current::before {
+  content: "· ";
+}
+.activity-body {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 0 10px 8px 26px;
+}
+.activity-body .todo-list {
+  margin-top: 2px;
+}
+.activity-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.activity-agent {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.activity-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--chat-fg-secondary);
+  transform: translateY(-1px);
+}
+.activity-agent.dot-success .activity-dot {
+  background: var(--chat-dot-success);
+}
+.activity-agent.dot-failure .activity-dot {
+  background: var(--chat-dot-failure);
+}
+.activity-agent.dot-progress .activity-dot {
+  background: var(--chat-spinner);
+  animation: chat-blink 1s linear infinite;
+}
+.activity-agent-main {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.activity-agent-label {
+  font-weight: 600;
+}
+.activity-agent-desc,
+.activity-agent-summary {
+  margin-left: 6px;
+}
+.activity-agent-summary {
+  color: var(--chat-fg-secondary);
+}
+.activity-tag {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--chat-line);
+  border-radius: 3px;
+  color: var(--chat-fg-secondary);
+  font-size: 11px;
+}
+.activity-meta {
+  flex-shrink: 0;
+  color: var(--chat-fg-secondary);
+}
+.chat-header-actions .icon-button[aria-pressed="true"] {
+  background: var(--vscode-inputOption-activeBackground, #2489db82);
+}
+.activity-empty .activity-header {
+  cursor: default;
+  padding-left: 10px;
+}

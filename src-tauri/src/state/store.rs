@@ -25,6 +25,8 @@ pub struct AppState {
     pub notifications_enabled: bool,
     /// System sound played when a thread needs attention; None = silent.
     pub completion_sound: Option<String>,
+    /// Show the activity panel (the agent's todos and subagents) above the composer.
+    pub activity_panel_visible: bool,
 }
 
 impl Default for AppState {
@@ -38,6 +40,7 @@ impl Default for AppState {
             sidebar_width: 260.0,
             notifications_enabled: true,
             completion_sound: None,
+            activity_panel_visible: false,
         }
     }
 }

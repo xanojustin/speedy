@@ -42,7 +42,7 @@ function inputText(block: ToolBlock): string {
   return JSON.stringify(block.input, null, 2);
 }
 
-function TodoList({ todos }: { todos: TodoItem[] }) {
+export function TodoList({ todos }: { todos: TodoItem[] }) {
   const icon = (s: string) => (s === "completed" ? "pass-filled" : s === "in_progress" ? "circle-large-filled" : "circle-large-outline");
   return (
     <ul className="todo-list">
@@ -56,7 +56,7 @@ function TodoList({ todos }: { todos: TodoItem[] }) {
   );
 }
 
-function formatTokens(n: number) {
+export function formatTokens(n: number) {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 

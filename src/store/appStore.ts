@@ -40,7 +40,7 @@ export interface AppStore extends AppState {
   selectThread(threadId: string | null): void;
   setSidebarWidth(width: number): void;
   setClaudePathOverride(path: string | null): void;
-  updateSettings(patch: Partial<Pick<AppState, "notificationsEnabled" | "completionSound">>): void;
+  updateSettings(patch: Partial<Pick<AppState, "notificationsEnabled" | "completionSound" | "activityPanelVisible">>): void;
   setSettingsOpen(open: boolean): void;
   setExplorerOpen(open: boolean): void;
   setExplorerWidth(width: number): void;
@@ -85,6 +85,7 @@ const snapshot = (s: AppStore): AppState => ({
   sidebarWidth: s.sidebarWidth,
   notificationsEnabled: s.notificationsEnabled,
   completionSound: s.completionSound,
+  activityPanelVisible: s.activityPanelVisible,
 });
 
 const mapThreads = (projects: Project[], threadId: string, fn: (t: Thread) => Thread) =>
@@ -128,6 +129,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     sidebarWidth: 260,
     notificationsEnabled: true,
     completionSound: null,
+    activityPanelVisible: false,
     loaded: false,
     notice: null,
     settingsOpen: false,

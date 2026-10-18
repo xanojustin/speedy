@@ -6,6 +6,7 @@ import { useGitBranch } from "./git";
 export function ChatHeader({ threadId }: { threadId: string }) {
   const project = useAppStore((s) => s.projects.find((p) => p.threads.some((t) => t.id === threadId)));
   const thread = project?.threads.find((t) => t.id === threadId);
+  const activityVisible = useAppStore((s) => s.activityPanelVisible);
   const [historyOpen, setHistoryOpen] = useState(false);
   const cwd = project && thread ? threadCwd(project, thread) : undefined;
   const branch = useGitBranch(cwd);
@@ -26,6 +27,16 @@ export function ChatHeader({ threadId }: { threadId: string }) {
         </div>
       )}
       <div className="chat-header-actions">
+        <button
+          type="button"
+          className="icon-button"
+          title={activityVisible ? "Hide activity" : "Show activity (agents and background tasks)"}
+          aria-label="Activity"
+          aria-pressed={activityVisible}
+          onClick={() => useAppStore.getState().updateSettings({ activityPanelVisible: !activityVisible })}
+        >
+          <i className="codicon codicon-checklist" aria-hidden="true" />
+        </button>
         <button
           type="button"
           className="icon-button"
