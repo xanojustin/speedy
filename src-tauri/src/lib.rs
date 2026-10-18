@@ -5,6 +5,7 @@
 pub mod attention;
 pub mod cli;
 mod commands;
+pub mod hosts;
 pub mod menu;
 
 use std::sync::Arc;
@@ -30,6 +31,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(cli::PendingOpens::default())
+        .manage(hosts::HostRegistry::new())
         .setup(|app| {
             let handle = app.handle().clone();
             let env = Arc::new(env::EnvService::start());
@@ -99,6 +101,14 @@ pub fn run() {
             open_path,
             open_in_vscode,
             cli::open_folders_take,
+            hosts::host_list,
+            hosts::host_call,
+            hosts::host_subscribe,
+            hosts::host_thread_subscribe,
+            hosts::host_pty_attach,
+            hosts::host_pty_resize,
+            hosts::host_unsubscribe,
+            hosts::host_watch,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Speedy")

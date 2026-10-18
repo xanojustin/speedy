@@ -6,3 +6,4 @@ src-tauri/gen/
 *.log
 spike/*.ndjson
 .claude/
+src-tauri/binaries/

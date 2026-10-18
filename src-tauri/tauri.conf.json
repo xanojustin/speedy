@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "dev.brecht.speedy",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "./scripts/build-agent.sh --dev && bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "./scripts/build-agent.sh && bun run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -40,6 +40,9 @@
     "macOS": {
       "minimumSystemVersion": "13.0",
       "signingIdentity": "-"
-    }
+    },
+    "externalBin": [
+      "binaries/speedy-agent"
+    ]
   }
 }

@@ -3434,6 +3434,8 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "sha2",
+ "speedy-agent",
  "speedy-core",
  "tauri",
  "tauri-build",

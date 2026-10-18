@@ -157,6 +157,8 @@ impl Agent {
             tasks: Mutex::default(),
             terminals: Mutex::default(),
         });
+        // However serving ends, even cancelled, the writer stops and subscriptions go.
+        let _cleanup = Disconnect { agent: self.clone(), conn: conn.clone(), writer };
         let mut reader = FrameReader::new(rd);
         if let Err(e) = self.handshake(&mut reader).await {
             log::info!("client {} rejected: {e}", conn.id);
@@ -190,8 +192,6 @@ impl Agent {
                 }
             }
         }
-        self.disconnect(&conn);
-        writer.abort();
     }
 
     async fn handshake<R: AsyncRead + Unpin>(&self, reader: &mut FrameReader<R>) -> Result<(), String> {
@@ -522,6 +522,19 @@ impl Agent {
             let frame = Frame { stream_id: v.stream_id, body: Body::Event(Event { epoch: self.host.epoch(), seq: 0, event: event.clone() }) };
             v.outbox.send(&frame);
         }
+    }
+}
+
+struct Disconnect {
+    agent: Arc<Agent>,
+    conn: Arc<Conn>,
+    writer: JoinHandle<()>,
+}
+
+impl Drop for Disconnect {
+    fn drop(&mut self) {
+        self.writer.abort();
+        self.agent.disconnect(&self.conn);
     }
 }
 

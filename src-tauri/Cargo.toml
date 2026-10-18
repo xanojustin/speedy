@@ -30,6 +30,8 @@ parking_lot = "0.12.5"
 log = "0.4.34"
 tauri-plugin-dialog = "2.8.3"
 speedy-core = { path = "crates/speedy-core" }
+speedy-agent = { path = "crates/speedy-agent" }
+sha2 = "0.10"
 uuid = { version = "1.28.0", features = ["v4"] }
 
 
