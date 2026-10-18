@@ -6,7 +6,6 @@
 //! (so a symlink can't point a save outside the project).
 
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use ignore::WalkBuilder;
@@ -39,44 +38,38 @@ pub struct GitChange {
     pub status: String,
 }
 
-#[tauri::command]
 pub async fn explorer_list(root: String, dir: String) -> Result<Vec<DirEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || list(Path::new(&root), &dir))
+    tokio::task::spawn_blocking(move || list(Path::new(&root), &dir))
         .await
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 pub async fn explorer_read(root: String, path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || read(Path::new(&root), &path))
+    tokio::task::spawn_blocking(move || read(Path::new(&root), &path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 pub async fn explorer_write(root: String, path: String, content: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || write(Path::new(&root), &path, &content))
+    tokio::task::spawn_blocking(move || write(Path::new(&root), &path, &content))
         .await
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 pub async fn explorer_git_status(root: String) -> Result<Vec<GitChange>, String> {
-    tauri::async_runtime::spawn_blocking(move || Ok(git_status(Path::new(&root))))
+    tokio::task::spawn_blocking(move || Ok(git_status(Path::new(&root))))
         .await
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 pub async fn explorer_git_branch(root: String) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || Ok(git_branch(Path::new(&root))))
+    tokio::task::spawn_blocking(move || Ok(git_branch(Path::new(&root))))
         .await
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 pub async fn explorer_git_diff(root: String, path: String) -> Result<FileDiff, String> {
-    tauri::async_runtime::spawn_blocking(move || git_diff(Path::new(&root), &path))
+    tokio::task::spawn_blocking(move || git_diff(Path::new(&root), &path))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -172,7 +165,7 @@ pub fn write(root: &Path, rel: &str, content: &str) -> Result<(), String> {
 }
 
 fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
-    let out = Command::new("git").arg("-C").arg(root).args(args).output().ok()?;
+    let out = crate::env::command("git").arg("-C").arg(root).args(args).output().ok()?;
     out.status.success().then_some(out.stdout)
 }
 

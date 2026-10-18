@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
-use speedy_lib::claude::actor::{self, ActorConfig, ClaudeActor};
-use speedy_lib::claude::{ClaudeEvent, StartOptions, ThreadStatus};
+use speedy_core::claude::actor::{self, ActorConfig, ClaudeActor};
+use speedy_core::claude::{ClaudeEvent, StartOptions, ThreadStatus};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 const WAIT: Duration = Duration::from_secs(10);

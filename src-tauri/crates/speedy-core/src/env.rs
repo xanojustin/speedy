@@ -25,6 +25,32 @@ const CLI_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 const ENV_START: &str = "__SPEEDY_ENV_START__";
 const ENV_END: &str = "__SPEEDY_ENV_END__";
 
+/// Login env for helper processes (git) that don't go through an actor or PTY.
+/// Unset until [`install_command_env`] runs; until then commands inherit the process env.
+static COMMAND_ENV: OnceLock<HashMap<String, String>> = OnceLock::new();
+
+/// Records the resolved login env for [`command`]. Under launchd or ssh the process PATH
+/// is minimal, so git would otherwise miss a Homebrew install (KTD12). First call wins.
+pub fn install_command_env(vars: HashMap<String, String>) {
+    if !vars.is_empty() {
+        let _ = COMMAND_ENV.set(vars);
+    }
+}
+
+/// A `Command` for `program`, run with the resolved login env once it is installed.
+pub fn command(program: &str) -> Command {
+    let Some(vars) = COMMAND_ENV.get() else { return Command::new(program) };
+    // Resolve against the login PATH: `Command` searches the parent's PATH, not the child's.
+    let resolved = vars.get("PATH").and_then(|path| find_on_path(program, path));
+    let mut cmd = Command::new(resolved.as_deref().unwrap_or(Path::new(program)));
+    cmd.env_clear().envs(vars);
+    cmd
+}
+
+fn find_on_path(program: &str, path: &str) -> Option<PathBuf> {
+    std::env::split_paths(path).map(|dir| dir.join(program)).find(|p| is_executable_file(p))
+}
+
 /// Environment captured from `$SHELL -l -i -c env`, used for every child process.
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedEnv {
@@ -521,22 +547,4 @@ fn strip_jsonc(src: &str) -> String {
         }
     }
     out
-}
-
-#[tauri::command]
-pub async fn get_setup_state(ctx: tauri::State<'_, crate::AppCtx>) -> Result<SetupState, String> {
-    Ok(ctx.env.setup_state().await)
-}
-
-#[tauri::command]
-pub async fn recheck_setup(
-    ctx: tauri::State<'_, crate::AppCtx>,
-    override_path: Option<String>,
-) -> Result<SetupState, String> {
-    Ok(ctx.env.recheck(override_path.map(PathBuf::from)).await)
-}
-
-#[tauri::command]
-pub fn get_extension_settings(ctx: tauri::State<'_, crate::AppCtx>) -> Map<String, Value> {
-    ctx.env.extension_settings()
 }

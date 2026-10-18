@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use speedy_lib::files::{search, FileHit};
+use speedy_core::files::{search, FileHit};
 
 fn write(root: &Path, rel: &str, body: &str) {
     let p = root.join(rel);

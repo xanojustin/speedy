@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use speedy_lib::pty::PtyExit;
-use speedy_lib::pty::coalesce::{SIZE_CAP, TICK};
-use speedy_lib::pty::manager::{PtyHost, PtySpawn};
+use speedy_core::pty::PtyExit;
+use speedy_core::pty::coalesce::{SIZE_CAP, TICK};
+use speedy_core::pty::manager::{PtyHost, PtySpawn};
 
 const WAIT: Duration = Duration::from_secs(15);
 

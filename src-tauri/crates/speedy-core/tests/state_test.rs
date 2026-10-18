@@ -3,11 +3,11 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use speedy_lib::state::session_index::{
+use speedy_core::state::session_index::{
     encode_project_dir, list_sessions, load_session, rename_session_offline,
 };
-use speedy_lib::state::store::STATE_VERSION;
-use speedy_lib::state::{ensure_chats_project, paths_exist, AppState, Group, Project, StateStore, Thread};
+use speedy_core::state::store::STATE_VERSION;
+use speedy_core::state::{ensure_chats_project, paths_exist, AppState, Group, Project, StateStore, Thread};
 
 fn sample_state() -> AppState {
     let projects = (0..2)
@@ -125,12 +125,12 @@ fn corrupt_state_is_moved_aside_and_starts_empty_with_notice() {
     assert!(notice.contains(&backups[0].to_string_lossy().into_owned()), "{notice}");
 }
 
-#[test]
-fn paths_exist_reports_missing_folder_as_false() {
+#[tokio::test]
+async fn paths_exist_reports_missing_folder_as_false() {
     let dir = tempfile::tempdir().unwrap();
     let present = dir.path().to_string_lossy().into_owned();
     let missing = dir.path().join("gone").to_string_lossy().into_owned();
-    assert_eq!(tauri::async_runtime::block_on(paths_exist(vec![present, missing])), vec![true, false]);
+    assert_eq!(paths_exist(vec![present, missing]).await, vec![true, false]);
 }
 
 // ---- session index ----

@@ -3406,28 +3406,41 @@ dependencies = [
 name = "speedy"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "block2",
- "dirs",
- "ignore",
- "libc",
  "log",
- "nucleo-matcher",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-user-notifications",
  "parking_lot",
- "portable-pty",
  "serde",
  "serde_json",
- "similar",
+ "speedy-core",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tempfile",
- "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "speedy-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "ignore",
+ "libc",
+ "log",
+ "nucleo-matcher",
+ "parking_lot",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "similar",
+ "tempfile",
  "tokio",
  "uuid",
 ]

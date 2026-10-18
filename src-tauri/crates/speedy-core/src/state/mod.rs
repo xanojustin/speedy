@@ -19,9 +19,9 @@ pub fn chats_dir() -> PathBuf {
     default_state_dir().join("Chats")
 }
 
-#[tauri::command]
-pub fn state_load(ctx: tauri::State<'_, crate::AppCtx>) -> LoadResult {
-    let mut result = ctx.store.load();
+/// Loads the app state and injects the Chats project, creating its folder.
+pub fn load_with_chats(store: &StateStore) -> LoadResult {
+    let mut result = store.load();
     let dir = chats_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
         log::error!("creating the Chats folder {} failed: {e}", dir.display());
@@ -30,17 +30,10 @@ pub fn state_load(ctx: tauri::State<'_, crate::AppCtx>) -> LoadResult {
     result
 }
 
-/// Debounced, atomic save of the whole app state.
-#[tauri::command]
-pub fn state_save(ctx: tauri::State<'_, crate::AppCtx>, state: AppState) {
-    ctx.store.save(state);
-}
-
 /// For each path, whether it exists on disk (missing projects render as missing).
-#[tauri::command]
 pub async fn paths_exist(paths: Vec<String>) -> Vec<bool> {
-    // Stat calls can block (e.g. on a slow network volume); keep them off the main thread.
-    tauri::async_runtime::spawn_blocking(move || paths.iter().map(|p| std::path::Path::new(p).exists()).collect())
+    // Stat calls can block (e.g. on a slow network volume); keep them off the async workers.
+    tokio::task::spawn_blocking(move || paths.iter().map(|p| std::path::Path::new(p).exists()).collect())
         .await
         .expect("paths_exist stat task panicked")
 }

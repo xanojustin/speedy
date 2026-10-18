@@ -14,6 +14,9 @@ edition = "2024"
 name = "speedy_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[workspace]
+members = ["crates/speedy-core"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -23,18 +26,11 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1.53.3", features = ["full"] }
-portable-pty = "0.9.0"
-similar = "3.2.0"
-ignore = "0.4.33"
-anyhow = "1.0.104"
-thiserror = "2.0.21"
-dirs = "7.0.0"
 parking_lot = "0.12.5"
 log = "0.4.34"
-libc = "0.2.190"
-nucleo-matcher = "0.3.1"
 tauri-plugin-dialog = "2.8.3"
-uuid = { version = "1.28.0", features = ["v4", "serde"] }
+speedy-core = { path = "crates/speedy-core" }
+uuid = { version = "1.28.0", features = ["v4"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use speedy_lib::env::{capture_login_env, EnvPaths, EnvService, SetupStatus, FIXTURE_CLI_VERSION};
+use speedy_core::env::{capture_login_env, EnvPaths, EnvService, SetupStatus, FIXTURE_CLI_VERSION};
 
 fn write_exe(path: &Path, body: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -264,9 +264,9 @@ fn global_claude_defaults_are_read_from_claude_settings() {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("settings.json");
     std::fs::write(&p, r#"{"model":"claude-opus-5-5","effortLevel":"medium","permissions":{"defaultMode":"auto","allow":[]}}"#).unwrap();
-    let m = speedy_lib::env::read_claude_defaults(&p);
+    let m = speedy_core::env::read_claude_defaults(&p);
     assert_eq!(m["claude.model"], "claude-opus-5-5");
     assert_eq!(m["claude.effortLevel"], "medium");
     assert_eq!(m["claude.defaultMode"], "auto");
-    assert!(speedy_lib::env::read_claude_defaults(&dir.path().join("missing.json")).is_empty());
+    assert!(speedy_core::env::read_claude_defaults(&dir.path().join("missing.json")).is_empty());
 }

@@ -5,7 +5,6 @@
 //! repository, so they never show up in the project's own `git status`.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::Serialize;
 
@@ -17,10 +16,9 @@ pub struct Worktree {
     pub branch: String,
 }
 
-#[tauri::command]
 pub async fn worktree_create(root: String, branch: String) -> Result<Worktree, String> {
     let base = crate::state::default_state_dir().join("worktrees");
-    tauri::async_runtime::spawn_blocking(move || create(Path::new(&root), &branch, &base))
+    tokio::task::spawn_blocking(move || create(Path::new(&root), &branch, &base))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -53,25 +51,23 @@ pub struct Skipped {
     pub reason: String,
 }
 
-#[tauri::command]
 pub async fn worktree_unused(root: String, keep: Vec<String>) -> Result<Vec<Unused>, String> {
     let base = crate::state::default_state_dir().join("worktrees");
-    tauri::async_runtime::spawn_blocking(move || unused(Path::new(&root), &keep, &base))
+    tokio::task::spawn_blocking(move || unused(Path::new(&root), &keep, &base))
         .await
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 pub async fn worktree_clean(root: String, paths: Vec<String>) -> Result<CleanReport, String> {
     let base = crate::state::default_state_dir().join("worktrees");
-    tauri::async_runtime::spawn_blocking(move || clean(Path::new(&root), &paths, &base))
+    tokio::task::spawn_blocking(move || clean(Path::new(&root), &paths, &base))
         .await
         .map_err(|e| e.to_string())?
 }
 
 /// Runs git in `dir`; on failure returns git's own message.
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().map_err(|e| format!("git: {e}"))?;
+    let out = crate::env::command("git").arg("-C").arg(dir).args(args).output().map_err(|e| format!("git: {e}"))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     } else {

@@ -28,7 +28,6 @@ pub struct FileHit {
     pub is_dir: bool,
 }
 
-#[tauri::command]
 pub async fn files_search(
     root: String,
     query: String,
@@ -36,7 +35,7 @@ pub async fn files_search(
     respect_gitignore: Option<bool>,
 ) -> Result<Vec<FileHit>, String> {
     // The walk is blocking IO; keep it off the async runtime's worker threads.
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         search(Path::new(&root), &query, limit.unwrap_or(DEFAULT_LIMIT), respect_gitignore.unwrap_or(true))
     })
     .await

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use speedy_lib::worktree::{clean, create, unused};
+use speedy_core::worktree::{clean, create, unused};
 
 fn put(root: &Path, rel: &str, body: &str) {
     let p = root.join(rel);

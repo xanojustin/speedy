@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use speedy_lib::explorer::{git_branch, git_diff, git_status, list, read, resolve, write};
+use speedy_core::explorer::{git_branch, git_diff, git_status, list, read, resolve, write};
 
 fn put(root: &Path, rel: &str, body: &str) {
     let p = root.join(rel);

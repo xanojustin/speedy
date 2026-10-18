@@ -1,7 +1,7 @@
 //! U10 (Rust part): diffs for Edit/Write/MultiEdit permission requests (KTD5).
 
 use serde_json::json;
-use speedy_lib::claude::diff::{diff_for_tool, refresh_if_stale};
+use speedy_core::claude::diff::{diff_for_tool, refresh_if_stale};
 
 fn changed_lines(unified: &str) -> Vec<&str> {
     unified
@@ -116,7 +116,7 @@ fn huge_files_are_summarized_and_pathological_replace_all_is_skipped() {
     let big = dir.path().join("big.txt");
     std::fs::write(&big, "a\n".repeat(3 * 1024 * 1024)).unwrap();
     let input = serde_json::json!({"file_path": big.to_str().unwrap(), "content": "small\n"});
-    let d = &speedy_lib::claude::diff::diff_for_tool("Write", &input, dir.path()).unwrap()[0];
+    let d = &speedy_core::claude::diff::diff_for_tool("Write", &input, dir.path()).unwrap()[0];
     assert!(d.unified.contains("file too large to show a diff"), "{}", d.unified);
 
     // Under the read cap, so the replace_all expansion guard is what refuses it.
@@ -125,9 +125,9 @@ fn huge_files_are_summarized_and_pathological_replace_all_is_skipped() {
     let blowup = serde_json::json!({
         "file_path": mid.to_str().unwrap(), "old_string": "a", "new_string": "x".repeat(100_000), "replace_all": true
     });
-    assert!(speedy_lib::claude::diff::diff_for_tool("Edit", &blowup, dir.path()).is_none());
+    assert!(speedy_core::claude::diff::diff_for_tool("Edit", &blowup, dir.path()).is_none());
     let empty_old = serde_json::json!({"file_path": big.to_str().unwrap(), "old_string": "", "new_string": "x"});
-    assert!(speedy_lib::claude::diff::diff_for_tool("Edit", &empty_old, dir.path()).is_none());
+    assert!(speedy_core::claude::diff::diff_for_tool("Edit", &empty_old, dir.path()).is_none());
 }
 
 #[test]
@@ -136,11 +136,11 @@ fn staleness_fails_closed_when_the_change_cannot_be_rediffed() {
     let f = dir.path().join("a.txt");
     std::fs::write(&f, "one\n").unwrap();
     let input = serde_json::json!({"file_path": f.to_str().unwrap(), "old_string": "one", "new_string": "two"});
-    let shown = speedy_lib::claude::diff::diff_for_tool("Edit", &input, dir.path()).unwrap();
+    let shown = speedy_core::claude::diff::diff_for_tool("Edit", &input, dir.path()).unwrap();
     // Another writer changes the file; the stored input no longer yields a diff.
     std::fs::write(&f, "changed\n").unwrap();
     let bad_input = serde_json::json!({"file_path": f.to_str().unwrap(), "old_string": "", "new_string": "x"});
-    let refreshed = speedy_lib::claude::diff::refresh_if_stale("Edit", &bad_input, dir.path(), &shown);
+    let refreshed = speedy_core::claude::diff::refresh_if_stale("Edit", &bad_input, dir.path(), &shown);
     assert_eq!(refreshed, Some(vec![]), "a changed file must block the allow even without a new diff");
 }
 

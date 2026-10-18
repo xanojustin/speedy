@@ -1,6 +1,6 @@
 //! U3: one `claude` CLI process per thread, speaking stream-json (KTD4, KTD5, KTD9).
-//! The public types and commands here are the IPC contract. `actor.rs` runs one
-//! thread without Tauri; `SessionManager` maps thread ids to actors. `diff.rs`
+//! The public types here are the IPC contract. `actor.rs` runs one thread;
+//! `SessionManager` maps thread ids to actors. `diff.rs`
 //! computes the proposed file change shown with an edit tool's permission request.
 
 pub mod actor;
@@ -14,9 +14,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::ipc::Channel;
-
-use crate::attention::Attention;
 use crate::env::EnvService;
 
 pub use diff::FileDiff;
@@ -93,39 +90,32 @@ pub struct PermissionOutcome {
     pub refreshed_diff: Option<Vec<FileDiff>>,
 }
 
+/// Called on every thread status transition with `(thread_id, from, to)`.
+pub type StatusListener = Arc<dyn Fn(&str, ThreadStatus, ThreadStatus) + Send + Sync>;
+
 /// Owns every thread's actor.
 pub struct SessionManager {
     env: Arc<EnvService>,
-    attention: Arc<Attention>,
+    on_status: StatusListener,
     actors: parking_lot::Mutex<HashMap<String, actor::ClaudeActor>>,
 }
 
-const STOP_GRACE: Duration = Duration::from_secs(3);
+/// Grace between SIGTERM and SIGKILL when a thread is stopped.
+pub const STOP_GRACE: Duration = Duration::from_secs(3);
 
 impl SessionManager {
-    pub fn new(env: Arc<EnvService>, attention: Arc<Attention>) -> Self {
-        SessionManager { env, attention, actors: Default::default() }
+    pub fn new(env: Arc<EnvService>, on_status: StatusListener) -> Self {
+        SessionManager { env, on_status, actors: Default::default() }
     }
 
-    fn actor(&self, thread_id: &str) -> Result<actor::ClaudeActor, String> {
+    pub fn actor(&self, thread_id: &str) -> Result<actor::ClaudeActor, String> {
         self.actors.lock().get(thread_id).cloned().ok_or_else(|| format!("thread {thread_id} has no claude session"))
     }
 
-    fn sink(channel: Channel<ClaudeEvent>) -> actor::EventSink {
-        Arc::new(move |event| {
-            let _ = channel.send(event);
-        })
-    }
-
-    /// Spawns lazily, rebinds the channel of a running actor, or relaunches a stopped one.
-    pub async fn start(
-        &self,
-        thread_id: String,
-        options: StartOptions,
-        channel: Channel<ClaudeEvent>,
-    ) -> Result<ThreadStatus, String> {
+    /// Spawns lazily, rebinds the sink of a running actor, or relaunches a stopped one.
+    pub async fn start(&self, thread_id: String, options: StartOptions, sink: actor::EventSink) -> Result<ThreadStatus, String> {
         if let Some(existing) = self.actors.lock().get(&thread_id) {
-            existing.rebind(Self::sink(channel));
+            existing.rebind(sink);
             return Ok(match existing.status() {
                 ThreadStatus::Stopped => existing.restart(options),
                 status => status,
@@ -141,13 +131,13 @@ impl SessionManager {
         let mut actors = self.actors.lock();
         // Another start for this thread may have won while env was resolving.
         if let Some(existing) = actors.get(&thread_id) {
-            existing.rebind(Self::sink(channel));
+            existing.rebind(sink);
             return Ok(existing.status());
         }
-        let attention = self.attention.clone();
+        let on_status = self.on_status.clone();
         let id = thread_id.clone();
-        let observer: actor::StatusObserver = Arc::new(move |from, to| attention.on_status(&id, "", from, to));
-        let actor = actor::ClaudeActor::start(config, Self::sink(channel), observer);
+        let observer: actor::StatusObserver = Arc::new(move |from, to| on_status(&id, from, to));
+        let actor = actor::ClaudeActor::start(config, sink, observer);
         let status = actor.status();
         actors.insert(thread_id, actor);
         Ok(status)
@@ -158,72 +148,4 @@ impl SessionManager {
         let actors: Vec<actor::ClaudeActor> = self.actors.lock().values().cloned().collect();
         actor::shutdown_all(&actors, grace);
     }
-}
-
-/// Spawns the thread's actor if absent (lazy, KTD9), or rebinds the channel if it
-/// already runs (webview reload). Returns the current status.
-#[tauri::command]
-pub async fn claude_start(
-    ctx: tauri::State<'_, crate::AppCtx>,
-    thread_id: String,
-    options: StartOptions,
-    on_event: Channel<ClaudeEvent>,
-) -> Result<ThreadStatus, String> {
-    ctx.sessions.start(thread_id, options, on_event).await
-}
-
-/// Writes a user message. `content` is an Anthropic content-block array (text, image).
-#[tauri::command]
-pub async fn claude_send_user(
-    ctx: tauri::State<'_, crate::AppCtx>,
-    thread_id: String,
-    content: Value,
-) -> Result<(), String> {
-    ctx.sessions.actor(&thread_id)?.send_user(content).await
-}
-
-/// Sends an arbitrary control request (`set_model`, `set_permission_mode`,
-/// `set_max_thinking_tokens`, `rewind_files`, `rename_session`, `get_context_usage`, …)
-/// and resolves with its response payload, or an error on CLI error or timeout.
-#[tauri::command]
-pub async fn claude_control(
-    ctx: tauri::State<'_, crate::AppCtx>,
-    thread_id: String,
-    request: Value,
-    timeout_ms: Option<u64>,
-) -> Result<Value, String> {
-    let actor = ctx.sessions.actor(&thread_id)?;
-    actor.control(request, timeout_ms.map(Duration::from_millis)).await
-}
-
-/// Answers a `can_use_tool` request. `response` is the SDK PermissionResult
-/// (`{behavior:"allow",updatedInput,updatedPermissions?}` or `{behavior:"deny",message}`).
-/// For an allow on a request with a diff, the diff is recomputed first (KTD5).
-#[tauri::command]
-pub async fn claude_respond_permission(
-    ctx: tauri::State<'_, crate::AppCtx>,
-    thread_id: String,
-    request_id: String,
-    response: Value,
-) -> Result<PermissionOutcome, String> {
-    ctx.sessions.actor(&thread_id)?.respond_permission(&request_id, response).await
-}
-
-/// Denies any pending permission request, then sends `interrupt` (KTD5).
-#[tauri::command]
-pub async fn claude_interrupt(ctx: tauri::State<'_, crate::AppCtx>, thread_id: String) -> Result<(), String> {
-    ctx.sessions.actor(&thread_id)?.interrupt().await
-}
-
-/// Stops the thread's process group (thread closed/archived).
-#[tauri::command]
-pub async fn claude_stop(ctx: tauri::State<'_, crate::AppCtx>, thread_id: String) -> Result<(), String> {
-    ctx.sessions.actor(&thread_id)?.stop(STOP_GRACE).await;
-    Ok(())
-}
-
-/// Manual retry after Crashed/Errored: respawns with `--resume` when a session id is known.
-#[tauri::command]
-pub async fn claude_retry(ctx: tauri::State<'_, crate::AppCtx>, thread_id: String) -> Result<ThreadStatus, String> {
-    Ok(ctx.sessions.actor(&thread_id)?.retry())
 }

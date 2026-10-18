@@ -102,9 +102,9 @@ bun run tauri dev
 |---|---|
 | UI tests | `bun run test` |
 | Typecheck | `bun run typecheck` |
-| Rust tests | `cargo test --manifest-path src-tauri/Cargo.toml` |
-| Rust lint | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` |
-| Protocol drift (real CLI, denies every tool, uses Haiku) | `cargo test --manifest-path src-tauri/Cargo.toml --test claude_actor_test -- --ignored` |
+| Rust tests | `cargo test --manifest-path src-tauri/Cargo.toml --workspace` |
+| Rust lint | `cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings` |
+| Protocol drift (real CLI, denies every tool, uses Haiku) | `cargo test --manifest-path src-tauri/Cargo.toml -p speedy-core --test claude_actor_test -- --ignored` |
 | Regenerate theme tokens | `bun scripts/gen-vscode-theme.ts` |
 
 Speedy talks to the CLI over its stream-json protocol, which can change between CLI releases. When the setup screen warns that your CLI version differs from the last one tested, run the protocol drift test.

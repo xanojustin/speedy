@@ -1,7 +1,7 @@
 //! U12: the Tauri-free attention state machine (status transitions, visibility, focus → effects).
 
-use speedy_lib::attention::{AttentionState, Effect, Notification};
-use speedy_lib::claude::ThreadStatus::{self, *};
+use speedy_core::attention::{AttentionState, Effect, Notification};
+use speedy_core::claude::ThreadStatus::{self, *};
 
 fn notifications(effects: &[Effect]) -> Vec<&Notification> {
     effects

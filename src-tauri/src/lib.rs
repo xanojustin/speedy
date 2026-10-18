@@ -1,21 +1,19 @@
-//! Speedy core: one `claude` actor and one PTY per thread, app state, and the
-//! IPC surface the single React webview talks to.
+//! Speedy app: the Tauri shell around `speedy_core` (KTD1), plus the macOS-only
+//! pieces (menu, `speedy` command, notifications and Dock badge) and the IPC
+//! surface the single React webview talks to.
 
 pub mod attention;
-pub mod claude;
 pub mod cli;
-pub mod env;
-pub mod explorer;
-pub mod files;
+mod commands;
 pub mod menu;
-pub mod proc_group;
-pub mod pty;
-pub mod state;
-pub mod worktree;
 
 use std::sync::Arc;
 
-use tauri::{Manager, RunEvent, WindowEvent};
+use speedy_core::{claude, env, pty, state};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
+
+/// Emitted as the app event `pty-exit` when a terminal's shell exits.
+const PTY_EXIT_EVENT: &str = "pty-exit";
 
 /// Everything the commands need, managed by Tauri as shared state.
 pub struct AppCtx {
@@ -35,9 +33,20 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let env = Arc::new(env::EnvService::start());
+            let resolving = env.clone();
+            tauri::async_runtime::spawn(async move { env::install_command_env(resolving.env().await.vars) });
             let attention = Arc::new(attention::Attention::new(handle.clone()));
-            let sessions = Arc::new(claude::SessionManager::new(env.clone(), attention.clone()));
-            let ptys = Arc::new(pty::PtyManager::new(env.clone(), handle.clone()));
+            let on_status = attention.clone();
+            let sessions = Arc::new(claude::SessionManager::new(
+                env.clone(),
+                Arc::new(move |id: &str, from, to| on_status.on_status(id, "", from, to)),
+            ));
+            let exit_handle = handle.clone();
+            let ptys = Arc::new(pty::PtyManager::new(env.clone(), move |exit: pty::PtyExit| {
+                if let Err(e) = exit_handle.emit(PTY_EXIT_EVENT, exit) {
+                    log::warn!("emitting {PTY_EXIT_EVENT}: {e}");
+                }
+            }));
             let store = Arc::new(state::StateStore::new(state::default_state_dir()));
             app.manage(AppCtx { env, sessions, ptys, store, attention });
             menu::install(app)?;
@@ -51,37 +60,37 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            env::get_setup_state,
-            env::recheck_setup,
-            env::get_extension_settings,
-            claude::claude_start,
-            claude::claude_send_user,
-            claude::claude_control,
-            claude::claude_respond_permission,
-            claude::claude_interrupt,
-            claude::claude_stop,
-            claude::claude_retry,
-            pty::pty_open,
-            pty::pty_write,
-            pty::pty_resize,
-            pty::pty_close,
-            pty::pty_has_foreground_child,
-            state::state_load,
-            state::state_save,
-            state::paths_exist,
-            state::session_index::sessions_list,
-            state::session_index::session_load,
-            state::session_index::session_rename_offline,
-            files::files_search,
-            explorer::explorer_list,
-            explorer::explorer_read,
-            explorer::explorer_write,
-            explorer::explorer_git_status,
-            explorer::explorer_git_branch,
-            worktree::worktree_create,
-            worktree::worktree_unused,
-            worktree::worktree_clean,
-            explorer::explorer_git_diff,
+            commands::get_setup_state,
+            commands::recheck_setup,
+            commands::get_extension_settings,
+            commands::claude_start,
+            commands::claude_send_user,
+            commands::claude_control,
+            commands::claude_respond_permission,
+            commands::claude_interrupt,
+            commands::claude_stop,
+            commands::claude_retry,
+            commands::pty_open,
+            commands::pty_write,
+            commands::pty_resize,
+            commands::pty_close,
+            commands::pty_has_foreground_child,
+            commands::state_load,
+            commands::state_save,
+            commands::paths_exist,
+            commands::sessions_list,
+            commands::session_load,
+            commands::session_rename_offline,
+            commands::files_search,
+            commands::explorer_list,
+            commands::explorer_read,
+            commands::explorer_write,
+            commands::explorer_git_status,
+            commands::explorer_git_branch,
+            commands::worktree_create,
+            commands::worktree_unused,
+            commands::worktree_clean,
+            commands::explorer_git_diff,
             attention::attention_set_visible,
             attention::attention_mark_read,
             attention::attention_set_titles,

@@ -280,23 +280,20 @@ pub fn rename_session_offline(root: &Path, project_path: &str, session_id: &str,
 
 /// Runs blocking file IO off the main thread and the async runtime's workers.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 pub async fn sessions_list(project_path: String) -> Result<Vec<SessionMeta>, String> {
     blocking(move || list_sessions(&default_projects_root(), &project_path)).await
 }
 
 /// Every parseable JSONL line of a session, in order, for seeding a resumed transcript
 /// and for finding a rewind's fork point (which walks the `parentUuid` chain through all lines).
-#[tauri::command]
 pub async fn session_load(project_path: String, session_id: String) -> Result<Vec<Value>, String> {
     blocking(move || load_session(&default_projects_root(), &project_path, &session_id)).await
 }
 
 /// Appends a `custom-title` entry in the CLI's own format (no live actor).
-#[tauri::command]
 pub async fn session_rename_offline(project_path: String, session_id: String, title: String) -> Result<(), String> {
     blocking(move || rename_session_offline(&default_projects_root(), &project_path, &session_id, &title)).await
 }
