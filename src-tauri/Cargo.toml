@@ -15,7 +15,7 @@ name = "speedy_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [workspace]
-members = ["crates/speedy-core"]
+members = ["crates/speedy-core", "crates/speedy-agent"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

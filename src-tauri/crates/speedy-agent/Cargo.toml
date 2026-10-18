@@ -1,0 +1,27 @@
+[package]
+name = "speedy-agent"
+version = "0.1.0"
+edition = "2024"
+description = "Speedy's headless per-host agent: owns threads, terminals, files and git, and serves the app over a unix socket"
+
+[lib]
+name = "speedy_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "speedy-agent"
+path = "src/main.rs"
+
+[dependencies]
+speedy-core = { path = "../speedy-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.53.3", features = ["full"] }
+parking_lot = "0.12.5"
+log = "0.4.34"
+libc = "0.2.190"
+dirs = "7.0.0"
+uuid = { version = "1.28.0", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

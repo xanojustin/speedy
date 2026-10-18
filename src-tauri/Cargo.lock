@@ -3445,6 +3445,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "speedy-agent"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "libc",
+ "log",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "speedy-core",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "speedy-core"
 version = "0.1.0"
 dependencies = [

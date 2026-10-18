@@ -1,0 +1,172 @@
+//! U6: the `run`, `proxy` and `stop` subcommands (KTD2, KTD8).
+//!
+//! `run` holds an exclusive `flock` on `state/agent.lock` for its lifetime, which makes it
+//! the host's only agent; a second `run` exits 0 so launchd doesn't respawn it. `proxy`
+//! relays stdio to the socket and exits [`EXIT_NOT_RUNNING`] when no agent holds the lock.
+
+use std::fs::{DirBuilder, File, OpenOptions};
+use std::io;
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::sync::Arc;
+use std::time::Duration;
+
+use speedy_core::env::{EnvService, install_command_env};
+use speedy_core::host::migrate::migrate_host;
+use speedy_core::host::{Host, HostPaths, Launch, LaunchFn};
+use speedy_core::proto::{Body, Control, Frame, FrameReader, PROTOCOL_MAX, PROTOCOL_MIN, Hello, encode};
+use speedy_core::state::{chats_dir, default_state_dir};
+use tokio::io::AsyncWriteExt;
+use tokio::net::{UnixListener, UnixStream};
+
+use crate::paths::AgentPaths;
+use crate::server::{AGENT_VERSION, Agent, BUILD_SHA, peer_allowed};
+
+/// `proxy` exit code when no agent is running, so the client installs or starts one.
+pub const EXIT_NOT_RUNNING: i32 = 90;
+
+/// Creates the state dir with mode 0700 (KTD12).
+pub fn ensure_state_dir(paths: &AgentPaths) -> io::Result<()> {
+    let dir = paths.state_dir();
+    DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+}
+
+/// The exclusive agent lock, or `None` when another agent holds it.
+pub fn try_lock(paths: &AgentPaths) -> io::Result<Option<File>> {
+    let file = OpenOptions::new().create(true).truncate(false).write(true).open(paths.lock())?;
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        return Ok(Some(file));
+    }
+    let err = io::Error::last_os_error();
+    if err.raw_os_error() == Some(libc::EWOULDBLOCK) { Ok(None) } else { Err(err) }
+}
+
+/// The host's stable id, created on first start (KTD10).
+pub fn host_id(paths: &AgentPaths) -> io::Result<String> {
+    let path = paths.host_id();
+    match std::fs::read_to_string(&path) {
+        Ok(id) if !id.trim().is_empty() => Ok(id.trim().to_owned()),
+        _ => {
+            let id = uuid::Uuid::new_v4().to_string();
+            std::fs::write(&path, &id)?;
+            Ok(id)
+        }
+    }
+}
+
+fn launch_from(env: Arc<EnvService>) -> LaunchFn {
+    Arc::new(move || {
+        let env = env.clone();
+        Box::pin(async move {
+            let program = env.claude_path().await.ok_or("claude CLI not found; finish setup first")?;
+            Ok(Launch { program, env: env.env().await.vars, extension_settings: env.extension_settings() })
+        })
+    })
+}
+
+/// `speedy-agent run`: serve until a client asks to stop or a signal arrives.
+pub async fn run(paths: AgentPaths) -> io::Result<()> {
+    ensure_state_dir(&paths)?;
+    let Some(_lock) = try_lock(&paths)? else {
+        log::info!("another agent is running; exiting");
+        return Ok(());
+    };
+    let host_id = host_id(&paths)?;
+    // The first run on a Mac that ran Speedy before hosts takes over its projects (R18).
+    if let Some(notice) = migrate_host(&default_state_dir(), &paths.state_dir()) {
+        log::warn!("{notice}");
+    }
+    let env = Arc::new(EnvService::start());
+    let resolving = env.clone();
+    tokio::spawn(async move { install_command_env(resolving.env().await.vars) });
+    let host = Host::open(
+        HostPaths { state_dir: paths.state_dir(), chats_dir: chats_dir(), worktrees_dir: default_state_dir().join("worktrees") },
+        launch_from(env.clone()),
+    );
+    let agent = Agent::new(host, env, host_id);
+
+    // We hold the lock, so any socket here is stale.
+    let socket = paths.socket();
+    let _ = std::fs::remove_file(&socket);
+    let listener = UnixListener::bind(&socket)?;
+    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
+    log::info!("serving on {}", socket.display());
+
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut int = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    loop {
+        tokio::select! {
+            accepted = listener.accept() => {
+                let Ok((stream, _)) = accepted else { continue };
+                match stream.peer_cred() {
+                    Ok(cred) if peer_allowed(cred.uid()) => {
+                        tokio::spawn(agent.clone().serve(stream));
+                    }
+                    other => log::warn!("refused a connection from another user: {other:?}"),
+                }
+            }
+            _ = agent.shutdown_requested() => break,
+            _ = term.recv() => break,
+            _ = int.recv() => break,
+        }
+    }
+    log::info!("shutting down");
+    let stopping = agent.clone();
+    let _ = tokio::task::spawn_blocking(move || stopping.shut_down()).await;
+    let _ = std::fs::remove_file(&socket);
+    Ok(())
+}
+
+/// `speedy-agent proxy`: relays stdin/stdout to the agent's socket. Returns the exit code.
+pub async fn proxy(paths: AgentPaths) -> i32 {
+    if !agent_running(&paths) {
+        return EXIT_NOT_RUNNING;
+    }
+    let mut socket = match UnixStream::connect(paths.socket()).await {
+        Ok(s) => s,
+        Err(_) => return EXIT_NOT_RUNNING,
+    };
+    let mut stdio = tokio::io::join(tokio::io::stdin(), tokio::io::stdout());
+    let _ = tokio::io::copy_bidirectional(&mut stdio, &mut socket).await;
+    0
+}
+
+/// Whether an agent holds the lock (a missing state dir means none ever ran).
+pub fn agent_running(paths: &AgentPaths) -> bool {
+    if !paths.state_dir().exists() {
+        return false;
+    }
+    matches!(try_lock(paths), Ok(None))
+}
+
+/// `speedy-agent stop`: asks the running agent to shut down and waits for it to go.
+pub async fn stop(paths: AgentPaths) -> io::Result<()> {
+    if !agent_running(&paths) {
+        return Ok(());
+    }
+    let stream = UnixStream::connect(paths.socket()).await?;
+    let (rd, mut wr) = stream.into_split();
+    let mut reader = FrameReader::new(rd);
+    reader.read_preamble().await.map_err(io::Error::other)?;
+    let hello = Hello {
+        protocol_min: PROTOCOL_MIN,
+        protocol_max: PROTOCOL_MAX,
+        agent_version: AGENT_VERSION.into(),
+        build_sha: BUILD_SHA.into(),
+        host_id: None,
+        epoch: None,
+        capabilities: vec![],
+    };
+    for control in [Control::Hello(hello), Control::Shutdown] {
+        let bytes = encode(&Frame { stream_id: 0, body: Body::Control(control) }).map_err(io::Error::other)?;
+        wr.write_all(&bytes).await?;
+    }
+    // The agent exits once its threads and shells have stopped.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while agent_running(&paths) && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Ok(())
+}
+
