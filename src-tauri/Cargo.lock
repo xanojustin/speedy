@@ -3426,6 +3426,8 @@ name = "speedy"
 version = "0.1.0"
 dependencies = [
  "block2",
+ "dirs",
+ "libc",
  "log",
  "objc2",
  "objc2-app-kit",

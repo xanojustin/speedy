@@ -13,7 +13,10 @@ use speedy_core::host::migrate::migrate_client;
 use speedy_core::state::client::ClientState;
 use speedy_core::state::default_state_dir;
 use speedy_core::state::store::{JsonStore, Loaded};
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
+
+/// App event carrying an SSH prompt for the webview: payload `hosts::askpass::Prompt`.
+const ASKPASS_EVENT: &str = "askpass";
 
 /// Everything the app's own commands need, managed by Tauri as shared state.
 pub struct AppCtx {
@@ -38,8 +41,22 @@ pub fn run() {
             let client = JsonStore::new(default_state_dir());
             let registry = app.state::<Arc<hosts::HostRegistry>>().inner().clone();
             let on_status = attention.clone();
+            let prompts = handle.clone();
             tauri::async_runtime::spawn(async move {
+                match hosts::askpass::Askpass::start(move |prompt| {
+                    if let Err(e) = prompts.emit(ASKPASS_EVENT, prompt) {
+                        log::warn!("emitting {ASKPASS_EVENT}: {e}");
+                    }
+                }) {
+                    Ok(askpass) => registry.set_askpass(askpass),
+                    Err(e) => log::error!("SSH prompts won't work: {e}"),
+                }
                 registry.start_local(Arc::new(move |id: &str, from, to| on_status.on_status(id, "", from, to)));
+                registry.start_saved();
+                hosts::wake::on_wake(move || {
+                    let registry = registry.clone();
+                    tauri::async_runtime::spawn(async move { registry.woke().await });
+                });
             });
             app.manage(AppCtx { attention, client, client_notice });
             menu::install(app)?;
@@ -71,6 +88,11 @@ pub fn run() {
             hosts::host_pty_resize,
             hosts::host_unsubscribe,
             hosts::host_watch,
+            hosts::host_aliases,
+            hosts::host_add,
+            hosts::host_remove,
+            hosts::host_reconnect,
+            hosts::askpass_answer,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Speedy")

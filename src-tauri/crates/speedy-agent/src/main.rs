@@ -1,4 +1,4 @@
-//! `speedy-agent run | proxy | install | version [--json] | stop` (U6, U7).
+//! `speedy-agent run | proxy | install | status | version [--json] | stop` (U6, U7, U11).
 
 use std::process::ExitCode;
 
@@ -21,6 +21,11 @@ fn main() -> ExitCode {
                     ExitCode::FAILURE
                 }
             }
+        }
+        // For a probe: 0 when an agent is running, `EXIT_NOT_RUNNING` when not.
+        Some("status") => {
+            let running = daemon::agent_running(&AgentPaths::from_env());
+            ExitCode::from(if running { 0 } else { daemon::EXIT_NOT_RUNNING as u8 })
         }
         Some("proxy") => ExitCode::from(runtime().block_on(daemon::proxy(AgentPaths::from_env())) as u8),
         Some("stop") => match runtime().block_on(daemon::stop(AgentPaths::from_env())) {
@@ -62,7 +67,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         _ => {
-            eprintln!("usage: speedy-agent run | proxy | install | version [--json] | stop");
+            eprintln!("usage: speedy-agent run | proxy | install | status | version [--json] | stop");
             ExitCode::from(2)
         }
     }

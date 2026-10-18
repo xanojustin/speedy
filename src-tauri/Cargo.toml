@@ -32,6 +32,8 @@ tauri-plugin-dialog = "2.8.3"
 speedy-core = { path = "crates/speedy-core" }
 speedy-agent = { path = "crates/speedy-agent" }
 sha2 = "0.10"
+dirs = "7.0.0"
+libc = "0.2.190"
 uuid = { version = "1.28.0", features = ["v4"] }
 
 
