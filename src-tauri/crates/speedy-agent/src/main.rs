@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use speedy_agent::logs::FileLog;
 use speedy_agent::paths::AgentPaths;
 use speedy_agent::{daemon, launchd};
-use speedy_agent::server::{AGENT_VERSION, BUILD_SHA};
+use speedy_agent::server::{AGENT_VERSION, BUILD_SHA, BUILD_TIME};
 use speedy_core::proto::{PROTOCOL_MAX, PROTOCOL_MIN};
 
 fn main() -> ExitCode {
@@ -58,7 +58,7 @@ fn main() -> ExitCode {
         Some("version") if args.iter().any(|a| a == "--json") => {
             println!(
                 "{}",
-                serde_json::json!({"version": AGENT_VERSION, "protocolMin": PROTOCOL_MIN, "protocolMax": PROTOCOL_MAX, "buildSha": BUILD_SHA})
+                serde_json::json!({"version": AGENT_VERSION, "protocolMin": PROTOCOL_MIN, "protocolMax": PROTOCOL_MAX, "buildSha": BUILD_SHA, "buildTime": BUILD_TIME.parse::<u64>().unwrap_or(0)})
             );
             ExitCode::SUCCESS
         }

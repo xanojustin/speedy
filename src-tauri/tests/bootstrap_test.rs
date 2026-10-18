@@ -4,7 +4,7 @@ use speedy_lib::hosts::bootstrap::{PROBE, Step, parse_probe, plan};
 use speedy_lib::hosts::local::{Build, VersionInfo};
 
 fn build(sha: &str) -> Build {
-    Build { info: VersionInfo { version: "0.1.0".into(), protocol_min: 1, protocol_max: 1, build_sha: "abc".into() }, sha256: sha.into() }
+    Build { info: VersionInfo { version: "0.1.0".into(), protocol_min: 1, protocol_max: 1, build_sha: "abc".into(), build_time: 0 }, sha256: sha.into() }
 }
 
 fn run_probe(home: &std::path::Path) -> Vec<u8> {
@@ -71,6 +71,9 @@ fn the_first_step_depends_on_what_the_host_has() {
     assert_eq!(plan(&probe(Some(build("new")), false), &bundled, &archs), Ok(Step::Start));
     assert_eq!(plan(&probe(Some(build("old")), false), &bundled, &archs), Ok(Step::Upload));
     assert_eq!(plan(&probe(Some(build("old")), true), &bundled, &archs), Ok(Step::Connect), "a running agent is never replaced at connect");
+    let mut newer = build("newer");
+    newer.info.version = "0.2.0".into();
+    assert_eq!(plan(&probe(Some(newer), false), &bundled, &archs), Ok(Step::Start), "a stopped newer agent is started, not downgraded");
     let linux = speedy_lib::hosts::bootstrap::Probe { os: "Linux".into(), arch: "x86_64".into(), installed: None, running: false };
     assert!(plan(&linux, &bundled, &archs).unwrap_err().contains("isn't a Mac"));
     let intel = speedy_lib::hosts::bootstrap::Probe { os: "Darwin".into(), arch: "x86_64".into(), installed: None, running: false };

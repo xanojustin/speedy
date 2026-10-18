@@ -16,6 +16,8 @@ OUT="$ROOT/src-tauri/binaries/speedy-agent-$HOST"
 mkdir -p "$(dirname "$OUT")"
 SHA="$(git -C "$ROOT" rev-parse --short=8 HEAD 2>/dev/null || echo dev)"
 export SPEEDY_BUILD_SHA="$SHA"
+# Orders builds of the same version, so a rebuild replaces the agent it supersedes (KTD9).
+export SPEEDY_BUILD_TIME="$(date +%s)"
 
 if [[ "${1:-}" == "--dev" ]]; then
   cargo build --manifest-path "$MANIFEST" -p speedy-agent

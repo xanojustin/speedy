@@ -49,7 +49,7 @@ pub fn parse_probe(stdout: &[u8]) -> Result<Probe, String> {
 pub enum Step {
     /// Connect to the agent that's running (a newer bundle waits for it to go idle).
     Connect,
-    /// Start the installed agent, which is this build.
+    /// Start the installed agent, which is this build or a newer compatible one.
     Start,
     /// Upload and install the bundled agent.
     Upload,
@@ -66,6 +66,8 @@ pub fn plan(probe: &Probe, bundled: &Build, bundled_archs: &[String]) -> Result<
     Ok(match (&probe.installed, probe.running) {
         (_, true) => Step::Connect,
         (Some(installed), false) if installed.sha256 == bundled.sha256 => Step::Start,
+        // A newer agent another Speedy installed is never downgraded (KTD9).
+        (Some(installed), false) if local::installed_is_newer(installed, bundled) && local::compatible(installed, bundled) => Step::Start,
         _ => Step::Upload,
     })
 }

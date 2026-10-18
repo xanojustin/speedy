@@ -1,6 +1,7 @@
 //! U8: This Mac's agent (KTD9, KTD11). The app bundles `speedy-agent` as a sidecar; on launch it
 //! stages that binary under `~/.speedy/agent/bin/<version>-<sha8>/` and installs it, unless the
-//! running agent is already that build, or is busy (then the swap waits until it's idle).
+//! running agent is already that build, is a newer version (never downgraded), or is busy
+//! (then the swap waits until it's idle).
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -18,6 +19,9 @@ pub struct VersionInfo {
     pub protocol_min: u32,
     pub protocol_max: u32,
     pub build_sha: String,
+    /// Unix seconds; 0 for an agent built before this field, or outside `build-agent.sh`.
+    #[serde(default)]
+    pub build_time: u64,
 }
 
 /// An agent binary: what it reports and the hash of its bytes.
@@ -38,6 +42,8 @@ pub enum Upgrade {
     Pending,
     /// The older agent can't talk to this app, and swapping now would interrupt work.
     Blocked,
+    /// The installed agent is newer than the bundled one but stopped: start it as it is.
+    Start,
 }
 
 impl Upgrade {
@@ -46,21 +52,77 @@ impl Upgrade {
         match self {
             Upgrade::Pending => Some("pending"),
             Upgrade::Blocked => Some("blocked"),
-            Upgrade::UpToDate | Upgrade::Install => None,
+            Upgrade::UpToDate | Upgrade::Install | Upgrade::Start => None,
         }
     }
 }
 
+/// Whether two builds share a protocol version.
+pub fn compatible(a: &Build, b: &Build) -> bool {
+    a.info.protocol_min.max(b.info.protocol_min) <= a.info.protocol_max.min(b.info.protocol_max)
+}
+
+/// Orders two agent versions (`MAJOR.MINOR.PATCH[-pre][+build]`): numeric parts compare as
+/// numbers, and a pre-release sorts before its release. `None` when either doesn't parse.
+pub fn version_cmp(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    fn parse(v: &str) -> Option<(Vec<u64>, Option<&str>)> {
+        let v = v.trim().trim_start_matches('v');
+        let v = v.split_once('+').map_or(v, |(v, _)| v);
+        let (core, pre) = match v.split_once('-') {
+            Some((core, pre)) => (core, Some(pre)),
+            None => (v, None),
+        };
+        let parts = core.split('.').map(|p| p.parse().ok()).collect::<Option<Vec<u64>>>()?;
+        if parts.is_empty() { None } else { Some((parts, pre)) }
+    }
+    let ((mut a, a_pre), (mut b, b_pre)) = (parse(a)?, parse(b)?);
+    let len = a.len().max(b.len());
+    a.resize(len, 0);
+    b.resize(len, 0);
+    Some(a.cmp(&b).then(match (a_pre, b_pre) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(x), Some(y)) => x.cmp(y),
+    }))
+}
+
+/// Orders two builds: by version, then by build time within a version. `None` when either
+/// version doesn't parse.
+pub fn build_cmp(a: &Build, b: &Build) -> Option<std::cmp::Ordering> {
+    version_cmp(&a.info.version, &b.info.version).map(|o| o.then(a.info.build_time.cmp(&b.info.build_time)))
+}
+
+/// Whether the installed agent is a strictly newer build than the bundled one.
+pub fn installed_is_newer(installed: &Build, bundled: &Build) -> bool {
+    build_cmp(installed, bundled) == Some(std::cmp::Ordering::Greater)
+}
+
+/// The KTD9 rule. The bundled build replaces the installed one only when it is a newer build
+/// (version, then build time), or when the installed one can't talk to this app at all. It
+/// never replaces a newer compatible agent, so two app builds sharing a host don't take turns
+/// reinstalling. Two builds with no ordering between them (same version and build time) leave
+/// a running agent be.
 pub fn decide(installed: Option<&Build>, bundled: &Build, running: bool, busy: bool) -> Upgrade {
     let Some(installed) = installed else { return Upgrade::Install };
     if installed.sha256 == bundled.sha256 {
         return if running { Upgrade::UpToDate } else { Upgrade::Install };
     }
+    let compatible = compatible(installed, bundled);
+    let bundled_newer = build_cmp(bundled, installed) == Some(std::cmp::Ordering::Greater);
+    if compatible && !bundled_newer {
+        return match (running, installed_is_newer(installed, bundled)) {
+            (true, _) => Upgrade::UpToDate,
+            // Stopped and newer: start it rather than downgrade it.
+            (false, true) => Upgrade::Start,
+            // Stopped, same version (or unordered): nothing to interrupt, and whichever app
+            // starts it next leaves it be.
+            (false, false) => Upgrade::Install,
+        };
+    }
     if !running || !busy {
         return Upgrade::Install;
     }
-    let compatible = installed.info.protocol_min.max(bundled.info.protocol_min)
-        <= installed.info.protocol_max.min(bundled.info.protocol_max);
     if compatible { Upgrade::Pending } else { Upgrade::Blocked }
 }
 

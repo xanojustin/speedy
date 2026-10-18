@@ -1,8 +1,9 @@
 //! U11: SSH passphrase and 2FA prompts in the app (KTD2). ssh runs the app's own binary as
 //! `SSH_ASKPASS` (with `SSH_ASKPASS_REQUIRE=force`, since the app has no terminal); in that
 //! mode the binary relays the prompt to the running app over a socket in a 0700 dir and prints
-//! the answer. Each user-initiated connect gets a one-time token, so nothing else can raise a
-//! prompt or read an answer, and answers are never logged, stored or reused.
+//! the answer. Each ssh master gets its own token (it may prompt more than once: a passphrase,
+//! then a 2FA code), and only a same-user peer holding one can raise a prompt or read an
+//! answer. Answers are never logged, stored or reused.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};

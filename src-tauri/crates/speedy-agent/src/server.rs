@@ -44,6 +44,12 @@ pub const BUILD_SHA: &str = match option_env!("SPEEDY_BUILD_SHA") {
     Some(sha) => sha,
     None => "dev",
 };
+/// When `scripts/build-agent.sh` built this agent (Unix seconds; 0 when unknown). Orders two
+/// builds of the same version, so the app replaces an agent only with a newer one.
+pub const BUILD_TIME: &str = match option_env!("SPEEDY_BUILD_TIME") {
+    Some(time) => time,
+    None => "0",
+};
 
 pub struct Agent {
     host: Arc<Host>,

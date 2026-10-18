@@ -79,11 +79,16 @@ pub struct HostRegistry {
 
 impl HostRegistry {
     pub fn new() -> Arc<HostRegistry> {
+        Self::new_in(default_state_dir())
+    }
+
+    /// A registry keeping `hosts.json` in `state_dir` (tests use a temporary one).
+    pub fn new_in(state_dir: std::path::PathBuf) -> Arc<HostRegistry> {
         Arc::new(HostRegistry {
             hosts: Mutex::default(),
             ssh: Mutex::default(),
             updates: Mutex::default(),
-            list: JsonStore::new(default_state_dir()),
+            list: JsonStore::new(state_dir),
             on_transition: Mutex::default(),
             askpass: Mutex::default(),
             working: Mutex::default(),
@@ -146,10 +151,15 @@ impl HostRegistry {
         Ok(self.connect_ssh(alias, true))
     }
 
-    /// Forgets an SSH host: closes its connection and master. Its agent keeps running there.
+    /// Forgets an SSH host: closes its connection (ending its reconnects and upgrade watch)
+    /// and its master. Its agent keeps running there.
     pub async fn remove(&self, key: &str) {
-        self.hosts.lock().remove(key);
+        let conn = self.hosts.lock().remove(key);
+        if let Some(conn) = conn {
+            conn.close();
+        }
         self.updates.lock().remove(key);
+        self.working.lock().remove(key);
         let ssh = self.ssh.lock().remove(key);
         if let Some(ssh) = ssh {
             ssh.drop_master().await;
@@ -224,8 +234,16 @@ impl HostRegistry {
         conn
     }
 
-    /// Swaps in the bundled agent once the host's older one is idle (KTD9).
+    /// Swaps in the bundled agent once the host's older one is idle (KTD9). Ends when the
+    /// host is removed.
     async fn keep_updated(&self, key: &str, conn: &HostConn, ssh: &Ssh) {
+        tokio::select! {
+            _ = conn.closed() => {}
+            _ = self.watch_upgrades(key, conn, ssh) => {}
+        }
+    }
+
+    async fn watch_upgrades(&self, key: &str, conn: &HostConn, ssh: &Ssh) {
         let mut state = conn.watch();
         loop {
             if state.wait_for(|s| matches!(s, ConnState::Connected { .. })).await.is_err() {
@@ -234,8 +252,10 @@ impl HostRegistry {
             let decision = match ssh_upgrade(ssh, conn).await {
                 Ok(decision) => decision,
                 Err(e) => {
+                    // A failed probe or upload is retried rather than given up on for good.
                     log::warn!("checking {key}'s agent: {e}");
-                    return;
+                    tokio::time::sleep(UPGRADE_RECHECK).await;
+                    continue;
                 }
             };
             if !self.set_update(key, decision) {
@@ -301,8 +321,10 @@ impl HostRegistry {
                 let decision = match bootstrap_local(&paths, &conn).await {
                     Ok(decision) => decision,
                     Err(e) => {
+                        // Retried: a failed install (disk full, a stale lock) can clear up.
                         log::error!("starting This Mac's agent: {e}");
-                        return;
+                        tokio::time::sleep(UPGRADE_RECHECK).await;
+                        continue;
                     }
                 };
                 if !registry.set_update(LOCAL, decision) {
@@ -323,13 +345,25 @@ async fn bootstrap_local(paths: &AgentPaths, conn: &HostConn) -> Result<Upgrade,
     let same = installed.as_ref().is_some_and(|i| i.sha256 == build.sha256);
     let busy = running && !same && agent_busy(conn).await;
     let decision = local::decide(installed.as_ref(), &build, running, busy);
-    if decision == Upgrade::Install {
-        let paths = paths.clone();
-        tokio::task::spawn_blocking(move || local::stage(&paths, &bundled, &build).and_then(|staged| local::install(&staged)))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| format!("installing the agent: {e}"))?;
-        conn.reconnect_now();
+    match decision {
+        Upgrade::Install => {
+            let paths = paths.clone();
+            tokio::task::spawn_blocking(move || local::stage(&paths, &bundled, &build).and_then(|staged| local::install(&staged)))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| format!("installing the agent: {e}"))?;
+            conn.reconnect_now();
+        }
+        Upgrade::Start => {
+            // A newer agent another Speedy installed: start it as it is.
+            let current = local::current_agent(paths);
+            tokio::task::spawn_blocking(move || local::install(&current))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| format!("starting the agent: {e}"))?;
+            conn.reconnect_now();
+        }
+        Upgrade::UpToDate | Upgrade::Pending | Upgrade::Blocked => {}
     }
     Ok(decision)
 }
@@ -362,9 +396,16 @@ async fn ssh_upgrade(ssh: &Ssh, conn: &HostConn) -> Result<Upgrade, String> {
     let same = probe.installed.as_ref().is_some_and(|i| i.sha256 == build.sha256);
     let busy = !same && agent_busy(conn).await;
     let decision = local::decide(probe.installed.as_ref(), &build, probe.running, busy);
-    if decision == Upgrade::Install {
-        bootstrap::upload_and_install(ssh, &binary, &build).await?;
-        conn.reconnect_now();
+    match decision {
+        Upgrade::Install => {
+            bootstrap::upload_and_install(ssh, &binary, &build).await?;
+            conn.reconnect_now();
+        }
+        Upgrade::Start => {
+            bootstrap::start_installed(ssh).await?;
+            conn.reconnect_now();
+        }
+        Upgrade::UpToDate | Upgrade::Pending | Upgrade::Blocked => {}
     }
     Ok(decision)
 }
