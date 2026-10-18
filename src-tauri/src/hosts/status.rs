@@ -13,6 +13,11 @@ pub struct StatusTracker {
 }
 
 impl StatusTracker {
+    /// Threads whose last status was Working.
+    pub fn working(&self) -> Vec<String> {
+        self.last.iter().filter(|(_, s)| **s == ThreadStatus::Working).map(|(id, _)| id.clone()).collect()
+    }
+
     /// `(thread_id, from, to)` when `event` is a live status change.
     pub fn observe(&mut self, event: &Value) -> Option<(String, ThreadStatus, ThreadStatus)> {
         match event["kind"].as_str()? {

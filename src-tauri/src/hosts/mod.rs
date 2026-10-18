@@ -73,6 +73,8 @@ pub struct HostRegistry {
     list: JsonStore<HostList>,
     on_transition: Mutex<Option<TransitionFn>>,
     askpass: Mutex<Option<Arc<Askpass>>>,
+    /// Working threads per host, for the quit notice.
+    working: Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl HostRegistry {
@@ -84,6 +86,7 @@ impl HostRegistry {
             list: JsonStore::new(default_state_dir()),
             on_transition: Mutex::default(),
             askpass: Mutex::default(),
+            working: Mutex::default(),
         })
     }
 
@@ -168,6 +171,29 @@ impl HostRegistry {
         Ok(())
     }
 
+    /// How many of `key`'s threads are working right now.
+    pub fn working(&self, key: &str) -> usize {
+        self.working.lock().get(key).map_or(0, |w| w.len())
+    }
+
+    /// Stops This Mac's agent and its threads and shells, on request (R17).
+    pub async fn stop_local(&self) -> Result<(), String> {
+        let agent = local::current_agent(&AgentPaths::from_env());
+        let out = tokio::process::Command::new(&agent).arg("stop").output().await.map_err(|e| e.to_string())?;
+        if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()) }
+    }
+
+    /// Starts This Mac's agent again after a stop.
+    pub async fn start_local_again(&self) -> Result<(), String> {
+        let agent = local::current_agent(&AgentPaths::from_env());
+        let out = tokio::process::Command::new(&agent).arg("install").output().await.map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_owned());
+        }
+        self.get(LOCAL)?.reconnect_now();
+        Ok(())
+    }
+
     /// The Mac woke: masters that survived sleep may hang, so every host starts over.
     pub async fn woke(&self) {
         let ssh: Vec<Arc<Ssh>> = self.ssh.lock().values().cloned().collect();
@@ -231,12 +257,17 @@ impl HostRegistry {
     }
 
     /// Adds a host, feeding its live status transitions to `on_transition`.
-    pub fn add(&self, key: &str, connector: Connector, on_transition: TransitionFn) -> Arc<HostConn> {
+    pub fn add(self: &Arc<Self>, key: &str, connector: Connector, on_transition: TransitionFn) -> Arc<HostConn> {
         let conn = HostConn::start(connector);
         let tracker = Mutex::new(StatusTracker::default());
+        let (registry, host) = (Arc::downgrade(self), key.to_owned());
         conn.subscribe_host(Arc::new(move |event| {
-            if let Some((id, from, to)) = tracker.lock().observe(&event) {
+            let mut tracker = tracker.lock();
+            if let Some((id, from, to)) = tracker.observe(&event) {
                 on_transition(&id, from, to);
+            }
+            if let Some(registry) = registry.upgrade() {
+                registry.working.lock().insert(host.clone(), tracker.working());
             }
         }));
         self.hosts.lock().insert(key.to_owned(), conn.clone());
@@ -467,6 +498,16 @@ pub async fn host_remove(hosts: Hosts<'_>, host: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn host_reconnect(hosts: Hosts<'_>, host: String) -> Result<(), String> {
     hosts.reconnect(&host).await
+}
+
+#[tauri::command]
+pub async fn local_agent_stop(hosts: Hosts<'_>) -> Result<(), String> {
+    hosts.stop_local().await
+}
+
+#[tauri::command]
+pub async fn local_agent_start(hosts: Hosts<'_>) -> Result<(), String> {
+    hosts.start_local_again().await
 }
 
 /// The user's answer to an SSH prompt; `None` cancels it.

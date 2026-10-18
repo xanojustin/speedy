@@ -201,6 +201,28 @@ export type ConnState =
   | { state: "connected"; host_id: string; agent_version: string }
   | { state: "reconnecting"; error: string };
 
+/** A host and how it's doing (R3). */
+export interface HostInfo {
+  key: string;
+  state: ConnState;
+  /** A newer agent waits for this one to go idle ("pending"), or can't talk to this app while it's busy ("blocked"). */
+  update: "pending" | "blocked" | null;
+}
+
+/** An SSH passphrase or code prompt (KTD2). */
+export interface AskpassPrompt {
+  id: number;
+  host: string;
+  prompt: string;
+}
+
+/** How a host's agent runs, beside its setup state (KTD8). */
+export interface HostSetupState extends SetupState {
+  /** "aqua" when it runs in the console session (Keychain available), else "background" or another domain. */
+  launchDomain?: string;
+  tokenPresent?: boolean;
+}
+
 /** The app's own preferences (`client.json`), keyed by host and project. */
 export interface ClientState {
   version: number;
@@ -251,6 +273,8 @@ export interface Project {
 
 export interface Group {
   id: string;
+  /** The host whose projects this group holds; This Mac when unset. */
+  hostKey?: string;
   name: string;
   collapsed: boolean;
   /** A `GROUP_COLORS` name; null is filled in on load. */
@@ -355,4 +379,5 @@ export type MenuAction =
   | "focus_chat"
   | "add_project"
   | "open_settings"
+  | "stop_local_agent"
   | `switch_thread_${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;

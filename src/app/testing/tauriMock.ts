@@ -23,6 +23,8 @@ type Handler = (event: { payload: unknown }) => void;
 export interface Call {
   cmd: string;
   args: Record<string, unknown> | undefined;
+  /** The host a host RPC went to. */
+  host?: string;
 }
 
 export const readySetup: SetupState = {
@@ -49,6 +51,10 @@ export const backend = {
   calls: [] as Call[],
   /** Every persisted view, after each client save or host change. */
   saves: [] as AppState[],
+  /** SSH hosts besides This Mac, with the connection state their watch reports. */
+  extraHosts: [] as { key: string; state: Record<string, unknown> }[],
+  /** Setup state per host key; This Mac and unlisted hosts use `setup`. */
+  setupByHost: {} as Record<string, unknown>,
   listeners: {} as Record<string, Handler[]>,
   dragDrop: null as ((e: { payload: unknown }) => void) | null,
   /** Folders the OS opened with Speedy (`speedy .`) that the webview hasn't taken. */
@@ -66,9 +72,9 @@ export const backend = {
   threadChannels: {} as Record<string, { onmessage: (e: unknown) => void }>,
 };
 
-/** The fake host's view of `backend.state`'s projects. */
-function hostProjects(state: AppState): HostProject[] {
-  return state.projects.map((p) => ({
+/** The fake host's view of `backend.state`'s projects on `host`. */
+function hostProjects(state: AppState, host: string): HostProject[] {
+  return state.projects.filter((p) => (p.hostKey ?? "local") === host).map((p) => ({
     id: p.id,
     path: p.path,
     name: p.name,
@@ -135,7 +141,7 @@ function applyClientSave(c: ClientState) {
 }
 
 /** The fake host's thread and project RPCs, applied to the persisted view. */
-function hostRpc(method: string, a: Record<string, unknown>): unknown {
+function hostRpc(method: string, a: Record<string, unknown>, host = "local"): unknown {
   const st = backend.state;
   const edit = (threadId: string, fn: (t: Thread) => Thread) => {
     st.projects = st.projects.map((p) => ({ ...p, threads: p.threads.map((t) => (t.id === threadId ? fn(t) : t)) }));
@@ -143,7 +149,7 @@ function hostRpc(method: string, a: Record<string, unknown>): unknown {
   switch (method) {
     case "project_add":
       if (!st.projects.some((p) => p.id === a.id)) {
-        st.projects = [...st.projects, { id: a.id as string, hostKey: "local", path: a.path as string, name: a.name as string, collapsed: false, threads: [] }];
+        st.projects = [...st.projects, { id: a.id as string, hostKey: host, path: a.path as string, name: a.name as string, collapsed: false, threads: [] }];
       }
       break;
     case "project_remove":
@@ -226,7 +232,8 @@ export const invoke = vi.fn(async (outer: string, outerArgs?: Record<string, unk
   const viaHost = outer === "host_call";
   const cmd = viaHost ? (outerArgs!.method as string) : outer;
   const args = viaHost ? (outerArgs!.params as Record<string, unknown>) : outerArgs;
-  backend.calls.push({ cmd, args });
+  const host = viaHost ? (outerArgs!.host as string) : undefined;
+  backend.calls.push({ cmd, args, host });
   switch (cmd) {
     case "client_state_load":
       return { state: clientOf(backend.state), notice: backend.notice };
@@ -236,10 +243,22 @@ export const invoke = vi.fn(async (outer: string, outerArgs?: Record<string, unk
     case "host_subscribe": {
       const channel = args!.onEvent as { onmessage: (e: HostEvent) => void };
       backend.hostChannels[args!.host as string] = channel;
-      const snapshot = { epoch: 1, projects: hostProjects(backend.state), statuses: {} };
+      const snapshot = { epoch: 1, projects: hostProjects(backend.state, args!.host as string), statuses: {} };
       channel.onmessage({ kind: "host_snapshot", snapshot });
       return 1;
     }
+    case "host_list":
+      return [
+        { key: "local", state: { state: "connected", host_id: "this-mac", agent_version: "test" }, update: null },
+        ...backend.extraHosts.map((h) => ({ ...h, update: null })),
+      ];
+    case "host_watch": {
+      const extra = backend.extraHosts.find((h) => h.key === args!.host);
+      (args!.onState as { onmessage: (s: unknown) => void }).onmessage(extra?.state ?? { state: "connected", host_id: "this-mac", agent_version: "test" });
+      return undefined;
+    }
+    case "home_dir":
+      return "/Users/me";
     case "host_thread_subscribe":
       backend.threadChannels[args!.threadId as string] = args!.onEvent as { onmessage: (e: unknown) => void };
       return 1;
@@ -249,12 +268,12 @@ export const invoke = vi.fn(async (outer: string, outerArgs?: Record<string, unk
     case "project_remove":
     case "thread_create":
     case "thread_update":
-      return hostRpc(cmd, args!);
+      return hostRpc(cmd, args!, host);
     case "claude_start":
       return "idle";
     case "get_setup_state":
     case "recheck_setup":
-      return backend.setup;
+      return (host && backend.setupByHost[host]) ?? backend.setup;
     case "paths_exist":
       return (args!.paths as string[]).map((p) =>
         p.endsWith("/") ? backend.dirs.has(p.slice(0, -1)) : backend.dirs.has(p) || backend.files.has(p),
@@ -364,6 +383,8 @@ export function resetFakeBackend(state: AppState = emptyState()) {
   backend.hostChannels = {};
   backend.threadChannels = {};
   backend.saves = [];
+  backend.extraHosts = [];
+  backend.setupByHost = {};
   invoke.mockClear();
   dialog.open.mockReset().mockResolvedValue(null);
   dialog.ask.mockReset().mockResolvedValue(true);

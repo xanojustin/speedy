@@ -300,6 +300,8 @@ impl Agent {
 
             // Setup.
             "agent_busy" => Ok(self.busy().into()),
+            // Where the folder browser starts (R14).
+            "home_dir" => Ok(dirs::home_dir().map(|h| h.to_string_lossy().into_owned()).into()),
             "get_setup_state" => self.setup_state().await,
             "set_claude_token" => {
                 let a: TokenArg = args(params)?;

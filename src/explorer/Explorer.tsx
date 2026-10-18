@@ -67,7 +67,7 @@ interface OpenFile {
   seq: number;
 }
 
-export function Explorer({ root, name, onClose }: { root: string; name: string; onClose: () => void }) {
+export function Explorer({ root, name, host, onClose }: { root: string; name: string; host?: string; onClose: () => void }) {
   const { changes, refresh } = useGitChanges(root);
   const [open, setOpen] = useState<OpenFile | null>(null);
   const openPath = open?.path ?? null;
@@ -125,7 +125,7 @@ export function Explorer({ root, name, onClose }: { root: string; name: string; 
             className="icon-button"
             aria-label="Open in VS Code"
             title="Open in VS Code"
-            onClick={() => void openInVscode(root).catch((err) => console.warn("open_in_vscode failed", err))}
+            onClick={() => void openInVscode(root, host).catch((err) => console.warn("open_in_vscode failed", err))}
           >
             <span className="codicon codicon-vscode" aria-hidden />
           </button>

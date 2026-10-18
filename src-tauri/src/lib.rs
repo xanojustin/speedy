@@ -17,6 +17,11 @@ use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 /// App event carrying an SSH prompt for the webview: payload `hosts::askpass::Prompt`.
 const ASKPASS_EVENT: &str = "askpass";
+/// App event asking the webview to confirm quitting while This Mac's threads work: payload `{ working }`.
+const QUIT_EVENT: &str = "quit_requested";
+
+/// Set once the user confirmed quitting with threads working.
+static QUIT_CONFIRMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Everything the app's own commands need, managed by Tauri as shared state.
 pub struct AppCtx {
@@ -93,6 +98,9 @@ pub fn run() {
             hosts::host_remove,
             hosts::host_reconnect,
             hosts::askpass_answer,
+            hosts::local_agent_stop,
+            hosts::local_agent_start,
+            quit_confirmed,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Speedy")
@@ -102,12 +110,26 @@ pub fn run() {
                 cli::handle_opened(app, urls);
             }
             // Threads and shells belong to the hosts' agents and keep running (R17, KTD11).
-            if let RunEvent::ExitRequested { .. } = event
-                && let Some(ctx) = app.try_state::<AppCtx>()
-            {
-                ctx.client.flush();
+            if let RunEvent::ExitRequested { api, .. } = &event {
+                let working = app.try_state::<Arc<hosts::HostRegistry>>().map_or(0, |r| r.working(hosts::LOCAL));
+                if working > 0 && !QUIT_CONFIRMED.load(std::sync::atomic::Ordering::SeqCst) {
+                    // The webview says the threads keep running, then calls `quit_confirmed`.
+                    api.prevent_exit();
+                    let _ = app.emit(QUIT_EVENT, serde_json::json!({ "working": working }));
+                    return;
+                }
+                if let Some(ctx) = app.try_state::<AppCtx>() {
+                    ctx.client.flush();
+                }
             }
         });
+}
+
+/// Quits after the user saw that This Mac's working threads keep running.
+#[tauri::command]
+fn quit_confirmed(app: tauri::AppHandle) {
+    QUIT_CONFIRMED.store(true, std::sync::atomic::Ordering::SeqCst);
+    app.exit(0);
 }
 
 /// The app's preferences, with a notice when migrating them from state.json went wrong.
@@ -142,9 +164,20 @@ fn open_path(path: String) -> Result<(), String> {
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Opens a folder in VS Code by bundle id, so it works without the `code` CLI on PATH.
+/// Opens a folder in VS Code by bundle id, so it works without the `code` CLI on PATH. A
+/// folder on an SSH host opens as a VS Code remote window on that alias (R16).
 #[tauri::command]
-fn open_in_vscode(path: String) -> Result<(), String> {
+fn open_in_vscode(hosts: tauri::State<'_, Arc<hosts::HostRegistry>>, path: String, host: Option<String>) -> Result<(), String> {
+    if let Some(alias) = host.filter(|h| h != hosts::LOCAL) {
+        // Only an added host, and an absolute path, become part of the URL.
+        hosts.get(&alias)?;
+        if !path.starts_with('/') {
+            return Err(format!("cannot open {path} in VS Code: not an absolute path"));
+        }
+        let url = format!("vscode://vscode-remote/ssh-remote+{}{}", url_escape(&alias), url_escape(&path));
+        let status = std::process::Command::new("open").arg(url).status().map_err(|e| e.to_string())?;
+        return if status.success() { Ok(()) } else { Err("VS Code isn't installed".into()) };
+    }
     let p = std::path::Path::new(&path);
     if !p.is_absolute() || !p.is_dir() {
         return Err(format!("cannot open {path} in VS Code: not an existing folder"));
@@ -155,6 +188,16 @@ fn open_in_vscode(path: String) -> Result<(), String> {
         .status()
         .map_err(|e| e.to_string())?;
     if status.success() { Ok(()) } else { Err("VS Code isn't installed".into()) }
+}
+
+/// Percent-escapes everything but unreserved characters and `/`.
+fn url_escape(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 fn is_web_link(path: &str) -> bool {

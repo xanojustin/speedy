@@ -112,14 +112,14 @@ describe("Explorer", () => {
     await renderApp();
     act(() => emitMenu("toggle_explorer"));
     fireEvent.click(within(explorer()!).getByRole("button", { name: "Open in VS Code" }));
-    await waitFor(() => expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([{ path: "/Users/me/app" }]));
+    await waitFor(() => expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([{ path: "/Users/me/app", host: "local" }]));
 
     fireEvent.click(screen.getByText("app thread 2"));
     fireEvent.click(within(await waitFor(() => explorer()!)).getByRole("button", { name: "Open in VS Code" }));
     await waitFor(() =>
       expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([
-        { path: "/Users/me/app" },
-        { path: "/Users/me/.worktrees/app-feature" },
+        { path: "/Users/me/app", host: "local" },
+        { path: "/Users/me/.worktrees/app-feature", host: "local" },
       ]),
     );
   });

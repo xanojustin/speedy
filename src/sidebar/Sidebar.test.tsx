@@ -104,7 +104,7 @@ describe("Sidebar", () => {
     fireEvent.contextMenu(projectHeader("alpha"));
     fireEvent.click(screen.getByRole("menuitem", { name: "Open in VS Code" }));
 
-    await waitFor(() => expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([{ path: useAppStore.getState().projects[0].path }]));
+    await waitFor(() => expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([{ path: useAppStore.getState().projects[0].path, host: "local" }]));
   });
 
   describe("Clean Up Worktrees", () => {

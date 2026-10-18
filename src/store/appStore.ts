@@ -6,7 +6,11 @@ import { create } from "zustand";
 import {
   clientStateLoad,
   clientStateSave,
+  hostAdd,
+  hostList,
+  hostRemove,
   hostSubscribe,
+  hostWatch,
   projectAdd,
   projectRemove,
   setHostLookup,
@@ -21,7 +25,9 @@ import {
   type ClientState,
   type Group,
   type GroupColor,
+  type ConnState,
   type HostEvent,
+  type HostInfo,
   type HostProject,
   type HostThread,
   type Project,
@@ -33,6 +39,8 @@ import { useThreadStore } from "./threadStore";
 
 export interface AppStore extends AppState {
   loaded: boolean;
+  /** This Mac first, then SSH hosts, with their connection state (R3). */
+  hosts: HostInfo[];
   /** Set when the state file was corrupt and moved aside. */
   notice: string | null;
   /** The Settings dialog is open (not persisted). */
@@ -46,6 +54,10 @@ export interface AppStore extends AppState {
   load(): Promise<void>;
   /** Applies one of `host`'s events (also used by tests). */
   applyHostEvent(host: string, event: HostEvent): void;
+  /** Adds an SSH host from `~/.ssh/config` and follows it; rejects with why it couldn't connect. */
+  addHost(alias: string): Promise<void>;
+  /** Forgets an SSH host here; its agent and threads keep running there. */
+  removeHost(key: string): Promise<void>;
   addProject(path: string, hostKey?: string): string; // returns the new thread id
   removeProject(projectId: string): void;
   moveProject(projectId: string, toIndex: number): void;
@@ -53,7 +65,7 @@ export interface AppStore extends AppState {
   /** Files a project under a group; null ungroups it. */
   setProjectGroup(projectId: string, groupId: string | null): void;
 
-  createGroup(name: string): string;
+  createGroup(name: string, hostKey?: string): string;
   renameGroup(groupId: string, name: string): void;
   /** Deletes the group; its projects become ungrouped. */
   deleteGroup(groupId: string): void;
@@ -246,9 +258,16 @@ export const useAppStore = create<AppStore>((set, get) => {
   /** `client.json` as loaded, to place projects and threads as hosts report them. */
   let client: ClientState | null = null;
 
+  /** Follows a host's events and connection state. */
+  const follow = async (key: string) => {
+    await hostWatch(key, (state: ConnState) => set((s) => ({ hosts: s.hosts.map((h) => (h.key === key ? { ...h, state } : h)) })));
+    await hostSubscribe(key, (event) => get().applyHostEvent(key, event));
+  };
+
   return {
     version: 1,
     projects: [],
+    hosts: [{ key: LOCAL_HOST, state: { state: "connecting" }, update: null }],
     groups: [],
     selectedThreadId: null,
     claudePathOverride: null,
@@ -283,7 +302,24 @@ export const useAppStore = create<AppStore>((set, get) => {
         notice,
         loaded: true,
       });
-      await hostSubscribe(LOCAL_HOST, (event) => get().applyHostEvent(LOCAL_HOST, event));
+      const hosts = (await hostList().catch(() => null)) ?? [];
+      set({ hosts: hosts.some((h) => h.key === LOCAL_HOST) ? hosts : [{ key: LOCAL_HOST, state: { state: "connecting" }, update: null }, ...hosts] });
+      await Promise.all(get().hosts.map((h) => follow(h.key)));
+    },
+
+    async addHost(alias) {
+      const info = await hostAdd(alias);
+      set((s) => ({ hosts: [...s.hosts.filter((h) => h.key !== info.key), info] }));
+      await follow(info.key);
+    },
+
+    async removeHost(key) {
+      await hostRemove(key);
+      commit((s) => ({
+        hosts: s.hosts.filter((h) => h.key !== key),
+        projects: s.projects.filter((p) => p.hostKey !== key),
+        groups: s.groups.filter((g) => (g.hostKey ?? LOCAL_HOST) !== key),
+      }));
     },
 
     applyHostEvent(host, event) {
@@ -371,8 +407,8 @@ export const useAppStore = create<AppStore>((set, get) => {
       commit((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? { ...p, groupId } : p)) }));
     },
 
-    createGroup(name) {
-      const group: Group = { id: newId(), name, collapsed: false, color: nextGroupColor(get().groups) };
+    createGroup(name, hostKey = LOCAL_HOST) {
+      const group: Group = { id: newId(), hostKey, name, collapsed: false, color: nextGroupColor(get().groups) };
       commit((s) => ({ groups: [...s.groups, group] }));
       return group.id;
     },
@@ -535,9 +571,67 @@ export function sidebarSections(state: Pick<AppState, "projects" | "groups">): S
   ];
 }
 
+export interface HostSection {
+  host: HostInfo;
+  sections: SidebarSection[];
+}
+
+/** The sidebar per host (R13): This Mac first, then SSH hosts, each with its own Chats and groups. */
+export function hostSections(state: Pick<AppStore, "projects" | "groups" | "hosts">): HostSection[] {
+  return state.hosts.map((host) => ({
+    host,
+    sections: sidebarSections({
+      projects: state.projects.filter((p) => p.hostKey === host.key),
+      groups: state.groups.filter((g) => (g.hostKey ?? LOCAL_HOST) === host.key),
+    }),
+  }));
+}
+
 /** Non-archived threads in sidebar order (Cmd+1–9 targets). */
-export function visibleThreads(state: Pick<AppState, "projects" | "groups">) {
-  return sidebarSections(state).flatMap((sec) =>
+export function visibleThreads(state: Pick<AppStore, "projects" | "groups" | "hosts">) {
+  const sections = state.hosts ? hostSections(state).flatMap((h) => h.sections) : sidebarSections(state);
+  return sections.flatMap((sec) =>
     sec.group?.collapsed ? [] : sec.projects.flatMap((p) => (p.collapsed ? [] : p.threads.filter((t) => !t.archived))),
   );
+}
+
+/** Resolves once `key` is connected; rejects with its last error after `ms`. */
+export function waitForHost(key: string, ms: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const done = () => hostConnected(useAppStore.getState(), key);
+    if (done()) return resolve();
+    const timer = setTimeout(() => {
+      unsub();
+      const state = useAppStore.getState().hosts.find((h) => h.key === key)?.state;
+      reject(new Error(state?.state === "reconnecting" ? state.error : `${hostLabel(key)} didn't connect`));
+    }, ms);
+    const unsub = useAppStore.subscribe(() => {
+      if (!done()) return;
+      clearTimeout(timer);
+      unsub();
+      resolve();
+    });
+  });
+}
+
+/** A host's display name. */
+export const hostLabel = (key: string) => (key === LOCAL_HOST ? "This Mac" : key);
+
+/** Whether a host's agent is connected. */
+export const hostConnected = (state: Pick<AppStore, "hosts">, key: string) =>
+  state.hosts.find((h) => h.key === key)?.state.state === "connected";
+
+/** A host's state for a banner or header label (R3). */
+export function hostStateLabel(host: HostInfo | undefined): string {
+  if (!host) return "Offline";
+  if (host.update === "blocked") return "Needs restart";
+  if (host.update === "pending") return "Update pending";
+  switch (host.state.state) {
+    case "connected":
+      return "Connected";
+    case "connecting":
+      return "Connecting";
+    case "reconnecting":
+      return "Reconnecting";
+  }
 }

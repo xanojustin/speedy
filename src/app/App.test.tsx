@@ -57,15 +57,16 @@ describe("Setup gating", () => {
   it("shows a loading state while setup is resolving", async () => {
     let resolve!: (v: unknown) => void;
     const { invoke } = await import("./testing/tauriMock");
-    invoke.mockImplementationOnce(async (cmd: string) => {
-      backend.calls.push({ cmd, args: undefined });
-      return { state: { version: 1, projects: [], selectedThreadId: null, claudePathOverride: null, sidebarWidth: 260, notificationsEnabled: true, completionSound: null }, notice: null };
-    });
-    invoke.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    // Everything answers as usual except the setup check, which waits.
+    const usual = invoke.getMockImplementation()!;
+    invoke.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === "host_call" && args?.method === "get_setup_state" ? new Promise((r) => (resolve = r)) : usual(cmd, args),
+    );
     render(<App />);
     expect(await screen.findByRole("status")).toHaveTextContent(/Starting/);
     resolve(readySetup);
     await screen.findByRole("navigation", { name: "Projects" });
+    invoke.mockImplementation(usual);
   });
 
   it("shows dismissible banners for a CLI version mismatch and a moved-aside state file", async () => {

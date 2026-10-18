@@ -1,6 +1,7 @@
 // App settings: notifications and the attention sound. Values persist in AppState; useAttention
 // pushes them to the Rust attention service.
 import { useEffect, useRef } from "react";
+import { HostsSettings } from "../hosts/HostsSettings";
 import { playSound } from "../ipc/commands";
 import { useAppStore } from "../store/appStore";
 import "./settings.css";
@@ -96,6 +97,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             </span>
           </div>
         </section>
+
+        <HostsSettings />
       </div>
     </div>
   );
