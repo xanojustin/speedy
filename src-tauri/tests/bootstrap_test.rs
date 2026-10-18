@@ -1,7 +1,7 @@
 //! U11: reading the host probe and choosing the first step of a connect (KTD9).
 
 use speedy_lib::hosts::bootstrap::{PROBE, Step, parse_probe, plan};
-use speedy_lib::hosts::local::{Build, VersionInfo};
+use speedy_lib::hosts::local::{Build, Installed, Upgrade, VersionInfo, deferred};
 
 fn build(sha: &str) -> Build {
     Build { info: VersionInfo { version: "0.1.0".into(), protocol_min: 1, protocol_max: 1, build_sha: "abc".into(), build_time: 0 }, sha256: sha.into() }
@@ -78,4 +78,21 @@ fn the_first_step_depends_on_what_the_host_has() {
     assert!(plan(&linux, &bundled, &archs).unwrap_err().contains("isn't a Mac"));
     let intel = speedy_lib::hosts::bootstrap::Probe { os: "Darwin".into(), arch: "x86_64".into(), installed: None, running: false };
     assert!(plan(&intel, &bundled, &archs).unwrap_err().contains("built for arm64 only"));
+}
+
+#[test]
+fn an_agent_busy_at_the_swap_leaves_the_update_waiting() {
+    let exit = |code: i32| {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(code << 8)
+    };
+    assert_eq!(Installed::from_exit(exit(0), b""), Ok(Installed::Started));
+    assert_eq!(Installed::from_exit(exit(speedy_agent::daemon::EXIT_BUSY), b""), Ok(Installed::Busy));
+    assert_eq!(Installed::from_exit(exit(1), b"disk full\n"), Err("disk full".to_owned()));
+
+    let mut old = build("old");
+    assert_eq!(deferred(Some(&old), &build("new")), Upgrade::Pending, "compatible: keep using it");
+    old.info.protocol_max = 0;
+    old.info.protocol_min = 0;
+    assert_eq!(deferred(Some(&old), &build("new")), Upgrade::Blocked, "incompatible: blocked until idle");
 }

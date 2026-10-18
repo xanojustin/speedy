@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use super::local::{self, Build, VersionInfo};
+use super::local::{self, Build, Installed, VersionInfo};
 use super::ssh::{REMOTE_AGENT, Ssh};
 
 const PROBE_MARK: &str = "SPEEDY-PROBE";
@@ -72,13 +72,14 @@ pub fn plan(probe: &Probe, bundled: &Build, bundled_archs: &[String]) -> Result<
     })
 }
 
-/// Uploads `binary` to `bin/<version>-<sha8>/` on the host, verifies it, and installs it.
-pub async fn upload_and_install(ssh: &Ssh, binary: &Path, build: &Build) -> Result<(), String> {
+/// Uploads `binary` to `bin/<version>-<sha8>/` on the host, verifies it, and installs it,
+/// unless the running agent turns out busy (KTD9).
+pub async fn upload_and_install(ssh: &Ssh, binary: &Path, build: &Build) -> Result<Installed, String> {
     let dir = format!(".speedy/agent/bin/{}-{}", build.info.version, &build.sha256[..8]);
     run(ssh, &format!("mkdir -p \"$HOME/{dir}\" && chmod 700 \"$HOME/.speedy\" \"$HOME/.speedy/agent\"")).await?;
     ssh.upload(binary, &format!("{dir}/.speedy-agent-upload")).await?;
     let sha = &build.sha256;
-    run(
+    install(
         ssh,
         &format!(
             r#"cd "$HOME/{dir}" || exit 1
@@ -89,9 +90,9 @@ chmod 755 .speedy-agent-upload && mv -f .speedy-agent-upload speedy-agent && ./s
     .await
 }
 
-/// Restarts the installed agent from `bin/current`.
-pub async fn start_installed(ssh: &Ssh) -> Result<(), String> {
-    run(ssh, &format!("\"$HOME/{REMOTE_AGENT}\" install")).await
+/// Starts the installed agent from `bin/current`, unless one is already running and busy.
+pub async fn start_installed(ssh: &Ssh) -> Result<Installed, String> {
+    install(ssh, &format!("\"$HOME/{REMOTE_AGENT}\" install")).await
 }
 
 pub async fn probe(ssh: &Ssh) -> Result<Probe, String> {
@@ -102,6 +103,12 @@ pub async fn probe(ssh: &Ssh) -> Result<Probe, String> {
 async fn run(ssh: &Ssh, script: &str) -> Result<(), String> {
     let out = ssh.sh(script).await?;
     if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()) }
+}
+
+/// [`run`] for a script ending in `speedy-agent install`.
+async fn install(ssh: &Ssh, script: &str) -> Result<Installed, String> {
+    let out = ssh.sh(script).await?;
+    Installed::from_exit(out.status, &out.stderr)
 }
 
 /// The architectures the bundled agent runs on (`lipo -archs`), read once.

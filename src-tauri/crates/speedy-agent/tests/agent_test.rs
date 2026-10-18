@@ -426,3 +426,79 @@ async fn stop_fails_when_the_agent_never_exits() {
     assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "{err}");
     assert!(daemon::agent_running(&paths));
 }
+
+/// Serves `agent` on its socket while the test holds the agent lock, as `run` would.
+fn serve_on_socket(fx: &Fixture, agent: &Arc<Agent>) -> (AgentPaths, std::fs::File) {
+    let paths = AgentPaths { root: fx.dir.path().join("agent") };
+    let held = daemon::try_lock(&paths).unwrap().expect("free");
+    let listener = tokio::net::UnixListener::bind(paths.socket()).unwrap();
+    let agent = agent.clone();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(agent.clone().serve(stream));
+        }
+    });
+    (paths, held)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_install_leaves_a_busy_agent_running_and_stops_an_idle_one_atomically() {
+    let fx = Fixture::new(&format!(
+        r#"{INIT}
+expect "type":"user"
+emit {{"type":"control_request","request_id":"perm-1","request":{{"subtype":"can_use_tool","tool_name":"Bash","input":{{}}}}}}
+expect "request_id":"perm-1"
+emit {{"type":"result","subtype":"success"}}
+idle"#
+    ));
+    let agent = fx.agent();
+    let (paths, held) = serve_on_socket(&fx, &agent);
+    let mut a = Client::connect(&agent, 1 << 20).await;
+    let (stream, _) = a.subscribe(Value::Null).await;
+    a.call("claude_send_user", json!({"threadId": "t1", "content": text("go")})).await.unwrap();
+    a.event(stream, "permission_request").await;
+
+    // Awaiting an answer: `install` exits EXIT_BUSY and switches nothing.
+    let out = tokio::process::Command::new(env!("CARGO_BIN_EXE_speedy-agent"))
+        .arg("install")
+        .env("SPEEDY_AGENT_HOME", &paths.root)
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(out.status.code(), Some(daemon::EXIT_BUSY), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!paths.root.join("bin/current").exists(), "a busy agent's build stays current");
+    assert!(tokio::time::timeout(Duration::from_millis(200), agent.shutdown_requested()).await.is_err(), "no restart");
+
+    // Once idle, the agent agrees, stops taking work, and shuts down.
+    let allow = json!({"behavior": "allow", "updatedInput": {}});
+    a.call("claude_respond_permission", json!({"threadId": "t1", "requestId": "perm-1", "response": allow})).await.unwrap();
+    loop {
+        if a.event(stream, "message").await["raw"]["type"] == "result" {
+            break;
+        }
+    }
+    while a.call("agent_busy", json!({})).await.unwrap() == true {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let restarting = tokio::spawn({
+        let paths = paths.clone();
+        async move { daemon::restart_if_idle(&paths).await }
+    });
+    tokio::time::timeout(WAIT, agent.shutdown_requested()).await.expect("an idle agent shuts down");
+    let err = a.call("claude_send_user", json!({"threadId": "t1", "content": text("late")})).await.unwrap_err();
+    assert_eq!(err, speedy_core::host::RESTARTING);
+    assert_eq!(a.call("agent_busy", json!({})).await.unwrap(), false);
+    drop(held);
+    assert!(restarting.await.unwrap().unwrap(), "reports the agent gone");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_thread_still_starting_counts_as_busy() {
+    let fx = Fixture::new(&format!("sleep 3\n{INIT}\nidle"));
+    let agent = fx.agent();
+    let mut a = Client::connect(&agent, 1 << 20).await;
+    assert_eq!(a.call("claude_start", json!({"threadId": "t1"})).await.unwrap(), "starting");
+    assert_eq!(a.call("agent_busy", json!({})).await.unwrap(), true);
+    assert_eq!(a.call("restart_if_idle", json!({})).await.unwrap(), false);
+    assert!(tokio::time::timeout(Duration::from_millis(100), agent.shutdown_requested()).await.is_err());
+}

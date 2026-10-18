@@ -3,20 +3,24 @@
 //! `run` holds an exclusive `flock` on `state/agent.lock` for its lifetime, which makes it
 //! the host's only agent; a second `run` exits 0 so launchd doesn't respawn it. `proxy`
 //! relays stdio to the socket and exits [`EXIT_NOT_RUNNING`] when no agent holds the lock.
+//! `install` replaces a running agent only through [`restart_if_idle`] (KTD9).
 
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use speedy_core::env::{EnvService, install_command_env};
 use speedy_core::host::migrate::migrate_host;
 use speedy_core::host::{Host, HostPaths, Launch, LaunchFn};
-use speedy_core::proto::{Body, Control, Frame, FrameReader, PROTOCOL_MAX, PROTOCOL_MIN, Hello, encode};
+use speedy_core::proto::{Body, Control, Frame, FrameReader, PROTOCOL_MAX, PROTOCOL_MIN, Hello, Request, encode};
 use speedy_core::state::{chats_dir, default_state_dir};
+use serde_json::Value;
 use tokio::io::AsyncWriteExt;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{UnixListener, UnixStream};
 
 use crate::paths::AgentPaths;
@@ -26,6 +30,8 @@ use crate::server::{AGENT_VERSION, Agent, BUILD_SHA, peer_allowed};
 
 /// `proxy` exit code when no agent is running, so the client installs or starts one.
 pub const EXIT_NOT_RUNNING: i32 = 90;
+/// `install` exit code when the running agent was busy and kept running; the app retries later.
+pub const EXIT_BUSY: i32 = 91;
 
 /// Creates the state dir with mode 0700 (KTD12).
 pub fn ensure_state_dir(paths: &AgentPaths) -> io::Result<()> {
@@ -90,6 +96,7 @@ pub async fn run(paths: AgentPaths) -> io::Result<()> {
     );
     let (statuses, events) = host.subscribe();
     tokio::spawn(hold_awake_while_working(statuses.statuses, events, IdleSleepAssertion::default()));
+    host.resume_queues();
     let agent = Agent::new(host, env, host_id, paths.clone());
 
     // We hold the lock, so any socket here is stale.
@@ -159,6 +166,38 @@ pub async fn stop_within(paths: AgentPaths, timeout: Duration) -> io::Result<()>
     if !agent_running(&paths) {
         return Ok(());
     }
+    let (_reader, mut wr) = connect(&paths).await?;
+    send(&mut wr, Body::Control(Control::Shutdown)).await?;
+    // The agent exits once its threads and shells have stopped.
+    wait_for_exit(&paths, timeout).await
+}
+
+/// Asks the running agent to shut down if nothing would be interrupted, and waits for it to
+/// go. True when no agent runs any more; false when it was busy and keeps running.
+pub async fn restart_if_idle(paths: &AgentPaths) -> io::Result<bool> {
+    if !agent_running(paths) {
+        return Ok(true);
+    }
+    let (mut reader, mut wr) = connect(paths).await?;
+    match call(&mut reader, &mut wr, "restart_if_idle").await? {
+        Some(Ok(Value::Bool(false))) => return Ok(false),
+        Some(Ok(_)) => {}
+        // An agent from before `restart_if_idle`: the old, racy check is all it offers.
+        Some(Err(e)) if e.starts_with("unknown method") => {
+            if call(&mut reader, &mut wr, "agent_busy").await? != Some(Ok(Value::Bool(false))) {
+                return Ok(false);
+            }
+            send(&mut wr, Body::Control(Control::Shutdown)).await?;
+        }
+        Some(Err(e)) => return Err(io::Error::other(e)),
+        // It closed the connection before replying: it may be on its way out.
+        None => {}
+    }
+    wait_for_exit(paths, STOP_TIMEOUT).await.map(|()| true)
+}
+
+/// Opens a connection to the running agent and says Hello.
+async fn connect(paths: &AgentPaths) -> io::Result<(FrameReader<OwnedReadHalf>, OwnedWriteHalf)> {
     let stream = UnixStream::connect(paths.socket()).await?;
     let (rd, mut wr) = stream.into_split();
     let mut reader = FrameReader::new(rd);
@@ -172,13 +211,38 @@ pub async fn stop_within(paths: AgentPaths, timeout: Duration) -> io::Result<()>
         epoch: None,
         capabilities: vec![],
     };
-    for control in [Control::Hello(hello), Control::Shutdown] {
-        let bytes = encode(&Frame { stream_id: 0, body: Body::Control(control) }).map_err(io::Error::other)?;
-        wr.write_all(&bytes).await?;
+    send(&mut wr, Body::Control(Control::Hello(hello))).await?;
+    Ok((reader, wr))
+}
+
+async fn send(wr: &mut OwnedWriteHalf, body: Body) -> io::Result<()> {
+    let bytes = encode(&Frame { stream_id: 0, body }).map_err(io::Error::other)?;
+    wr.write_all(&bytes).await
+}
+
+/// One RPC with no params; `None` when the agent closed the connection before replying.
+async fn call(reader: &mut FrameReader<OwnedReadHalf>, wr: &mut OwnedWriteHalf, method: &str) -> io::Result<Option<Result<Value, String>>> {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    send(wr, Body::Request(Request { id, method: method.into(), params: Value::Null })).await?;
+    loop {
+        let frame = match tokio::time::timeout(STOP_TIMEOUT, reader.read_frame()).await {
+            Ok(Ok(Some(frame))) => frame,
+            Ok(Ok(None)) | Ok(Err(_)) => return Ok(None),
+            Err(_) => return Err(io::Error::new(io::ErrorKind::TimedOut, format!("the agent didn't answer {method}"))),
+        };
+        if let Body::Response(r) = frame.body
+            && r.id == id
+        {
+            return Ok(Some(r.result));
+        }
     }
-    // The agent exits once its threads and shells have stopped.
+}
+
+/// Waits for the agent to release its lock.
+async fn wait_for_exit(paths: &AgentPaths, timeout: Duration) -> io::Result<()> {
     let deadline = tokio::time::Instant::now() + timeout;
-    while agent_running(&paths) {
+    while agent_running(paths) {
         if tokio::time::Instant::now() >= deadline {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
@@ -189,4 +253,3 @@ pub async fn stop_within(paths: AgentPaths, timeout: Duration) -> io::Result<()>
     }
     Ok(())
 }
-

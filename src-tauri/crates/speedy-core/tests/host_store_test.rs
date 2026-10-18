@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde_json::{Map, Value, json};
 use speedy_core::claude::ThreadStatus;
 use speedy_core::host::log::Cursor;
-use speedy_core::host::{Host, HostPaths, Launch, LaunchFn, NewProject, NewThread, ThreadReplay};
+use speedy_core::host::{Host, HostPaths, Launch, LaunchFn, NewProject, NewThread, RESTARTING, ThreadReplay};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -249,4 +249,53 @@ async fn a_worktree_request_creates_the_worktree_before_the_first_start() {
     wait_until("launch", || !fx.read("cwd.1").is_empty()).await;
     let cwd = std::fs::canonicalize(fx.read("cwd.1").trim()).unwrap();
     assert_eq!(cwd, std::fs::canonicalize(&worktree.path).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_thread_starting_or_mid_turn_is_busy_and_a_drain_waits_for_it() {
+    let fx = Fixture::new(&[&format!(
+        "sleep 0.5\n{INIT}\nexpect \"one\"\nsleep 0.5\nemit {{\"type\":\"result\",\"subtype\":\"success\"}}\nidle"
+    )]);
+    let host = fx.open_with_thread(false);
+    assert!(!host.busy(), "nothing has started");
+    assert_eq!(host.ensure_started("t1").await.unwrap(), ThreadStatus::Starting);
+    assert!(host.busy(), "starting");
+    assert!(!host.drain_if_idle());
+    // Sent while starting: queued, and the thread stays busy until it has gone out and finished.
+    host.send("t1", text("one")).await.unwrap();
+    assert!(host.busy(), "a message queued");
+    wait_until("working", || host.thread_status("t1") == Some(ThreadStatus::Working)).await;
+    assert!(!host.drain_if_idle(), "mid-turn");
+    wait_until("idle", || host.thread_status("t1") == Some(ThreadStatus::Idle) && !host.busy()).await;
+
+    assert!(host.drain_if_idle());
+    assert!(host.draining());
+    assert_eq!(host.send("t1", text("two")).await.unwrap_err(), RESTARTING);
+    assert_eq!(host.ensure_started("t1").await.unwrap_err(), RESTARTING);
+    assert_eq!(host.retry("t1").unwrap_err(), RESTARTING);
+    assert!(host.thread("t1").unwrap().queue.is_empty(), "a refused message isn't queued either");
+    assert_eq!(user_texts(&fx.stdin(1)), ["one"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_queue_left_by_a_restart_is_sent_without_a_client() {
+    let fx = Fixture::new(&[
+        &format!("{INIT}\nexpect \"one\"\nsleep 30"),
+        &format!("{INIT}\nexpect \"still queued\"\nemit {{\"type\":\"result\",\"subtype\":\"success\"}}\nidle"),
+    ]);
+    {
+        let host = fx.open_with_thread(false);
+        host.send("t1", text("one")).await.unwrap();
+        host.send("t1", text("still queued")).await.unwrap();
+        wait_until("session bound", || host.thread("t1").and_then(|t| t.session_id).is_some()).await;
+        tokio::task::block_in_place(|| host.shutdown(Duration::from_secs(1)));
+        host.flush();
+    }
+    let host = fx.open();
+    // Nothing runs to interrupt: the queue waits on disk, so it doesn't hold up an upgrade.
+    assert!(!host.busy());
+    host.resume_queues();
+    wait_until("the queued message sent", || user_texts(&fx.stdin(2)) == ["still queued"]).await;
+    assert!(fx.read("argv.2").contains("sess-1"), "resumed: {}", fx.read("argv.2"));
+    wait_until("queue drained", || host.thread("t1").unwrap().queue.is_empty()).await;
 }

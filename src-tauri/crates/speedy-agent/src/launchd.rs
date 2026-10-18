@@ -100,8 +100,8 @@ pub fn set_current(paths: &AgentPaths, bin_dir: &Path) -> io::Result<()> {
 }
 
 /// Installs and (re)starts the agent from `bin/current`: as a LaunchAgent when a console
-/// session exists, otherwise as a detached process. Restarting replaces a running agent,
-/// so callers only do it when no thread is working (KTD9).
+/// session exists, otherwise as a detached process. Restarting kills a running agent, so
+/// `install` first has it exit through [`crate::daemon::restart_if_idle`] (KTD9).
 pub fn install(paths: &AgentPaths, home: Option<&Path>) -> io::Result<&'static str> {
     if !gui_domain_available() {
         crate::daemonize::restart_detached(paths)?;

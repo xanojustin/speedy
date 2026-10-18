@@ -168,12 +168,38 @@ pub fn stage(paths: &AgentPaths, binary: &Path, build: &Build) -> io::Result<Pat
     Ok(staged)
 }
 
-/// Runs the staged binary's `install`, which points `bin/current` at it and (re)starts it.
-pub fn install(staged: &Path) -> io::Result<()> {
-    let out = Command::new(staged).arg("install").output()?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_owned()))
+/// What `speedy-agent install` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Installed {
+    /// This build now runs.
+    Started,
+    /// The running agent was busy when asked, so it keeps running and nothing was switched.
+    Busy,
+}
+
+impl Installed {
+    /// Reads `install`'s exit status.
+    pub fn from_exit(status: std::process::ExitStatus, stderr: &[u8]) -> Result<Installed, String> {
+        match status.code() {
+            Some(0) => Ok(Installed::Started),
+            Some(code) if code == speedy_agent::daemon::EXIT_BUSY => Ok(Installed::Busy),
+            _ => Err(String::from_utf8_lossy(stderr).trim().to_owned()),
+        }
     }
+}
+
+/// What a host shows when the running agent was busy at the swap: an update waiting for it
+/// to go idle, or blocked when it can't talk to this app.
+pub fn deferred(installed: Option<&Build>, bundled: &Build) -> Upgrade {
+    match installed {
+        Some(installed) if !compatible(installed, bundled) => Upgrade::Blocked,
+        _ => Upgrade::Pending,
+    }
+}
+
+/// Runs the staged binary's `install`, which (re)starts the agent on it unless the running
+/// one is busy: the agent itself decides that and stops taking work in one step (KTD9).
+pub fn install(staged: &Path) -> io::Result<Installed> {
+    let out = Command::new(staged).arg("install").output()?;
+    Installed::from_exit(out.status, &out.stderr).map_err(io::Error::other)
 }

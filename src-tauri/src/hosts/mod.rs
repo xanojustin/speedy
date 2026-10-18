@@ -29,7 +29,7 @@ use tokio::net::UnixStream;
 use askpass::Askpass;
 use bootstrap::Step;
 use connection::{ConnState, Connector, HostConn, Stream};
-use local::Upgrade;
+use local::{Installed, Upgrade};
 use ssh::{REMOTE_AGENT, Ssh};
 use status::StatusTracker;
 
@@ -193,13 +193,12 @@ impl HostRegistry {
         if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()) }
     }
 
-    /// Starts This Mac's agent again after a stop.
+    /// Starts This Mac's agent again after a stop. One that is already running and busy is
+    /// left as it is.
     pub async fn start_local_again(&self) -> Result<(), String> {
         let agent = local::current_agent(&AgentPaths::from_env());
         let out = tokio::process::Command::new(&agent).arg("install").output().await.map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_owned());
-        }
+        Installed::from_exit(out.status, &out.stderr)?;
         self.get(LOCAL)?.reconnect_now();
         Ok(())
     }
@@ -345,14 +344,13 @@ async fn bootstrap_local(paths: &AgentPaths, conn: &HostConn) -> Result<Upgrade,
     let same = installed.as_ref().is_some_and(|i| i.sha256 == build.sha256);
     let busy = running && !same && agent_busy(conn).await;
     let decision = local::decide(installed.as_ref(), &build, running, busy);
-    match decision {
+    let installed_now = match decision {
         Upgrade::Install => {
-            let paths = paths.clone();
+            let (paths, build) = (paths.clone(), build.clone());
             tokio::task::spawn_blocking(move || local::stage(&paths, &bundled, &build).and_then(|staged| local::install(&staged)))
                 .await
                 .map_err(|e| e.to_string())?
-                .map_err(|e| format!("installing the agent: {e}"))?;
-            conn.reconnect_now();
+                .map_err(|e| format!("installing the agent: {e}"))?
         }
         Upgrade::Start => {
             // A newer agent another Speedy installed: start it as it is.
@@ -360,12 +358,25 @@ async fn bootstrap_local(paths: &AgentPaths, conn: &HostConn) -> Result<Upgrade,
             tokio::task::spawn_blocking(move || local::install(&current))
                 .await
                 .map_err(|e| e.to_string())?
-                .map_err(|e| format!("starting the agent: {e}"))?;
-            conn.reconnect_now();
+                .map_err(|e| format!("starting the agent: {e}"))?
         }
-        Upgrade::UpToDate | Upgrade::Pending | Upgrade::Blocked => {}
+        Upgrade::UpToDate | Upgrade::Pending | Upgrade::Blocked => return Ok(decision),
+    };
+    Ok(after_install(decision, installed_now, installed.as_ref(), &build, conn))
+}
+
+/// The decision once `install` ran. Work can start between our busy check and the swap, so
+/// the agent checks again itself; when it says busy, the update waits (KTD9).
+fn after_install(decision: Upgrade, done: Installed, installed: Option<&local::Build>, bundled: &local::Build, conn: &HostConn) -> Upgrade {
+    match (done, decision) {
+        (Installed::Started, _) => {
+            conn.reconnect_now();
+            decision
+        }
+        // Whatever runs is the newer build `Start` meant to start.
+        (Installed::Busy, Upgrade::Start) => Upgrade::UpToDate,
+        (Installed::Busy, _) => local::deferred(installed, bundled),
     }
-    Ok(decision)
 }
 
 /// Opens a stream to an SSH host's agent, installing or starting it first when needed. Only
@@ -379,9 +390,14 @@ fn ssh_connector(ssh: Arc<Ssh>) -> Connector {
             started?;
             let (binary, build) = bootstrap::bundled()?;
             let probe = bootstrap::probe(&ssh).await?;
+            // An agent that started since the probe and is busy keeps running; connect to it.
             match bootstrap::plan(&probe, &build, &bootstrap::bundled_archs(&binary))? {
-                Step::Upload => bootstrap::upload_and_install(&ssh, &binary, &build).await?,
-                Step::Start => bootstrap::start_installed(&ssh).await?,
+                Step::Upload => {
+                    bootstrap::upload_and_install(&ssh, &binary, &build).await?;
+                }
+                Step::Start => {
+                    bootstrap::start_installed(&ssh).await?;
+                }
                 Step::Connect => {}
             }
             Ok(Box::new(ssh.proxy(REMOTE_AGENT)?) as Box<dyn Stream>)
@@ -396,18 +412,12 @@ async fn ssh_upgrade(ssh: &Ssh, conn: &HostConn) -> Result<Upgrade, String> {
     let same = probe.installed.as_ref().is_some_and(|i| i.sha256 == build.sha256);
     let busy = !same && agent_busy(conn).await;
     let decision = local::decide(probe.installed.as_ref(), &build, probe.running, busy);
-    match decision {
-        Upgrade::Install => {
-            bootstrap::upload_and_install(ssh, &binary, &build).await?;
-            conn.reconnect_now();
-        }
-        Upgrade::Start => {
-            bootstrap::start_installed(ssh).await?;
-            conn.reconnect_now();
-        }
-        Upgrade::UpToDate | Upgrade::Pending | Upgrade::Blocked => {}
-    }
-    Ok(decision)
+    let done = match decision {
+        Upgrade::Install => bootstrap::upload_and_install(ssh, &binary, &build).await?,
+        Upgrade::Start => bootstrap::start_installed(ssh).await?,
+        Upgrade::UpToDate | Upgrade::Pending | Upgrade::Blocked => return Ok(decision),
+    };
+    Ok(after_install(decision, done, probe.installed.as_ref(), &build, conn))
 }
 
 /// Connection errors that clear up on a retry: an agent that is still starting.

@@ -15,7 +15,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use speedy_core::claude::{STOP_GRACE, ThreadStatus};
+use speedy_core::claude::STOP_GRACE;
 use speedy_core::env::EnvService;
 use speedy_core::host::log::Cursor;
 use speedy_core::host::{Host, NewProject, NewThread, ThreadPatch, ThreadReplay};
@@ -280,10 +280,13 @@ impl Agent {
                 host.actor(&args::<ThreadArg>(params)?.thread_id)?.stop(STOP_GRACE).await;
                 Ok(Value::Null)
             }
-            "claude_retry" => ok(host.actor(&args::<ThreadArg>(params)?.thread_id)?.retry()),
+            "claude_retry" => ok(host.retry(&args::<ThreadArg>(params)?.thread_id)?),
 
             // Terminals.
             "pty_open" => {
+                if host.draining() {
+                    return Err(speedy_core::host::RESTARTING.to_owned());
+                }
                 let a: PtyOpen = args(params)?;
                 self.open_terminal(conn, a).await
             }
@@ -307,6 +310,8 @@ impl Agent {
 
             // Setup.
             "agent_busy" => Ok(self.busy().into()),
+            // The only way an upgrade replaces a running agent (KTD9).
+            "restart_if_idle" => Ok(self.restart_if_idle().into()),
             // Where the folder browser starts (R14).
             "home_dir" => Ok(dirs::home_dir().map(|h| h.to_string_lossy().into_owned()).into()),
             "get_setup_state" => self.setup_state().await,
@@ -370,11 +375,27 @@ impl Agent {
         }
     }
 
-    /// Whether replacing the agent now would interrupt work: a thread working or waiting on
-    /// a prompt, or a terminal running a command (KTD9).
+    /// Whether replacing the agent now would interrupt work: a thread [`busy`](Host::busy), or
+    /// a terminal running a command (KTD9).
     fn busy(&self) -> bool {
-        let threads = self.host.snapshot().statuses.values().any(|s| matches!(s, ThreadStatus::Working | ThreadStatus::AwaitingUser));
-        threads || self.terminals.lock().keys().any(|id| self.ptys.host.has_foreground_child(id))
+        self.host.busy() || self.terminal_busy()
+    }
+
+    fn terminal_busy(&self) -> bool {
+        self.terminals.lock().keys().any(|id| self.ptys.host.has_foreground_child(id))
+    }
+
+    /// When nothing would be interrupted, stops taking new work and shuts the agent down so
+    /// `install` can start the new build; returns whether it did. The host decides "idle" and
+    /// refuses new turns under one lock (KTD9). A command typed into a terminal in the moment
+    /// between the terminal check and the shutdown isn't covered; new terminals are refused.
+    pub fn restart_if_idle(&self) -> bool {
+        if self.terminal_busy() || !self.host.drain_if_idle() {
+            return false;
+        }
+        log::info!("idle: restarting for an update");
+        self.shutdown.notify_one();
+        true
     }
 
     /// The core setup state, plus how the agent runs: a Background-domain agent can't read

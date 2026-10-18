@@ -35,9 +35,22 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        // Run from the staged binary: points `bin/current` at it, then (re)starts the agent.
+        // Run from the staged binary: replaces a running agent only if it's idle, then points
+        // `bin/current` at this build and starts it. A busy agent keeps running on its build,
+        // and `install` exits `EXIT_BUSY` so the app shows the update as pending (KTD9).
         Some("install") => {
             let paths = AgentPaths::from_env();
+            match runtime().block_on(daemon::restart_if_idle(&paths)) {
+                Ok(true) => {}
+                Ok(false) => {
+                    println!("{}", serde_json::json!({"started": null, "busy": true}));
+                    return ExitCode::from(daemon::EXIT_BUSY as u8);
+                }
+                Err(e) => {
+                    eprintln!("speedy-agent: replacing the running agent: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
             let staged = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.to_path_buf()));
             let home = std::env::var_os("SPEEDY_AGENT_HOME").map(std::path::PathBuf::from);
             let result = staged

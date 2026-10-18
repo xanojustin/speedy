@@ -8,6 +8,9 @@
 //! doesn't), titles a new thread from its first message, records the session binding, and
 //! creates a requested worktree before the first start. All of it works with no client
 //! attached, and a client that connects later catches up from the thread's [`log`].
+//!
+//! An upgrade swaps the agent only when that interrupts nothing (KTD9): [`Host::drain_if_idle`]
+//! decides "idle" and stops taking new work under one lock, so no turn starts in between.
 
 pub mod log;
 pub mod migrate;
@@ -40,6 +43,8 @@ pub const LOG_CAP_BYTES: usize = 64 << 20;
 const TITLE_MAX: usize = 60;
 /// The Chats project's name, as the sidebar and thread header show it.
 const CHATS_NAME: &str = "No Project";
+/// What new work gets once [`Host::drain_if_idle`] has stopped taking it.
+pub const RESTARTING: &str = "the agent is restarting for an update";
 
 /// Where the host keeps its files.
 #[derive(Debug, Clone)]
@@ -126,6 +131,25 @@ pub struct Host {
     state: Mutex<HostState>,
     threads: Mutex<HashMap<String, Arc<ThreadRuntime>>>,
     subscribers: Mutex<Vec<UnboundedSender<Arc<Value>>>>,
+    /// Lock order: `gate` before everything else.
+    gate: Mutex<Gate>,
+}
+
+/// Work being started, and whether the host still takes new work (KTD9).
+#[derive(Default)]
+struct Gate {
+    draining: bool,
+    /// Starts and sends past the gate that may not show in a thread's state yet.
+    admitted: usize,
+}
+
+/// One admitted start or send; the host counts as busy until it's dropped.
+struct Admitted<'a>(&'a Mutex<Gate>);
+
+impl Drop for Admitted<'_> {
+    fn drop(&mut self) {
+        self.0.lock().admitted -= 1;
+    }
 }
 
 impl Host {
@@ -162,6 +186,7 @@ impl Host {
             state: Mutex::new(state),
             threads: Mutex::default(),
             subscribers: Mutex::default(),
+            gate: Mutex::default(),
         })
     }
 
@@ -300,6 +325,7 @@ impl Host {
     /// Spawns the thread's `claude` if it isn't running (lazy, KTD9), creating a requested
     /// worktree first, or relaunches a Stopped one. Returns the current status.
     pub async fn ensure_started(&self, id: &str) -> Result<ThreadStatus, String> {
+        let _admitted = self.admit()?;
         let rt = self.runtime(id)?;
         let _starting = rt.starting.lock().await;
         if let Some(actor) = rt.actor() {
@@ -327,6 +353,7 @@ impl Host {
     /// Sends now when the thread is idle; otherwise queues the message and sends it after the
     /// current turn (and anything queued before it). A start failure keeps it queued for a retry.
     pub async fn send(&self, id: &str, content: Value) -> Result<(), String> {
+        let _admitted = self.admit()?;
         self.title_from(id, &content);
         let started = self.ensure_started(id).await.is_ok();
         let rt = self.runtime(id)?;
@@ -367,6 +394,53 @@ impl Host {
         self.threads.lock().get(id).and_then(|rt| rt.actor()).ok_or_else(|| format!("thread {id} has no claude session"))
     }
 
+    /// Relaunches a Crashed or Errored thread's `claude`.
+    pub fn retry(&self, id: &str) -> Result<ThreadStatus, String> {
+        let _admitted = self.admit()?;
+        Ok(self.actor(id)?.retry())
+    }
+
+    /// Whether restarting the agent now would interrupt a thread: one starting, working or
+    /// awaiting an answer, with a message in flight, or with a queue its running `claude`
+    /// hasn't sent yet. A queue on a thread whose `claude` isn't running doesn't count: it is
+    /// persisted, and [`Host::resume_queues`] sends it after the restart.
+    pub fn busy(&self) -> bool {
+        let gate = self.gate.lock();
+        gate.admitted > 0 || self.threads_busy()
+    }
+
+    /// The KTD9 swap point: when nothing is [`busy`](Host::busy), stops taking new work, so
+    /// starts, sends and retries fail with [`RESTARTING`] from now on, and returns true. The
+    /// check and the switch happen under one lock, so no turn can start in between.
+    pub fn drain_if_idle(&self) -> bool {
+        let mut gate = self.gate.lock();
+        if !gate.draining && (gate.admitted > 0 || self.threads_busy()) {
+            return false;
+        }
+        gate.draining = true;
+        true
+    }
+
+    /// Whether [`Host::drain_if_idle`] has stopped new work.
+    pub fn draining(&self) -> bool {
+        self.gate.lock().draining
+    }
+
+    /// Starts every thread that still has queued messages, so they go out after an agent
+    /// restart without waiting for a client (KTD8). Each queue flushes once its `claude` is idle.
+    pub fn resume_queues(&self) {
+        let queued: Vec<String> =
+            self.state.lock().projects.iter().flat_map(|p| &p.threads).filter(|t| !t.queue.is_empty()).map(|t| t.id.clone()).collect();
+        for id in queued {
+            let Some(host) = self.me.upgrade() else { return };
+            tokio::spawn(async move {
+                if let Err(e) = host.ensure_started(&id).await {
+                    ::log::warn!("resuming thread {id}'s queue: {e}");
+                }
+            });
+        }
+    }
+
     /// The KTD9 quit sequence across every running thread; blocks up to `grace` before SIGKILL.
     pub fn shutdown(&self, grace: Duration) {
         let actors: Vec<ClaudeActor> = self.threads.lock().values().filter_map(|rt| rt.actor()).collect();
@@ -379,6 +453,30 @@ impl Host {
     }
 
     // ---- internals ----
+
+    /// Lets one start or send through, unless the host is draining for a restart.
+    fn admit(&self) -> Result<Admitted<'_>, String> {
+        let mut gate = self.gate.lock();
+        if gate.draining {
+            return Err(RESTARTING.to_owned());
+        }
+        gate.admitted += 1;
+        Ok(Admitted(&self.gate))
+    }
+
+    /// See [`Host::busy`]. Reads each actor's status outside the `threads` lock: an actor holds
+    /// its own lock while it reports events, which take `threads`.
+    fn threads_busy(&self) -> bool {
+        let threads: Vec<Arc<ThreadRuntime>> = self.threads.lock().values().cloned().collect();
+        threads.iter().any(|rt| {
+            let status = rt.actor().map_or_else(|| rt.status(), |a| a.status());
+            let live = rt.live.lock();
+            let running = matches!(status, ThreadStatus::Starting | ThreadStatus::Idle | ThreadStatus::Working | ThreadStatus::AwaitingUser);
+            matches!(status, ThreadStatus::Starting | ThreadStatus::Working | ThreadStatus::AwaitingUser)
+                || live.in_flight
+                || (running && !live.queue.is_empty())
+        })
+    }
 
     fn runtime(&self, id: &str) -> Result<Arc<ThreadRuntime>, String> {
         let mut threads = self.threads.lock();
