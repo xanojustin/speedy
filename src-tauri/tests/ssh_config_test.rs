@@ -23,3 +23,15 @@ fn a_missing_config_has_no_hosts() {
     let dir = tempfile::tempdir().unwrap();
     assert!(aliases(&dir.path().join(".ssh/config")).is_empty());
 }
+
+#[test]
+fn only_configured_aliases_that_cant_be_read_as_options_reach_ssh() {
+    use speedy_lib::hosts::ssh::valid_alias;
+    let configured = vec!["mac-mini".to_string(), "-oProxyCommand=touch pwned".to_string(), "a:b".to_string()];
+    assert!(valid_alias("mac-mini", &configured));
+    assert!(!valid_alias("build-box", &configured), "not in ~/.ssh/config");
+    assert!(!valid_alias("-oProxyCommand=touch pwned", &configured), "would be read as an ssh option");
+    assert!(!valid_alias("a:b", &configured), "scp would read it as host:path");
+    assert!(!valid_alias("mac mini", &["mac mini".to_string()]));
+    assert!(!valid_alias("", &[String::new()]));
+}

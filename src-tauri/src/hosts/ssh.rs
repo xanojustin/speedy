@@ -27,7 +27,19 @@ pub struct Ssh {
     askpass: Mutex<Option<Vec<(String, String)>>>,
 }
 
+/// Whether `alias` is safe to hand ssh and scp as a destination: a concrete entry in the
+/// user's ssh config, which can't be read as an option (`-o…`), split into several
+/// arguments, or parsed by scp as a path (`:` or `/`). The webview sends aliases, so this is
+/// what keeps one from running a command on this Mac.
+pub fn valid_alias(alias: &str, configured: &[String]) -> bool {
+    !alias.is_empty()
+        && !alias.starts_with('-')
+        && !alias.chars().any(|c| c.is_whitespace() || c.is_control() || c == ':' || c == '/')
+        && configured.iter().any(|a| a == alias)
+}
+
 impl Ssh {
+    /// Callers check the alias with [`valid_alias`] first.
     pub fn new(alias: &str) -> Ssh {
         let dir = dirs::home_dir().unwrap_or_default().join(".speedy/cm");
         let _ = std::fs::create_dir_all(&dir);
@@ -74,6 +86,7 @@ impl Ssh {
             "ServerAliveCountMax=3",
             "-o",
             "ConnectTimeout=15",
+            "--",
             &self.alias,
         ]);
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true);
@@ -109,14 +122,14 @@ impl Ssh {
 
     async fn check(&self) -> bool {
         let mut cmd = self.base(SSH);
-        cmd.args(["-O", "check", &self.alias]).stdout(Stdio::null()).stderr(Stdio::null());
+        cmd.args(["-O", "check", "--", &self.alias]).stdout(Stdio::null()).stderr(Stdio::null());
         cmd.status().await.is_ok_and(|s| s.success())
     }
 
     /// Ends the master (wake from sleep, remove host). The next connect starts a fresh one.
     pub async fn drop_master(&self) {
         let mut cmd = self.base(SSH);
-        cmd.args(["-O", "exit", &self.alias]).stdout(Stdio::null()).stderr(Stdio::null());
+        cmd.args(["-O", "exit", "--", &self.alias]).stdout(Stdio::null()).stderr(Stdio::null());
         let _ = cmd.status().await;
         let child = self.master.lock().take();
         if let Some(mut child) = child {
@@ -128,7 +141,7 @@ impl Ssh {
     /// has to parse it.
     pub async fn sh(&self, script: &str) -> Result<Output, String> {
         let mut cmd = self.base(SSH);
-        cmd.args(["-T", &self.alias, "/bin/sh", "-s"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.args(["-T", "--", &self.alias, "/bin/sh", "-s"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| format!("ssh: {e}"))?;
         let mut stdin = child.stdin.take().expect("piped");
         stdin.write_all(script.as_bytes()).await.map_err(|e| e.to_string())?;
@@ -139,7 +152,7 @@ impl Ssh {
     /// Copies `local` to `remote` (relative to the host's home).
     pub async fn upload(&self, local: &Path, remote: &str) -> Result<(), String> {
         let mut cmd = self.base(SCP);
-        cmd.arg("-q").arg(local).arg(format!("{}:{remote}", self.alias)).stdout(Stdio::null()).stderr(Stdio::piped());
+        cmd.args(["-q", "--"]).arg(local).arg(format!("{}:{remote}", self.alias)).stdout(Stdio::null()).stderr(Stdio::piped());
         let out = cmd.output().await.map_err(|e| format!("scp: {e}"))?;
         if out.status.success() { Ok(()) } else { Err(format!("uploading the agent: {}", String::from_utf8_lossy(&out.stderr).trim())) }
     }
@@ -147,7 +160,7 @@ impl Ssh {
     /// A byte stream to the host's agent through `speedy-agent proxy`.
     pub fn proxy(&self, agent: &str) -> Result<ProxyStream, String> {
         let mut cmd = self.base(SSH);
-        cmd.args(["-T", &self.alias, agent, "proxy"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        cmd.args(["-T", "--", &self.alias, agent, "proxy"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
         let mut child = cmd.spawn().map_err(|e| format!("ssh: {e}"))?;
         let stdout = child.stdout.take().expect("piped");
         let stdin = child.stdin.take().expect("piped");

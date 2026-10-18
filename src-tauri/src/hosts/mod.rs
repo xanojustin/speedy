@@ -120,19 +120,27 @@ impl HostRegistry {
     /// Reconnects the SSH hosts the user added before. They connect without prompting; one
     /// that needs a passphrase waits for the user's Reconnect.
     pub fn start_saved(self: &Arc<Self>) {
+        let configured = ssh_config::aliases(&ssh_config::user_config());
         for alias in self.list.load().state.ssh {
-            self.connect_ssh(&alias, false);
+            if ssh::valid_alias(&alias, &configured) {
+                self.connect_ssh(&alias, false);
+            } else {
+                log::warn!("skipping saved host {alias:?}: it's no longer a Host in ~/.ssh/config");
+            }
         }
     }
 
     /// Adds an SSH host from `~/.ssh/config`. A user-initiated connect may prompt (askpass).
-    pub fn add_ssh(self: &Arc<Self>, alias: &str) -> Arc<HostConn> {
+    pub fn add_ssh(self: &Arc<Self>, alias: &str) -> Result<Arc<HostConn>, String> {
+        if !ssh::valid_alias(alias, &ssh_config::aliases(&ssh_config::user_config())) {
+            return Err(format!("{alias:?} isn't a Host in ~/.ssh/config"));
+        }
         let mut list = self.list.load().state;
         if !list.ssh.iter().any(|a| a == alias) {
             list.ssh.push(alias.to_owned());
             self.list.save(list);
         }
-        self.connect_ssh(alias, true)
+        Ok(self.connect_ssh(alias, true))
     }
 
     /// Forgets an SSH host: closes its connection and master. Its agent keeps running there.
@@ -419,7 +427,7 @@ pub fn host_aliases(hosts: Hosts<'_>) -> Vec<String> {
 #[tauri::command]
 pub async fn host_add(hosts: Hosts<'_>, alias: String) -> Result<HostInfo, String> {
     let registry = hosts.inner().clone();
-    let conn = registry.add_ssh(&alias);
+    let conn = registry.add_ssh(&alias)?;
     // A just-installed agent can take a moment to listen; only a failure that retrying
     // won't fix (auth, host key, wrong OS) ends the wait early.
     let mut state = conn.watch();
