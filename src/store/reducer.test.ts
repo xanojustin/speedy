@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/cli-2.1.296-permission-deny-interrupt.ndjson?raw";
-import type { ClaudeEvent, RawMessage } from "../ipc/types";
+import type { ClaudeEvent, FileDiff, RawMessage } from "../ipc/types";
 import {
   __seedWithoutDraftForTests,
   initialRuntime,
@@ -223,7 +223,10 @@ describe("reducer: runtime state", () => {
     expect(s.init).toMatchObject({ current_permission_mode: "default" });
     expect(s.systemInit).toMatchObject({ slash_commands: ["/x"] });
     expect(s.pendingPermissions.map((p) => p.requestId)).toEqual(["r1"]);
-    s = run([{ kind: "permission_resolved", seq: 6, request_id: "r1", reason: "interrupt" }], s);
+    const fresh: FileDiff[] = [{ path: "a.txt", isNewFile: false, unified: "-a\n+b", baseFingerprint: "f2" }];
+    s = run([{ kind: "diff_refreshed", seq: 6, request_id: "r1", diff: fresh }], s);
+    expect(s.pendingPermissions[0].diff).toEqual(fresh);
+    s = run([{ kind: "permission_resolved", seq: 7, request_id: "r1", reason: "interrupt" }], s);
     expect(s.pendingPermissions).toEqual([]);
     for (let i = 0; i < 500; i++) s = reduce(s, { kind: "stderr", seq: 10 + i, text: `line ${i} ${"x".repeat(40)}` }, 0);
     expect(s.stderrTail.length).toBeLessThanOrEqual(8192);

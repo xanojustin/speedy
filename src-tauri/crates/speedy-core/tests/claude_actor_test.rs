@@ -104,6 +104,7 @@ fn seq_of(e: &ClaudeEvent) -> u64 {
         | ClaudeEvent::Status { seq, .. }
         | ClaudeEvent::PermissionRequest { seq, .. }
         | ClaudeEvent::PermissionResolved { seq, .. }
+        | ClaudeEvent::DiffRefreshed { seq, .. }
         | ClaudeEvent::Stderr { seq, .. }
         | ClaudeEvent::ProtocolError { seq, .. } => *seq,
     }
@@ -924,4 +925,116 @@ idle"#
             .iter()
             .any(|v| v["response"]["request_id"] == "req-s" && v["response"]["response"]["behavior"] == "deny")
     );
+}
+
+/// R11 / KTD7: several clients may answer one prompt at once. Only the first answer
+/// reaches the CLI, the rest are told it was already answered, and the outcome is announced.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn concurrent_answers_to_one_prompt_send_exactly_one() {
+    let fake = Fake::new(&[&format!(
+        r#"{INIT}
+expect "type":"user"
+emit {{"type":"control_request","request_id":"req-r","request":{{"subtype":"can_use_tool","tool_name":"Edit","input":{{"file_path":"a.txt","old_string":"hello","new_string":"bye"}}}}}}
+expect "request_id":"req-r"
+emit {{"type":"result","subtype":"success","is_error":false}}
+idle"#
+    )]);
+    std::fs::write(fake.cwd.join("a.txt"), "hello\n").unwrap();
+    let (actor, mut ev) = fake.start();
+    ev.wait_status(ThreadStatus::Idle).await;
+    actor.send_user(text("edit it")).await.unwrap();
+    ev.wait_for("permission", |e| matches!(e, ClaudeEvent::PermissionRequest { .. })).await;
+
+    let allow = json!({"behavior":"allow","updatedInput":{"file_path":"a.txt","old_string":"hello","new_string":"bye"}});
+    let deny = json!({"behavior":"deny","message":"no"});
+    let barrier = Arc::new(tokio::sync::Barrier::new(16));
+    let answers: Vec<_> = (0..16)
+        .map(|i| {
+            let (actor, barrier) = (actor.clone(), barrier.clone());
+            let response = if i % 2 == 0 { allow.clone() } else { deny.clone() };
+            tokio::spawn(async move {
+                barrier.wait().await;
+                actor.respond_permission("req-r", response).await
+            })
+        })
+        .collect();
+    let mut sent = 0;
+    for answer in answers {
+        match answer.await.unwrap() {
+            Ok(outcome) => {
+                assert!(outcome.sent);
+                sent += 1;
+            }
+            Err(e) => assert!(e.contains("already answered"), "{e}"),
+        }
+    }
+    assert_eq!(sent, 1);
+    ev.wait_status(ThreadStatus::Idle).await;
+    ev.settle(Duration::from_millis(200)).await;
+    let written = fake.stdin(1).iter().filter(|v| v["response"]["request_id"] == "req-r").count();
+    assert_eq!(written, 1, "exactly one answer reaches the CLI");
+    let resolved: Vec<&str> = ev
+        .seen
+        .iter()
+        .filter_map(|e| match e {
+            ClaudeEvent::PermissionResolved { request_id, reason, .. } if request_id == "req-r" => Some(reason.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(matches!(resolved.as_slice(), ["allowed"] | ["denied"]), "{resolved:?}");
+}
+
+/// KTD7: a stale-diff refresh is announced, so every client sees the new diff.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refreshed_diff_is_announced_as_an_event() {
+    let fake = Fake::new(&[&format!(
+        r#"{INIT}
+expect "type":"user"
+emit {{"type":"control_request","request_id":"req-d","request":{{"subtype":"can_use_tool","tool_name":"Edit","input":{{"file_path":"a.txt","old_string":"hello","new_string":"bye"}}}}}}
+expect "request_id":"req-d"
+emit {{"type":"result","subtype":"success","is_error":false}}
+idle"#
+    )]);
+    std::fs::write(fake.cwd.join("a.txt"), "hello\n").unwrap();
+    let (actor, mut ev) = fake.start();
+    ev.wait_status(ThreadStatus::Idle).await;
+    actor.send_user(text("edit it")).await.unwrap();
+    ev.wait_for("permission", |e| matches!(e, ClaudeEvent::PermissionRequest { .. })).await;
+    std::fs::write(fake.cwd.join("a.txt"), "hello world\n").unwrap();
+    let allow = json!({"behavior":"allow","updatedInput":{"file_path":"a.txt","old_string":"hello","new_string":"bye"}});
+    let outcome = actor.respond_permission("req-d", allow).await.unwrap();
+    let refreshed = outcome.refreshed_diff.expect("refreshed diff");
+    let event = ev.wait_for("diff_refreshed", |e| matches!(e, ClaudeEvent::DiffRefreshed { .. })).await;
+    let ClaudeEvent::DiffRefreshed { request_id, diff, .. } = event else { unreachable!() };
+    assert_eq!(request_id, "req-d");
+    assert_eq!(diff[0].unified, refreshed[0].unified);
+}
+
+/// KTD7: stopping a thread announces every prompt it drops.
+#[tokio::test(flavor = "multi_thread")]
+async fn stop_announces_each_pending_prompt_it_clears() {
+    let fake = Fake::new(&[&format!(
+        r#"{INIT}
+expect "type":"user"
+emit {{"type":"control_request","request_id":"req-1","request":{{"subtype":"can_use_tool","tool_name":"Bash","input":{{}}}}}}
+emit {{"type":"control_request","request_id":"req-2","request":{{"subtype":"can_use_tool","tool_name":"Bash","input":{{}}}}}}
+idle"#
+    )]);
+    let (actor, mut ev) = fake.start();
+    ev.wait_status(ThreadStatus::Idle).await;
+    actor.send_user(text("go")).await.unwrap();
+    ev.wait_for("second prompt", |e| matches!(e, ClaudeEvent::PermissionRequest { request_id, .. } if request_id == "req-2"))
+        .await;
+    actor.stop(Duration::from_secs(1)).await;
+    ev.settle(Duration::from_millis(200)).await;
+    let mut resolved: Vec<(String, String)> = ev
+        .seen
+        .iter()
+        .filter_map(|e| match e {
+            ClaudeEvent::PermissionResolved { request_id, reason, .. } => Some((request_id.clone(), reason.clone())),
+            _ => None,
+        })
+        .collect();
+    resolved.sort();
+    assert_eq!(resolved, [("req-1".into(), "stopped".into()), ("req-2".into(), "stopped".into())]);
 }

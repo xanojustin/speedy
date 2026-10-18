@@ -177,11 +177,10 @@ export async function retryThread(threadId: string): Promise<void> {
   if (cur === "crashed" || cur === "errored" || cur === "not_started") dispatch(threadId, { kind: "local_status", status });
 }
 
-/** Answers a can_use_tool request. On a stale diff nothing is sent and the card's diff is refreshed. */
+/** Answers a can_use_tool request. On a stale diff nothing is sent; the `diff_refreshed` event updates the card. */
 export async function respondPermission(threadId: string, requestId: string, result: PermissionResult): Promise<PermissionOutcome> {
   const outcome = await claudeRespondPermission(threadId, requestId, result);
   if (outcome.sent) dispatch(threadId, { kind: "permission_answered", requestId });
-  else dispatch(threadId, { kind: "permission_refreshed", requestId, diff: outcome.refreshedDiff });
   return outcome;
 }
 

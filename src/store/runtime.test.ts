@@ -103,7 +103,7 @@ describe("runtime bridge", () => {
     expect(rt(threadId).sessionId).toBe("new-session");
   });
 
-  it("removes a pending permission when sent, and swaps in the refreshed diff when stale", async () => {
+  it("removes a pending permission when sent, and swaps in the refreshed diff from its event when stale", async () => {
     await ensureStarted(threadId);
     const req = { subtype: "can_use_tool" as const, tool_name: "Edit", input: {} };
     emit({ kind: "permission_request", seq: 2, request_id: "r1", request: req, diff: [{ path: "a", isNewFile: false, unified: "old", baseFingerprint: "1" }] });
@@ -112,6 +112,7 @@ describe("runtime bridge", () => {
     invoke.mockResolvedValueOnce({ sent: false, refreshedDiff: [{ path: "a", isNewFile: false, unified: "new", baseFingerprint: "2" }] });
     const stale = await respondPermission(threadId, "r1", { behavior: "allow", updatedInput: {} });
     expect(stale.sent).toBe(false);
+    emit({ kind: "diff_refreshed", seq: 4, request_id: "r1", diff: [{ path: "a", isNewFile: false, unified: "new", baseFingerprint: "2" }] });
     expect(rt(threadId).pendingPermissions.find((p) => p.requestId === "r1")?.diff?.[0].unified).toBe("new");
 
     invoke.mockResolvedValueOnce({ sent: true, refreshedDiff: null });

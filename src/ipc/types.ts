@@ -61,6 +61,7 @@ export type ClaudeEvent =
       diff: FileDiff[] | null;
     }
   | { kind: "permission_resolved"; seq: number; request_id: string; reason: string }
+  | { kind: "diff_refreshed"; seq: number; request_id: string; diff: FileDiff[] }
   | { kind: "stderr"; seq: number; text: string }
   | { kind: "protocol_error"; seq: number; line: string };
 

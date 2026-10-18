@@ -59,8 +59,11 @@ pub enum ClaudeEvent {
         request: Value,
         diff: Option<Vec<FileDiff>>,
     },
-    /// A pending request was resolved without the UI (deny on interrupt/quit, or CLI cancel).
+    /// A pending request was resolved: answered (`allowed`/`denied`), or dropped without an
+    /// answer (`interrupt`, `quit`, `stopped`, `cancelled` by the CLI). Every client removes its card.
     PermissionResolved { seq: u64, request_id: String, reason: String },
+    /// An allow found the shown diff stale; this is the diff to show instead (KTD5).
+    DiffRefreshed { seq: u64, request_id: String, diff: Vec<FileDiff> },
     Stderr { seq: u64, text: String },
     /// A stdout line that never parsed as JSON.
     ProtocolError { seq: u64, line: String },

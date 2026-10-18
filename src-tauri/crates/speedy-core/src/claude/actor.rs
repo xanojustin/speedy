@@ -88,6 +88,11 @@ struct PendingControl {
     tx: oneshot::Sender<Result<Value, String>>,
 }
 
+/// The error a late answer gets: the request is gone because it was answered or dropped.
+fn already_answered(request_id: &str) -> String {
+    format!("permission request {request_id} was already answered")
+}
+
 /// Records a live mode/model switch the CLI accepted, so a respawn or retry
 /// relaunches with it instead of reverting to the launch options.
 fn record_control_success(options: &mut StartOptions, request: &Value) {
@@ -196,10 +201,7 @@ impl ClaudeActor {
         let inner = &self.inner;
         let (tool_name, input, shown, cwd) = {
             let st = inner.state.lock();
-            let p = st
-                .pending_permissions
-                .get(request_id)
-                .ok_or_else(|| format!("no pending permission request {request_id}"))?;
+            let p = st.pending_permissions.get(request_id).ok_or_else(|| already_answered(request_id))?;
             (p.tool_name.clone(), p.input.clone(), p.diff.clone(), st.options.cwd.clone())
         };
         if response["behavior"] == "allow"
@@ -214,16 +216,22 @@ impl ClaudeActor {
                 diff::refresh_if_stale(&tool_name, &input, cwd, &shown)
             };
             if let Some(fresh) = fresh {
-                if let Some(p) = inner.state.lock().pending_permissions.get_mut(request_id) {
-                    p.diff = Some(fresh.clone());
-                }
+                let mut st = inner.state.lock();
+                let Some(p) = st.pending_permissions.get_mut(request_id) else { return Err(already_answered(request_id)) };
+                p.diff = Some(fresh.clone());
+                inner.emit(|seq| ClaudeEvent::DiffRefreshed { seq, request_id: request_id.into(), diff: fresh.clone() });
                 return Ok(PermissionOutcome { sent: false, refreshed_diff: Some(fresh) });
             }
         }
         let new_mode = mode_set_by(&response);
         let prior_mode = {
             let mut st = inner.state.lock();
-            st.pending_permissions.remove(request_id);
+            // First answer wins (KTD7): another client may have answered since the lookup above.
+            if st.pending_permissions.remove(request_id).is_none() {
+                return Err(already_answered(request_id));
+            }
+            let reason = if response["behavior"] == "allow" { "allowed" } else { "denied" };
+            inner.emit(|seq| ClaudeEvent::PermissionResolved { seq, request_id: request_id.into(), reason: reason.into() });
             inner.resume_working_if_answered(&mut st);
             // Recorded before the write so a crash right after it can't respawn with
             // the old mode; undone below if the write never reaches the CLI.
@@ -263,7 +271,7 @@ impl ClaudeActor {
             st.stopping = true;
             st.stdin = None;
             st.pending_controls.clear();
-            st.pending_permissions.clear();
+            self.inner.resolve_pending(&mut st, "stopped");
             self.inner.set_status(&mut st, ThreadStatus::Stopped, None, None, false);
             st.running.take()
         };

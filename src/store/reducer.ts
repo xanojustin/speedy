@@ -170,7 +170,6 @@ export type LocalAction =
   | { kind: "local_status"; status: ThreadStatus; detail?: string | null }
   | { kind: "retrying" }
   | { kind: "permission_answered"; requestId: string }
-  | { kind: "permission_refreshed"; requestId: string; diff: FileDiff[] | null }
   | { kind: "queue_add"; item: QueuedMessage }
   | { kind: "queue_remove"; id: string }
   | { kind: "context_usage"; usage: unknown };
@@ -772,6 +771,8 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
       );
     case "permission_resolved":
       return withSeq({ ...s, pendingPermissions: s.pendingPermissions.filter((p) => p.requestId !== a.request_id) }, a.seq);
+    case "diff_refreshed":
+      return withSeq({ ...s, pendingPermissions: s.pendingPermissions.map((p) => (p.requestId === a.request_id ? { ...p, diff: a.diff } : p)) }, a.seq);
     case "stderr": {
       const tail = (s.stderrTail + a.text + (a.text.endsWith("\n") ? "" : "\n")).slice(-STDERR_TAIL_MAX);
       return withSeq({ ...s, stderrTail: tail }, a.seq);
@@ -809,8 +810,6 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
       return { ...s, retrying: true };
     case "permission_answered":
       return { ...s, pendingPermissions: s.pendingPermissions.filter((p) => p.requestId !== a.requestId) };
-    case "permission_refreshed":
-      return { ...s, pendingPermissions: s.pendingPermissions.map((p) => (p.requestId === a.requestId ? { ...p, diff: a.diff } : p)) };
     case "queue_add":
       return { ...s, queue: [...s.queue, a.item] };
     case "queue_remove":

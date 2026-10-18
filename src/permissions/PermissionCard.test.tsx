@@ -54,9 +54,17 @@ beforeEach(() => {
   invoke.mockReset();
   settings = {};
   outcomes = [];
-  invoke.mockImplementation(async (cmd: string) => {
+  invoke.mockImplementation(async (cmd: string, args?: { threadId: string; requestId: string }) => {
     if (cmd === "get_extension_settings") return settings;
-    if (cmd === "claude_respond_permission") return outcomes.shift() ?? { sent: true, refreshedDiff: null };
+    if (cmd === "claude_respond_permission") {
+      const outcome = outcomes.shift() ?? { sent: true, refreshedDiff: null };
+      // Like the core: a stale-diff refresh is announced as an event before the call returns.
+      if (!outcome.sent && outcome.refreshedDiff && args) {
+        const event = { kind: "diff_refreshed", seq: ++seq, request_id: args.requestId, diff: outcome.refreshedDiff } as const;
+        useThreadStore.getState().dispatch(args.threadId, event);
+      }
+      return outcome;
+    }
     return undefined;
   });
   __resetRuntimeForTests();
