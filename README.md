@@ -88,11 +88,88 @@ A few things to know:
 Threads, terminals, files and git run on a host: This Mac, or another Mac you reach over SSH. Each host runs `speedy-agent`, which owns that host's threads and shells, so they keep running while no Speedy window is connected. Close the laptop while a thread works on your Mac mini, and when you open it again the transcript, any pending permission prompt, and recent terminal output are all there.
 
 - **This Mac** is always a host. Speedy installs its agent as a LaunchAgent on first launch. Quitting Speedy leaves it and its threads running; **Speedy > Stop This Mac's Agent…** stops them.
-- **Add a host** in **Settings > Hosts**: pick an entry from `~/.ssh/config`. Speedy connects with your own `ssh`, so keys, agents, ProxyJump and 1Password work as they do in a terminal. The first connect uploads the agent to `~/.speedy/agent` on that Mac and starts it. Passphrase and 2FA prompts appear in Speedy.
 - **Projects belong to one host.** With more than one host, the sidebar shows a section per host and says how each is doing. Adding a project on a remote host browses that host's folders, and Open in VS Code opens a VS Code remote window there.
-- **Logging in.** The agent runs in the host's login session so `claude` can use its Keychain login. If the host's agent can't reach the Keychain (for example, nobody is logged in at its screen), run `claude setup-token` on that host and paste the token into **Settings > Hosts**.
-- **Updates.** A newer Speedy updates each host's agent, but only once nothing there is working; until then the older agent keeps going.
-- Hosts are Macs only for now. Keep an always-on host from sleeping in **System Settings > Energy**; the agent only holds it awake while a thread works.
+- **Updates.** A newer Speedy updates each host's agent, but only once nothing there is working; until then the older agent keeps going. A host's agent is never replaced by an older build.
+- Hosts are Macs only for now.
+
+### Setting up a remote Mac
+
+You need two Macs: the one you work on (the *laptop*, running Speedy) and the one that runs threads (the *host*, for example an always-on Mac mini). Speedy needs nothing installed on the host except Claude Code; it installs its own agent there.
+
+**On the host:**
+
+1. **Install Claude Code and log in.** In Terminal on the host, run `claude`, use `/login` if it asks, then check that `claude -p "say pong"` answers. The agent finds `claude` through your login shell, as Speedy does on This Mac.
+2. **Turn on Remote Login.** Open **System Settings > General > Sharing** and turn on **Remote Login**.
+3. **Stay logged in at the host's screen.** The agent runs as a LaunchAgent in your login session, which is the only place `claude` can use the login it keeps in your Keychain. Over a plain SSH session it can't. If the host restarts to the login window, threads can't start until you log in again or give the host a token (see *If it doesn't work*, below).
+4. **Keep it awake.** In **System Settings > Energy**, turn on **Prevent automatic sleeping when the display is off**. The agent only holds the host awake while a thread is working.
+
+**Making the host reachable.** On the same network, the host's `.local` name works (shown in **System Settings > General > Sharing**). Away from home, use [Tailscale](https://tailscale.com):
+
+1. Install Tailscale on both Macs and sign in to the same account.
+2. Run `tailscale status` on the laptop to find the host's name.
+3. Use the full name, for example `mac.tailnet-name.ts.net`. It can differ from the Mac's computer name.
+
+**On the laptop:**
+
+1. **Add the host to `~/.ssh/config`.** Speedy only offers hosts listed there and connects by their alias:
+
+   ```
+   Host mac-mini
+     HostName mac.tailnet-name.ts.net
+     User your-user-name-on-the-host
+   ```
+
+   The alias (`mac-mini` here) is the name Speedy shows. `User` is your account name on the host (`whoami` there).
+
+2. **Set up key login.** If you don't have a key yet, run `ssh-keygen -t ed25519`. Then copy it to the host; this asks for the host's password once:
+
+   ```sh
+   ssh-copy-id mac-mini
+   ```
+
+   Run this on the laptop, not the host. Passwords and 2FA also work, since Speedy shows those prompts itself, but a key means reconnecting never needs you.
+
+3. **Connect once from Terminal** to accept the host's key. Then check that key login works without a prompt:
+
+   ```sh
+   ssh mac-mini true
+   ssh -o BatchMode=yes mac-mini 'echo ok'
+   ```
+
+4. **Add it in Speedy.** Open **Settings > Hosts**, pick the alias, and click **Add Host**. The first connect uploads the agent to `~/.speedy/agent` on the host and starts it. The host then gets its own section in the sidebar.
+
+5. **Add a project on the host.** In that section, click **Add Project Folder** and browse the host's folders. Threads you start there run on the host.
+
+Hosts can use Apple Silicon or Intel. Speedy's agent is universal when both Rust targets were installed at build time, so for an Intel host run `rustup target add aarch64-apple-darwin x86_64-apple-darwin` before building Speedy.
+
+### If it doesn't work
+
+The host's status in the sidebar and in **Settings > Hosts** shows the last error.
+
+| You see | What to do |
+|---|---|
+| `Could not resolve hostname` | `HostName` in `~/.ssh/config` is wrong. For Tailscale, use the name from `tailscale status`. |
+| `Operation timed out` on port 22 | Remote Login is off on the host, or the host is asleep or offline. |
+| *The host key isn't trusted yet* | Run `ssh <alias>` once in Terminal and accept the key. |
+| *SSH refused the login* | Key login isn't set up. Rerun `ssh-copy-id <alias>` from the laptop. `ssh -o BatchMode=yes <alias> true` should succeed without asking anything. |
+| *built for arm64 only; the host is x86_64* | Add the Intel target (see above) and rebuild Speedy. |
+| Not logged in, with a token field in **Settings > Hosts** | The agent can't reach the Keychain login, usually because nobody is logged in at the host's screen. Log in there, or run `claude setup-token` on the host and paste the token into **Settings > Hosts**. The token is stored at `~/.speedy/agent/state/claude-token` on the host and given to the `claude` processes the agent starts. |
+| `OAuth session expired and could not be refreshed` | The host's Claude login expired. Run `claude`, then `/login`, in Terminal on the host. |
+
+The agent logs to `~/Library/Logs/speedy-agent/agent.log` on each host.
+
+### Removing a host
+
+**Remove** in **Settings > Hosts** disconnects Speedy, but the agent and any threads keep running on that Mac. To uninstall the agent, run this on the host:
+
+```sh
+launchctl bootout gui/$(id -u)/dev.brecht.speedy.agent 2>/dev/null
+~/.speedy/agent/bin/current/speedy-agent stop 2>/dev/null
+rm -f ~/Library/LaunchAgents/dev.brecht.speedy.agent.plist
+rm -rf ~/.speedy/agent ~/Library/Logs/speedy-agent
+```
+
+`~/.speedy/agent/state` holds that host's projects and thread list, so the last line deletes them. Worktrees and Chats live in `~/Library/Application Support/Speedy` and are left alone.
 
 ## Known limitations
 
