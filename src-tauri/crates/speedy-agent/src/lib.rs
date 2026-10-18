@@ -5,6 +5,11 @@
 
 pub mod clients;
 pub mod daemon;
+pub mod daemonize;
+pub mod launchd;
+pub mod logs;
 pub mod paths;
+pub mod power;
 pub mod pty_ring;
 pub mod server;
+pub mod token;

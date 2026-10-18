@@ -69,7 +69,9 @@ impl Fixture {
             home,
             capture_timeout: Duration::from_secs(5),
         }));
-        Agent::new(host, env, "host-1".into())
+        let agent_paths = AgentPaths { root: self.dir.path().join("agent") };
+        daemon::ensure_state_dir(&agent_paths).unwrap();
+        Agent::new(host, env, "host-1".into(), agent_paths)
     }
 
     fn stdin(&self) -> Vec<Value> {
@@ -351,4 +353,21 @@ idle"#
     let stdin = fx.stdin();
     assert!(stdin.iter().any(|v| v["response"]["request_id"] == "perm-1" && v["response"]["response"]["behavior"] == "deny"));
     assert!(stdin.iter().any(|v| v["request"]["subtype"] == "interrupt"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn setup_reports_how_the_agent_runs_and_never_echoes_the_token() {
+    let fx = Fixture::new(&format!("{INIT}\nidle"));
+    let agent = fx.agent();
+    let mut a = Client::connect(&agent, 1 << 20).await;
+    let setup = a.call("get_setup_state", json!({})).await.unwrap();
+    assert!(setup["launchDomain"].is_string(), "{setup}");
+    assert_eq!(setup["tokenPresent"], false);
+
+    let after = a.call("set_claude_token", json!({"token": "sk-ant-oat-secret-123"})).await.unwrap();
+    assert_eq!(after["tokenPresent"], true);
+    let host = a.call("host_subscribe", json!({})).await.unwrap();
+    for reply in [after, host] {
+        assert!(!reply.to_string().contains("secret-123"), "token leaked: {reply}");
+    }
 }

@@ -20,6 +20,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
 
 use crate::paths::AgentPaths;
+use crate::power::{IdleSleepAssertion, hold_awake_while_working};
+use crate::token::claude_env;
 use crate::server::{AGENT_VERSION, Agent, BUILD_SHA, peer_allowed};
 
 /// `proxy` exit code when no agent is running, so the client installs or starts one.
@@ -55,12 +57,14 @@ pub fn host_id(paths: &AgentPaths) -> io::Result<String> {
     }
 }
 
-fn launch_from(env: Arc<EnvService>) -> LaunchFn {
+/// How the host launches `claude`: the resolved login env plus, for this child only, the token.
+fn launch_from(env: Arc<EnvService>, paths: AgentPaths) -> LaunchFn {
     Arc::new(move || {
-        let env = env.clone();
+        let (env, paths) = (env.clone(), paths.clone());
         Box::pin(async move {
             let program = env.claude_path().await.ok_or("claude CLI not found; finish setup first")?;
-            Ok(Launch { program, env: env.env().await.vars, extension_settings: env.extension_settings() })
+            let vars = claude_env(&paths, env.env().await.vars);
+            Ok(Launch { program, env: vars, extension_settings: env.extension_settings() })
         })
     })
 }
@@ -82,9 +86,11 @@ pub async fn run(paths: AgentPaths) -> io::Result<()> {
     tokio::spawn(async move { install_command_env(resolving.env().await.vars) });
     let host = Host::open(
         HostPaths { state_dir: paths.state_dir(), chats_dir: chats_dir(), worktrees_dir: default_state_dir().join("worktrees") },
-        launch_from(env.clone()),
+        launch_from(env.clone(), paths.clone()),
     );
-    let agent = Agent::new(host, env, host_id);
+    let (statuses, events) = host.subscribe();
+    tokio::spawn(hold_awake_while_working(statuses.statuses, events, IdleSleepAssertion::default()));
+    let agent = Agent::new(host, env, host_id, paths.clone());
 
     // We hold the lock, so any socket here is stale.
     let socket = paths.socket();

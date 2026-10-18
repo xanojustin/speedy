@@ -32,6 +32,8 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::clients::{CLIENT_QUEUE_BYTES, Outbox};
+use crate::paths::AgentPaths;
+use crate::{launchd, token};
 use crate::pty_ring::{Catchup, PtyRing, RING_BYTES};
 
 /// A client that sends nothing (not even a ping) for this long is dropped.
@@ -48,6 +50,7 @@ pub struct Agent {
     env: Arc<EnvService>,
     ptys: PtyManager,
     host_id: String,
+    paths: AgentPaths,
     terminals: Mutex<HashMap<String, Arc<Terminal>>>,
     next_client: AtomicU64,
     shutdown: Notify,
@@ -78,7 +81,7 @@ struct Conn {
 }
 
 impl Agent {
-    pub fn new(host: Arc<Host>, env: Arc<EnvService>, host_id: String) -> Arc<Agent> {
+    pub fn new(host: Arc<Host>, env: Arc<EnvService>, host_id: String, paths: AgentPaths) -> Arc<Agent> {
         Arc::new_cyclic(|me: &Weak<Agent>| {
             let me = me.clone();
             let ptys = PtyManager::new(env.clone(), move |exit: PtyExit| {
@@ -91,6 +94,7 @@ impl Agent {
                 env,
                 ptys,
                 host_id,
+                paths,
                 terminals: Mutex::default(),
                 next_client: AtomicU64::new(1),
                 shutdown: Notify::new(),
@@ -295,7 +299,12 @@ impl Agent {
             "pty_has_foreground_child" => ok(self.ptys.host.has_foreground_child(&args::<TerminalArg>(params)?.terminal_id)),
 
             // Setup.
-            "get_setup_state" => ok(self.env.setup_state().await),
+            "get_setup_state" => self.setup_state().await,
+            "set_claude_token" => {
+                let a: TokenArg = args(params)?;
+                token::set_token(&self.paths, &a.token).map_err(|e| format!("saving the token: {e}"))?;
+                self.setup_state().await
+            }
             "recheck_setup" => {
                 let a: RecheckSetup = args(params)?;
                 ok(self.env.recheck(a.override_path.map(PathBuf::from)).await)
@@ -349,6 +358,20 @@ impl Agent {
             }
             _ => Err(format!("unknown method {method}")),
         }
+    }
+
+    /// The core setup state, plus how the agent runs: a Background-domain agent can't read
+    /// the Keychain, so the UI asks for a token there. Never includes the token itself.
+    async fn setup_state(&self) -> Result<Value, String> {
+        let mut state = serde_json::to_value(self.env.setup_state().await).map_err(|e| e.to_string())?;
+        let domain = match launchd::current_domain() {
+            launchd::Domain::Aqua => "aqua".to_owned(),
+            launchd::Domain::Background => "background".to_owned(),
+            launchd::Domain::Other(name) => name,
+        };
+        state["launchDomain"] = domain.into();
+        state["tokenPresent"] = token::token_present(&self.paths).into();
+        Ok(state)
     }
 
     fn stream_id(conn: &Conn) -> u32 {
@@ -516,6 +539,10 @@ pub fn peer_allowed(peer_uid: u32) -> bool {
     peer_uid == unsafe { libc::geteuid() }
 }
 
+#[derive(Deserialize)]
+struct TokenArg {
+    token: String,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadArg {
