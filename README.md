@@ -83,6 +83,17 @@ A few things to know:
 - Gitignored files such as `.env` and `node_modules` aren't copied into a new worktree.
 - Sessions from worktree threads don't show up in the project's history list, because the CLI files them under the worktree's path.
 
+## Hosts
+
+Threads, terminals, files and git run on a host: This Mac, or another Mac you reach over SSH. Each host runs `speedy-agent`, which owns that host's threads and shells, so they keep running while no Speedy window is connected. Close the laptop while a thread works on your Mac mini, and when you open it again the transcript, any pending permission prompt, and recent terminal output are all there.
+
+- **This Mac** is always a host. Speedy installs its agent as a LaunchAgent on first launch. Quitting Speedy leaves it and its threads running; **Speedy > Stop This Mac's Agent…** stops them.
+- **Add a host** in **Settings > Hosts**: pick an entry from `~/.ssh/config`. Speedy connects with your own `ssh`, so keys, agents, ProxyJump and 1Password work as they do in a terminal. The first connect uploads the agent to `~/.speedy/agent` on that Mac and starts it. Passphrase and 2FA prompts appear in Speedy.
+- **Projects belong to one host.** With more than one host, the sidebar shows a section per host and says how each is doing. Adding a project on a remote host browses that host's folders, and Open in VS Code opens a VS Code remote window there.
+- **Logging in.** The agent runs in the host's login session so `claude` can use its Keychain login. If the host's agent can't reach the Keychain (for example, nobody is logged in at its screen), run `claude setup-token` on that host and paste the token into **Settings > Hosts**.
+- **Updates.** A newer Speedy updates each host's agent, but only once nothing there is working; until then the older agent keeps going.
+- Hosts are Macs only for now. Keep an always-on host from sleeping in **System Settings > Energy**; the agent only holds it awake while a thread works.
+
 ## Known limitations
 
 - Effort can only be changed during a live session, and isn't saved per thread.
@@ -98,6 +109,8 @@ bun install
 bun run tauri dev
 ```
 
+`tauri dev` and `tauri build` first run `scripts/build-agent.sh`, which builds `speedy-agent` and puts it where Tauri bundles it (universal when both Rust targets are installed). A plain `cargo build` uses a stub agent that refuses to run.
+
 | Check | Command |
 |---|---|
 | UI tests | `bun run test` |
@@ -111,12 +124,17 @@ Speedy talks to the CLI over its stream-json protocol, which can change between 
 
 ### Layout
 
-- `src-tauri/src/`: the Rust core
+- `src-tauri/crates/speedy-core/`: everything that runs on a host, with no Tauri dependency
   - `claude/`: one CLI process per thread, the stream-json protocol, and permission diffs
+  - `host/`: the host's projects and threads, their queue and replay log, and migration from the old `state.json`
+  - `proto/`: the agent wire protocol
   - `pty/`: terminal shells
-  - `state/`: app state and the CLI session index
+  - `state/`: state files and the CLI session index
   - `env.rs`: login-shell environment and CLI discovery
-  - `files.rs`: `@` mention search
+  - `files.rs`, `explorer.rs`, `worktree.rs`: `@` mention search, the explorer and git, worktrees
+- `src-tauri/crates/speedy-agent/`: the per-host daemon: socket server, launchd install, and sleep prevention
+- `src-tauri/src/`: the app
+  - `hosts/`: connections to hosts, SSH, installing and updating agents, and SSH prompts
   - `attention.rs`: notifications and the Dock badge
   - `menu.rs`: native menu and shortcuts
   - `cli.rs`: the `speedy` command and folders opened from Finder or the Dock
