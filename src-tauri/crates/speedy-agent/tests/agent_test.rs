@@ -7,13 +7,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
+use speedy_agent::clients::{Outbox, StreamError};
 use speedy_agent::daemon::{self, EXIT_NOT_RUNNING};
 use speedy_agent::paths::AgentPaths;
 use speedy_agent::pty_ring::{Catchup, PtyRing};
 use speedy_agent::server::{Agent, peer_allowed};
 use speedy_core::env::{EnvPaths, EnvService};
 use speedy_core::host::{Host, HostPaths, Launch, LaunchFn, NewProject, NewThread};
-use speedy_core::proto::{Body, Control, Frame, FrameReader, Hello, PROTOCOL_MAX, PROTOCOL_MIN, Request, encode};
+use speedy_core::proto::{
+    Body, Control, Frame, FrameReader, Hello, MAGIC, MAX_FRAME_LEN, PROTOCOL_MAX, PROTOCOL_MIN, Request, WIRE_VERSION, encode,
+};
 use tokio::io::{AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};
 
 const WAIT: Duration = Duration::from_secs(15);
@@ -372,4 +375,54 @@ async fn setup_reports_how_the_agent_runs_and_never_echoes_the_token() {
     for reply in [after, host] {
         assert!(!reply.to_string().contains("secret-123"), "token leaked: {reply}");
     }
+}
+
+#[tokio::test]
+async fn a_reply_too_large_for_a_frame_becomes_an_error_reply() {
+    let (outbox, mut rx) = Outbox::new(1 << 20);
+    outbox.reply(7, Ok(Value::String("x".repeat(MAX_FRAME_LEN + 1))));
+    let out = rx.try_recv().expect("something is sent, so the caller doesn't hang");
+    let frame = FrameReader::new(&out.bytes[..]).read_frame().await.unwrap().unwrap();
+    let Body::Response(r) = frame.body else { panic!("a response: {:?}", frame.body) };
+    assert_eq!(r.id, 7);
+    let err = r.result.unwrap_err();
+    assert!(err.starts_with("reply too large ("), "{err}");
+
+    // An oversized stream frame is reported as unsendable, not as the client lagging, so
+    // the stream skips it instead of sending the client into a resubscribe loop.
+    let huge = Frame { stream_id: 3, body: Body::PtyData { offset: 0, data: vec![0; MAX_FRAME_LEN] } };
+    assert!(matches!(outbox.try_stream(&huge), Err(StreamError::Unencodable(_))));
+    assert!(rx.try_recv().is_err(), "no Lagged for it");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_shutdown_sent_while_nobody_waits_is_not_lost() {
+    let fx = Fixture::new(&format!("{INIT}\nidle"));
+    let agent = fx.agent();
+    let mut a = Client::connect(&agent, 1 << 20).await;
+    let bytes = encode(&Frame { stream_id: 0, body: Body::Control(Control::Shutdown) }).unwrap();
+    a.writer.write_all(&bytes).await.unwrap();
+    // A round trip, so the agent has handled the Shutdown before anyone waits for it.
+    a.call("agent_busy", json!({})).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), agent.shutdown_requested()).await.expect("the request was kept");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stop_fails_when_the_agent_never_exits() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = AgentPaths { root: dir.path().join("agent") };
+    daemon::ensure_state_dir(&paths).unwrap();
+    // A wedged agent: holds the lock and takes the Shutdown, but never exits.
+    let _held = daemon::try_lock(&paths).unwrap().expect("free");
+    let listener = tokio::net::UnixListener::bind(paths.socket()).unwrap();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream.write_all(MAGIC).await.unwrap();
+        stream.write_all(&WIRE_VERSION.to_le_bytes()).await.unwrap();
+        let mut sink = Vec::new();
+        let _ = tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut sink).await;
+    });
+    let err = daemon::stop_within(paths.clone(), Duration::from_millis(300)).await.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "{err}");
+    assert!(daemon::agent_running(&paths));
 }

@@ -12,7 +12,12 @@ use crate::paths::AgentPaths;
 /// Stops a running agent, then starts `bin/current/speedy-agent run` detached.
 pub fn restart_detached(paths: &AgentPaths) -> io::Result<()> {
     let program = paths.current_binary();
-    let _ = Command::new(&program).arg("stop").env("SPEEDY_AGENT_HOME", &paths.root).status();
+    // A `run` started while the old agent still holds the lock would exit at once, and the
+    // old one may never come back, so a failed stop fails the restart.
+    let stopped = Command::new(&program).arg("stop").env("SPEEDY_AGENT_HOME", &paths.root).status()?;
+    if !stopped.success() {
+        return Err(io::Error::other(format!("couldn't stop the running agent ({stopped})")));
+    }
     std::fs::create_dir_all(crate::logs::log_dir())?;
     let log = std::fs::OpenOptions::new().create(true).append(true).open(crate::logs::log_dir().join("detached.log"))?;
     let mut cmd = Command::new(&program);

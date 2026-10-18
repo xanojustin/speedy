@@ -146,8 +146,16 @@ pub fn agent_running(paths: &AgentPaths) -> bool {
     matches!(try_lock(paths), Ok(None))
 }
 
+/// How long `stop` waits for the agent to exit after asking it to.
+pub const STOP_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// `speedy-agent stop`: asks the running agent to shut down and waits for it to go.
 pub async fn stop(paths: AgentPaths) -> io::Result<()> {
+    stop_within(paths, STOP_TIMEOUT).await
+}
+
+/// [`stop`], failing when the agent still holds its lock after `timeout`.
+pub async fn stop_within(paths: AgentPaths, timeout: Duration) -> io::Result<()> {
     if !agent_running(&paths) {
         return Ok(());
     }
@@ -169,8 +177,14 @@ pub async fn stop(paths: AgentPaths) -> io::Result<()> {
         wr.write_all(&bytes).await?;
     }
     // The agent exits once its threads and shells have stopped.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    while agent_running(&paths) && tokio::time::Instant::now() < deadline {
+    let deadline = tokio::time::Instant::now() + timeout;
+    while agent_running(&paths) {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("the agent didn't stop within {}s", timeout.as_secs_f32()),
+            ));
+        }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     Ok(())

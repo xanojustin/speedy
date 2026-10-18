@@ -20,7 +20,7 @@ use speedy_core::env::EnvService;
 use speedy_core::host::log::Cursor;
 use speedy_core::host::{Host, NewProject, NewThread, ThreadPatch, ThreadReplay};
 use speedy_core::proto::{
-    Body, Control, Event, Frame, FrameReader, Hello, MAGIC, PROTOCOL_MAX, PROTOCOL_MIN, Response, WIRE_VERSION,
+    Body, Control, Event, Frame, FrameReader, Hello, MAGIC, PROTOCOL_MAX, PROTOCOL_MIN, WIRE_VERSION,
     encode, negotiate,
 };
 use speedy_core::pty::manager::{OutputSink, PtySpawn, login_shell};
@@ -31,7 +31,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::clients::{CLIENT_QUEUE_BYTES, Outbox};
+use crate::clients::{CLIENT_QUEUE_BYTES, Outbox, StreamError};
 use crate::paths::AgentPaths;
 use crate::{launchd, token};
 use crate::pty_ring::{Catchup, PtyRing, RING_BYTES};
@@ -178,14 +178,15 @@ impl Agent {
                 };
                 match frame.body {
                     Body::Control(Control::Ping { nonce }) => {
-                        conn.outbox.send(&Frame { stream_id: 0, body: Body::Control(Control::Pong { nonce }) });
+                        let _ = conn.outbox.send(&Frame { stream_id: 0, body: Body::Control(Control::Pong { nonce }) });
                     }
-                    Body::Control(Control::Shutdown) => self.shutdown.notify_waiters(),
+                    // `notify_one` keeps a permit, so a request between `run`'s polls isn't lost.
+                    Body::Control(Control::Shutdown) => self.shutdown.notify_one(),
                     Body::Request(req) => {
                         let (agent, conn) = (self.clone(), conn.clone());
                         tokio::spawn(async move {
                             let result = agent.call(&conn, &req.method, req.params).await;
-                            conn.outbox.send(&Frame { stream_id: 0, body: Body::Response(Response { id: req.id, result }) });
+                            conn.outbox.reply(req.id, result);
                         });
                     }
                     _ => {}
@@ -408,10 +409,15 @@ impl Agent {
         let task = tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
                 let frame = Frame { stream_id, body: Body::Event(Event { epoch, seq: 0, event: (*event).clone() }) };
-                if outbox.try_stream(&frame).is_err() {
-                    // Host events are upserts: a fresh host_subscribe catches the client up.
-                    outbox.lagged(stream_id, 0);
-                    return;
+                match outbox.try_stream(&frame) {
+                    Ok(()) => {}
+                    // Resubscribing would meet the same event, so it's dropped, not lagged.
+                    Err(StreamError::Unencodable(e)) => log::warn!("host stream {stream_id}: dropped an event: {e}"),
+                    Err(StreamError::Full) => {
+                        // Host events are upserts: a fresh host_subscribe catches the client up.
+                        outbox.lagged(stream_id, 0);
+                        return;
+                    }
                 }
             }
         });
@@ -443,9 +449,14 @@ impl Agent {
                 };
                 let seq = event["seq"].as_u64().unwrap_or(last);
                 let frame = Frame { stream_id, body: Body::Event(Event { epoch, seq, event: (*event).clone() }) };
-                if outbox.try_stream(&frame).is_err() {
-                    outbox.lagged(stream_id, last);
-                    return;
+                match outbox.try_stream(&frame) {
+                    Ok(()) => {}
+                    // Resubscribing from `last` would replay the same event, so it's skipped.
+                    Err(StreamError::Unencodable(e)) => log::warn!("thread stream {stream_id}: skipped event {seq}: {e}"),
+                    Err(StreamError::Full) => {
+                        outbox.lagged(stream_id, last);
+                        return;
+                    }
                 }
                 last = seq;
             }
@@ -483,11 +494,12 @@ impl Agent {
             let body = match ring.after(a.offset) {
                 Catchup::Bytes { offset, data } => Body::PtyData { offset, data },
                 Catchup::Reset { offset, data } => {
-                    conn.outbox.send(&Frame { stream_id, body: Body::PtyReset { offset } });
+                    let _ = conn.outbox.send(&Frame { stream_id, body: Body::PtyReset { offset } });
                     Body::PtyData { offset, data }
                 }
             };
-            conn.outbox.send(&Frame { stream_id, body });
+            // At most `RING_BYTES`, well under a frame's limit.
+            let _ = conn.outbox.send(&Frame { stream_id, body });
             term.viewers.lock().push(Viewer { client: conn.id, stream_id, outbox: conn.outbox.clone(), size: (a.cols, a.rows) });
         }
         conn.terminals.lock().insert(stream_id, a.terminal_id.clone());
@@ -522,7 +534,7 @@ impl Agent {
         let event = json!({"kind": "pty_exit", "terminalId": exit.terminal_id, "code": exit.code});
         for v in term.viewers.lock().iter() {
             let frame = Frame { stream_id: v.stream_id, body: Body::Event(Event { epoch: self.host.epoch(), seq: 0, event: event.clone() }) };
-            v.outbox.send(&frame);
+            let _ = v.outbox.send(&frame);
         }
     }
 }
@@ -547,8 +559,13 @@ impl Terminal {
         let offset = ring.push(data);
         self.viewers.lock().retain(|v| {
             let frame = Frame { stream_id: v.stream_id, body: Body::PtyData { offset, data: data.to_vec() } };
-            if v.outbox.try_stream(&frame).is_ok() {
-                return true;
+            match v.outbox.try_stream(&frame) {
+                Ok(()) => return true,
+                Err(StreamError::Unencodable(e)) => {
+                    log::warn!("terminal stream {}: dropped output: {e}", v.stream_id);
+                    return true;
+                }
+                Err(StreamError::Full) => {}
             }
             // The client reattaches from its last offset (KTD7).
             v.outbox.lagged(v.stream_id, offset);
