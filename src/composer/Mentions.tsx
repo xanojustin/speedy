@@ -6,17 +6,17 @@ import type { FileHit } from "../ipc/types";
 const MENTION_LIMIT = 50;
 const DEBOUNCE_MS = 100;
 
-/** Hits for `query` (null = no mention being typed). Stale responses are dropped. */
-export function useFileMentions(root: string | null, query: string | null, respectGitIgnore: boolean): FileHit[] {
+/** Hits for `query` under `root` on `host` (null = no mention being typed). Stale responses are dropped. */
+export function useFileMentions(host: string | null, root: string | null, query: string | null, respectGitIgnore: boolean): FileHit[] {
   const [hits, setHits] = useState<FileHit[]>([]);
   useEffect(() => {
-    if (query === null || !root) {
+    if (query === null || !host || !root) {
       setHits([]);
       return;
     }
     let live = true;
     const t = setTimeout(() => {
-      filesSearch(root, query, MENTION_LIMIT, respectGitIgnore)
+      filesSearch(host, root, query, MENTION_LIMIT, respectGitIgnore)
         .then((r) => {
           if (live) setHits(Array.isArray(r) ? r : []);
         })
@@ -28,7 +28,7 @@ export function useFileMentions(root: string | null, query: string | null, respe
       live = false;
       clearTimeout(t);
     };
-  }, [root, query, respectGitIgnore]);
+  }, [host, root, query, respectGitIgnore]);
   return hits;
 }
 

@@ -285,12 +285,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     async load() {
       const { state, notice } = await clientStateLoad();
       client = state;
-      setHostLookup(({ threadId, path }) => {
-        const s = get();
-        if (threadId) return findThread(s, threadId)?.project.hostKey;
-        if (path) return s.projects.find((p) => path === p.path || path.startsWith(`${p.path}/`))?.hostKey;
-        return undefined;
-      });
+      setHostLookup(({ threadId }) => findThread(get(), threadId)?.project.hostKey);
       set({
         groups: withColors(state.groups ?? []),
         selectedThreadId: state.selectedThreadId,

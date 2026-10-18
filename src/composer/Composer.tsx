@@ -75,6 +75,7 @@ export function Composer({ threadId }: { threadId: string }) {
   });
   const hostAway = !!host && host.state.state !== "connected";
   const projectPath = useAppStore((s) => findThread(s, threadId)?.project.path ?? null);
+  const hostKey = useAppStore((s) => findThread(s, threadId)?.project.hostKey ?? null);
   const root = useAppStore((s) => {
     const found = findThread(s, threadId);
     return found ? threadCwd(found.project, found.thread) : null;
@@ -112,7 +113,7 @@ export function Composer({ threadId }: { threadId: string }) {
   // Before the session starts, the last list this project (or any project) reported.
   const commands = useMemo(() => liveCommands ?? (projectPath ? cachedCommands(projectPath) : null), [liveCommands, projectPath]);
   const slashItems: SlashCommand[] = slashQuery !== null && commands ? filterSlash(commands, slashQuery) : [];
-  const hits = useFileMentions(root, mentionQuery, settings?.respectGitIgnore ?? true);
+  const hits = useFileMentions(hostKey, root, mentionQuery, settings?.respectGitIgnore ?? true);
   const menu = slashQuery !== null ? "slash" : mentionQuery !== null ? "mention" : null;
   const menuCount = menu === "slash" ? slashItems.length : menu === "mention" ? hits.length : 0;
   const menuKey = `${menu}:${slashQuery ?? mentionQuery ?? ""}`;

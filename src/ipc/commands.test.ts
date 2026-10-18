@@ -21,12 +21,12 @@ describe("ipc commands", () => {
     });
   });
 
-  it("asks the app store which host owns a thread or path", async () => {
+  it("asks the app store which host owns a thread, and sends path calls to the host they name", async () => {
     invoke.mockResolvedValue([]);
-    setHostLookup(({ threadId, path }) => (threadId === "t9" || path?.startsWith("/mini/") ? "mac-mini" : undefined));
+    setHostLookup(({ threadId }) => (threadId === "t9" ? "mac-mini" : undefined));
     await claudeControl("t9", { subtype: "interrupt" });
-    await explorerList("/mini/repo", "src");
-    await explorerList("/laptop/repo", "src");
+    await explorerList("mac-mini", "/Users/me/repo", "src");
+    await explorerList("local", "/Users/me/repo", "src");
     const hosts = invoke.mock.calls.slice(-3).map((c) => (c[1] as { host: string }).host);
     expect(hosts).toEqual(["mac-mini", "mac-mini", "local"]);
   });

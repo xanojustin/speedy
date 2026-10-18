@@ -1,6 +1,8 @@
 // Typed wrappers over the Tauri commands registered in src-tauri/src/lib.rs.
-// Thread, terminal, file and git calls go to the host that owns the thread or path (R15):
-// the app forwards them over `host_call` and the subscription commands (KTD3).
+// Thread and terminal calls go to the host that owns the thread (R15); file, git, worktree and
+// session calls take the owning host explicitly, since a path alone can't name a host (two hosts
+// can share a path, and a worktree lives outside its project's folder). The app forwards them over
+// `host_call` and the subscription commands (KTD3).
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -35,16 +37,15 @@ import {
 
 // ---- host routing ----
 
-type HostLookup = { threadId?: string; path?: string };
+type HostLookup = { threadId: string };
 let lookupHost: (key: HostLookup) => string | undefined = () => undefined;
 
-/** Installed by the app store, which knows each project's host. */
+/** Installed by the app store, which knows each thread's host. */
 export function setHostLookup(fn: (key: HostLookup) => string | undefined) {
   lookupHost = fn;
 }
 
 const hostOfThread = (threadId: string) => lookupHost({ threadId }) ?? LOCAL_HOST;
-const hostOfPath = (path: string) => lookupHost({ path }) ?? LOCAL_HOST;
 /** Terminal ids are `<threadId>` or `<threadId>:<n>`. */
 const hostOfTerminal = (terminalId: string) => hostOfThread(terminalId.split(":")[0]);
 
@@ -159,28 +160,28 @@ export const clientStateLoad = () => invoke<LoadResult<ClientState>>("client_sta
 export const clientStateSave = (state: ClientState) => invoke<void>("client_state_save", { state });
 /** Asks `host` (This Mac by default: drag-and-drop and the native picker are local). */
 export const pathsExist = (paths: string[], host = LOCAL_HOST) => hostCall<boolean[]>(host, "paths_exist", { paths });
-export const sessionsList = (projectPath: string) => hostCall<SessionMeta[]>(hostOfPath(projectPath), "sessions_list", { projectPath });
-export const sessionLoad = (projectPath: string, sessionId: string) =>
-  hostCall<Record<string, unknown>[]>(hostOfPath(projectPath), "session_load", { projectPath, sessionId });
-export const sessionRenameOffline = (projectPath: string, sessionId: string, title: string) =>
-  hostCall<void>(hostOfPath(projectPath), "session_rename_offline", { projectPath, sessionId, title });
+export const sessionsList = (host: string, projectPath: string) => hostCall<SessionMeta[]>(host, "sessions_list", { projectPath });
+export const sessionLoad = (host: string, projectPath: string, sessionId: string) =>
+  hostCall<Record<string, unknown>[]>(host, "session_load", { projectPath, sessionId });
+export const sessionRenameOffline = (host: string, projectPath: string, sessionId: string, title: string) =>
+  hostCall<void>(host, "session_rename_offline", { projectPath, sessionId, title });
 
 // ---- files ----
-export const filesSearch = (root: string, query: string, limit?: number, respectGitignore?: boolean) =>
-  hostCall<FileHit[]>(hostOfPath(root), "files_search", { root, query, limit: limit ?? null, respectGitignore: respectGitignore ?? null });
+export const filesSearch = (host: string, root: string, query: string, limit?: number, respectGitignore?: boolean) =>
+  hostCall<FileHit[]>(host, "files_search", { root, query, limit: limit ?? null, respectGitignore: respectGitignore ?? null });
 
 // ---- explorer ----
-export const explorerList = (root: string, dir: string) => hostCall<DirEntry[]>(hostOfPath(root), "explorer_list", { root, dir });
-export const explorerRead = (root: string, path: string) => hostCall<string>(hostOfPath(root), "explorer_read", { root, path });
-export const explorerWrite = (root: string, path: string, content: string) =>
-  hostCall<void>(hostOfPath(root), "explorer_write", { root, path, content });
-export const explorerGitStatus = (root: string) => hostCall<GitChange[]>(hostOfPath(root), "explorer_git_status", { root });
-export const explorerGitBranch = (root: string) => hostCall<string | null>(hostOfPath(root), "explorer_git_branch", { root });
+export const explorerList = (host: string, root: string, dir: string) => hostCall<DirEntry[]>(host, "explorer_list", { root, dir });
+export const explorerRead = (host: string, root: string, path: string) => hostCall<string>(host, "explorer_read", { root, path });
+export const explorerWrite = (host: string, root: string, path: string, content: string) =>
+  hostCall<void>(host, "explorer_write", { root, path, content });
+export const explorerGitStatus = (host: string, root: string) => hostCall<GitChange[]>(host, "explorer_git_status", { root });
+export const explorerGitBranch = (host: string, root: string) => hostCall<string | null>(host, "explorer_git_branch", { root });
 /** Speedy's worktrees of `root`'s repository that hold no path in `keep`. Changes nothing. */
-export const worktreeUnused = (root: string, keep: string[]) => hostCall<UnusedWorktree[]>(hostOfPath(root), "worktree_unused", { root, keep });
+export const worktreeUnused = (host: string, root: string, keep: string[]) => hostCall<UnusedWorktree[]>(host, "worktree_unused", { root, keep });
 /** Removes the listed worktrees (Speedy's own only) and their merged branches. */
-export const worktreeClean = (root: string, paths: string[]) => hostCall<WorktreeCleanReport>(hostOfPath(root), "worktree_clean", { root, paths });
-export const explorerGitDiff = (root: string, path: string) => hostCall<FileDiff>(hostOfPath(root), "explorer_git_diff", { root, path });
+export const worktreeClean = (host: string, root: string, paths: string[]) => hostCall<WorktreeCleanReport>(host, "worktree_clean", { root, paths });
+export const explorerGitDiff = (host: string, root: string, path: string) => hostCall<FileDiff>(host, "explorer_git_diff", { root, path });
 
 // ---- attention ----
 export const attentionSetVisible = (threadId: string | null) => invoke<void>("attention_set_visible", { threadId });

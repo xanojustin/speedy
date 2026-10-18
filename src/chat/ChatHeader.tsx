@@ -9,7 +9,7 @@ export function ChatHeader({ threadId }: { threadId: string }) {
   const activityVisible = useAppStore((s) => s.activityPanelVisible);
   const [historyOpen, setHistoryOpen] = useState(false);
   const cwd = project && thread ? threadCwd(project, thread) : undefined;
-  const branch = useGitBranch(cwd);
+  const branch = useGitBranch(project?.hostKey, cwd);
   if (!project || !thread || !cwd) return null;
 
   return (

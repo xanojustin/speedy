@@ -11,6 +11,7 @@ const errorText = (err: unknown) => (err instanceof Error ? err.message : String
 
 export function SessionList({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const projectPath = useAppStore((s) => s.projects.find((p) => p.id === projectId)?.path);
+  const host = useAppStore((s) => s.projects.find((p) => p.id === projectId)?.hostKey);
   const [sessions, setSessions] = useState<SessionMeta[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -18,16 +19,16 @@ export function SessionList({ projectId, onClose }: { projectId: string; onClose
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!projectPath) return;
+    if (!host || !projectPath) return;
     let cancelled = false;
-    sessionsList(projectPath).then(
+    sessionsList(host, projectPath).then(
       (list) => !cancelled && setSessions(list),
       (err: unknown) => !cancelled && setError(errorText(err)),
     );
     return () => {
       cancelled = true;
     };
-  }, [projectPath]);
+  }, [host, projectPath]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();

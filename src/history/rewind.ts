@@ -76,7 +76,7 @@ export function forkPoint(lines: Line[], userMessageId: string): { anchor: strin
 export async function forkConversation(threadId: string, userMessageId: string): Promise<string> {
   const { project, thread } = threadOrThrow(threadId);
   if (!thread.sessionId) throw new Error("This conversation has no session to fork yet");
-  const lines = await sessionLoad(threadCwd(project, thread), thread.sessionId);
+  const lines = await sessionLoad(project.hostKey, threadCwd(project, thread), thread.sessionId);
   const { anchor, history } = forkPoint(lines, userMessageId);
   const app = useAppStore.getState();
   // The fork shares the thread's worktree: its session file lives under that folder.

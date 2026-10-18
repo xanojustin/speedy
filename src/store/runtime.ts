@@ -157,7 +157,7 @@ export async function loadSessionHistory(threadId: string): Promise<void> {
   if (!found?.thread.sessionId || rt.seed !== "none" || rt.blocks.length > 0) return;
   dispatch(threadId, { kind: "seed_state", seed: "loading" });
   try {
-    const lines = await sessionLoad(threadCwd(found.project, found.thread), found.thread.sessionId);
+    const lines = await sessionLoad(found.project.hostKey, threadCwd(found.project, found.thread), found.thread.sessionId);
     seedTranscript(threadId, lines);
   } catch (err) {
     dispatch(threadId, { kind: "seed_state", seed: "failed" });

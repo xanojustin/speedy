@@ -1,6 +1,6 @@
 // U12: the host UI: a sidebar section per host, adding a project on a remote host, VS Code
 // remote windows, the composer while a host is away, and the token fallback in Settings.
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", async () => (await import("../app/testing/tauriMock")).coreMock);
@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/webview", async () => (await import("../app/testing/tau
 vi.mock("@tauri-apps/plugin-dialog", async () => (await import("../app/testing/tauriMock")).dialogMock);
 
 import { App } from "../app/App";
-import { backend, callsTo, project, readySetup, stateWith } from "../app/testing/tauriMock";
+import { backend, callsTo, emitMenu, project, readySetup, stateWith } from "../app/testing/tauriMock";
 import { resetBackend } from "../app/testing/reset";
 import { useAppStore } from "../store/appStore";
 
@@ -99,5 +99,45 @@ describe("hosts in Settings", () => {
     fireEvent.click(within(hosts).getByRole("button", { name: "Save Token" }));
     await waitFor(() => expect(callsTo("set_claude_token")).toHaveLength(1));
     expect(callsTo("set_claude_token")[0]).toMatchObject({ host: "mac-mini", args: { token: "sk-ant-oat-123" } });
+  });
+});
+
+describe("file, git and worktree calls go to the thread's or project's host", () => {
+  it("routes a remote worktree thread's explorer and git calls to its host", async () => {
+    // The worktree sits under the host's state dir, outside every project folder.
+    const worktree = { path: "/Users/me/.speedy/worktrees/api/wt1", branch: "speedy/wt1" };
+    resetBackend(stateWith([project("app"), project("api", [{ worktree }], { hostKey: "mac-mini", path: "/Users/me/api" })], "api-t1"));
+    backend.extraHosts = [{ key: "mac-mini", state: MINI_UP }];
+    backend.projectFiles = { "README.md": "# Hi\n" };
+    await renderApp();
+    await waitFor(() => expect(backend.listeners.menu?.length).toBeTruthy());
+    act(() => emitMenu("toggle_explorer"));
+    await within(await screen.findByRole("tree", { name: "Files in api" })).findByText("README.md");
+
+    for (const cmd of ["explorer_list", "explorer_git_status", "explorer_git_branch"]) {
+      await waitFor(() => expect(callsTo(cmd).length).toBeGreaterThan(0));
+      expect(callsTo(cmd).map((c) => [c.host, c.args?.root])).toEqual(callsTo(cmd).map(() => ["mac-mini", worktree.path]));
+    }
+  });
+
+  it("cleans up worktrees on the right host when two hosts have a project at the same path", async () => {
+    const wt = (host: string) => ({ archived: true, worktree: { path: `/data/${host}/worktrees/done`, branch: "speedy/done" } });
+    resetBackend(
+      stateWith([
+        project("app", [{}, wt("local")]),
+        project("mini-app", [{}, wt("mini")], { hostKey: "mac-mini", path: "/Users/me/app" }),
+      ]),
+    );
+    backend.extraHosts = [{ key: "mac-mini", state: MINI_UP }];
+    backend.worktreeUnused = [{ path: "/data/mini/worktrees/done", branch: "speedy/done", dirty: false, merged: true }];
+    backend.worktreeClean = { removed: ["/data/mini/worktrees/done"], skipped: [], deletedBranches: ["speedy/done"] };
+    await renderApp();
+    const header = await waitFor(() => within(hostSection("mac-mini")).getByText("mini-app").closest<HTMLElement>(".project-header")!);
+    fireEvent.contextMenu(header);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Clean Up Worktrees…" }));
+
+    await waitFor(() => expect(callsTo("worktree_clean")).toHaveLength(1));
+    expect(callsTo("worktree_unused").map((c) => [c.host, c.args?.root])).toEqual([["mac-mini", "/Users/me/app"]]);
+    expect(callsTo("worktree_clean")[0]).toMatchObject({ host: "mac-mini", args: { root: "/Users/me/app", paths: ["/data/mini/worktrees/done"] } });
   });
 });
