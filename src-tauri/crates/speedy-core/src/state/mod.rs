@@ -1,5 +1,6 @@
 //! U5: Speedy's own app state (KTD6). Transcripts stay with the CLI.
 
+pub mod client;
 pub mod session_index;
 pub mod store;
 

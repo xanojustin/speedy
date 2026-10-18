@@ -10,6 +10,7 @@
 //! attached, and a client that connects later catches up from the thread's [`log`].
 
 pub mod log;
+pub mod migrate;
 pub mod snapshot;
 pub mod store;
 mod thread;
