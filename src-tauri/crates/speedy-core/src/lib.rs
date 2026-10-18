@@ -8,6 +8,7 @@ pub mod env;
 pub mod explorer;
 pub mod files;
 pub mod proc_group;
+pub mod proto;
 pub mod pty;
 pub mod state;
 pub mod worktree;
