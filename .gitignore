@@ -7,3 +7,5 @@ src-tauri/gen/
 spike/*.ndjson
 .claude/
 src-tauri/binaries/
+.env
+.env.*
