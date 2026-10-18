@@ -217,3 +217,20 @@ impl AsyncWrite for ProxyStream {
 
 /// Where the agent lives on every host, relative to its home.
 pub const REMOTE_AGENT: &str = ".speedy/agent/bin/current/speedy-agent";
+
+#[cfg(test)]
+mod tests {
+    use super::ssh_error;
+
+    #[test]
+    fn ssh_errors_explain_the_common_failures() {
+        let untrusted = ssh_error("Host key verification failed.\r\n", Some(255));
+        assert_eq!(untrusted, "The host key isn't trusted yet. Connect once with ssh in a terminal to accept it.");
+        let refused = "justin@mac-mini: Permission denied (publickey,keyboard-interactive).";
+        assert_eq!(ssh_error(refused, Some(255)), format!("SSH refused the login: {refused}"));
+        assert_eq!(ssh_error("", Some(255)), "ssh exited with Some(255)");
+        assert_eq!(ssh_error("", None), "ssh exited with None");
+        let other = "ssh: Could not resolve hostname nope: nodename nor servname provided";
+        assert_eq!(ssh_error(other, Some(255)), other, "anything else is ssh's own words");
+    }
+}

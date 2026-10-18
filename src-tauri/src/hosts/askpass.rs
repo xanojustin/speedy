@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,18 +44,29 @@ pub struct Askpass {
     tokens: Mutex<HashMap<String, String>>,
     pending: Mutex<HashMap<u64, oneshot::Sender<Option<String>>>>,
     next: Mutex<u64>,
+    answer_timeout: Duration,
 }
 
 impl Askpass {
     /// Listens for prompts, handing each to `show`. Must be called inside a tokio runtime.
     pub fn start(show: impl Fn(Prompt) + Send + Sync + 'static) -> std::io::Result<Arc<Askpass>> {
-        let dir = dirs::home_dir().unwrap_or_default().join(".speedy/askpass");
+        Self::start_in(dirs::home_dir().unwrap_or_default().join(".speedy/askpass"), ANSWER_TIMEOUT, show)
+    }
+
+    /// [`Askpass::start`] with the socket in `dir` and prompts given up on after
+    /// `answer_timeout` (tests use a temporary dir and a short timeout).
+    pub fn start_in(
+        dir: PathBuf,
+        answer_timeout: Duration,
+        show: impl Fn(Prompt) + Send + Sync + 'static,
+    ) -> std::io::Result<Arc<Askpass>> {
         std::fs::create_dir_all(&dir)?;
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
         let socket = dir.join(format!("{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&socket);
         let listener = UnixListener::bind(&socket)?;
-        let askpass = Arc::new(Askpass { socket, tokens: Mutex::default(), pending: Mutex::default(), next: Mutex::new(1) });
+        let askpass =
+            Arc::new(Askpass { socket, tokens: Mutex::default(), pending: Mutex::default(), next: Mutex::new(1), answer_timeout });
         let (server, show) = (askpass.clone(), Arc::new(show));
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
@@ -104,7 +115,7 @@ impl Askpass {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().insert(id, tx);
         show(Prompt { id, host, prompt: req.prompt });
-        let answer = tokio::time::timeout(ANSWER_TIMEOUT, rx).await.ok().and_then(|r| r.ok()).flatten();
+        let answer = tokio::time::timeout(self.answer_timeout, rx).await.ok().and_then(|r| r.ok()).flatten();
         self.pending.lock().remove(&id);
         if let Some(answer) = answer {
             let _ = wr.write_all(format!("{answer}\n").as_bytes()).await;
@@ -124,18 +135,25 @@ pub fn helper_main() -> Option<i32> {
     let socket = std::env::var_os(SOCKET_VAR)?;
     let token = std::env::var(TOKEN_VAR).unwrap_or_default();
     let prompt = std::env::args().nth(1).unwrap_or_else(|| "Password:".into());
-    let Ok(mut stream) = std::os::unix::net::UnixStream::connect(socket) else { return Some(1) };
-    let request = serde_json::to_string(&Request { token, prompt }).expect("serializes");
-    if writeln!(stream, "{request}").is_err() {
-        return Some(1);
-    }
-    let mut answer = String::new();
-    match BufReader::new(stream).read_line(&mut answer) {
-        Ok(n) if n > 0 => {
+    match ask(Path::new(&socket), &token, &prompt) {
+        Some(answer) => {
             print!("{answer}");
             Some(0)
         }
         // Cancelled or closed: ssh treats a failed askpass as a refused prompt.
-        _ => Some(1),
+        None => Some(1),
+    }
+}
+
+/// The helper's side of the protocol: sends `prompt` with `token` to the app's socket and
+/// returns the answer line (with its newline), or `None` when cancelled, refused or closed.
+pub fn ask(socket: &Path, token: &str, prompt: &str) -> Option<String> {
+    let mut stream = std::os::unix::net::UnixStream::connect(socket).ok()?;
+    let request = serde_json::to_string(&Request { token: token.to_owned(), prompt: prompt.to_owned() }).expect("serializes");
+    writeln!(stream, "{request}").ok()?;
+    let mut answer = String::new();
+    match BufReader::new(stream).read_line(&mut answer) {
+        Ok(n) if n > 0 => Some(answer),
+        _ => None,
     }
 }
