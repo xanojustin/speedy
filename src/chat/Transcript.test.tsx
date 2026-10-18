@@ -345,6 +345,22 @@ describe("ChatPane", () => {
     expect(document.querySelector(".permission-card[data-request='r9']")).not.toBeNull();
   });
 
+  it("notes at the top when a large session was only loaded in part", async () => {
+    useAppStore.getState().updateThread(threadId, { sessionId: "s-big" });
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "session_load")
+        return [
+          { type: "speedy-history-truncated", droppedLines: 5000 },
+          { type: "user", uuid: "u9", message: { role: "user", content: "a recent question" } },
+        ];
+      return {};
+    });
+    render(<ChatPane threadId={threadId} />);
+    const notice = await screen.findByText("Older messages in this session weren't loaded (it's too large).");
+    const recent = screen.getByText("a recent question");
+    expect(notice.compareDocumentPosition(recent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("shows a non-blocking notice when the session file cannot be loaded", async () => {
     useAppStore.getState().updateThread(threadId, { sessionId: "s-gone" });
     invoke.mockImplementation(async (cmd: string) => {

@@ -1,6 +1,15 @@
 // U8: pure reducer from the actor's ClaudeEvent stream (and a few local actions) to a thread's
 // runtime state and transcript view blocks. No IO here; `now` is passed in so durations are testable.
-import type { CanUseToolRequest, ClaudeEvent, FileDiff, PermissionMode, RawMessage, ThreadStatus } from "../ipc/types";
+import {
+  SESSION_TRUNCATED_TYPE,
+  TRUNCATED_HISTORY_NOTICE,
+  type CanUseToolRequest,
+  type ClaudeEvent,
+  type FileDiff,
+  type PermissionMode,
+  type RawMessage,
+  type ThreadStatus,
+} from "../ipc/types";
 import type { SDKAssistantMessage, SDKPartialAssistantMessage, SDKResultMessage, SDKUserMessage } from "./sdk";
 
 // ---------- view blocks ----------
@@ -841,6 +850,10 @@ function seedRuntime(s: ThreadRuntime, lines: Record<string, unknown>[], now: nu
   try {
     for (const line of lines) {
       const type = line.type;
+      if (type === SESSION_TRUNCATED_TYPE) {
+        next = { ...next, blocks: push(next.blocks, { kind: "notice", id: "seed-truncated", variant: "info", text: TRUNCATED_HISTORY_NOTICE, ts: null }, null) };
+        continue;
+      }
       if (type !== "user" && type !== "assistant") continue;
       if (line.isSidechain === true) continue;
       next = onMessage(next, { ...line, parent_tool_use_id: null } as unknown as RawMessage, now, true);

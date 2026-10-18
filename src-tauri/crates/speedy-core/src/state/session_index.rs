@@ -1,7 +1,7 @@
 //! U5/U11: lists and reads the CLI's own sessions under `~/.claude/projects` (KTD6).
 //! Read-only except `session_rename_offline`, which appends one line in the CLI's format.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -245,13 +245,45 @@ fn session_file(root: &Path, project_path: &str, session_id: &str) -> Result<Pat
     }
 }
 
-/// Every parseable JSON line of a session, in order.
+/// How much of a session `session_load` returns, in JSONL bytes: half the protocol's 16 MiB
+/// frame cap, leaving room for the reply's envelope and encoding overhead.
+pub const SESSION_LOAD_MAX_BYTES: usize = 8 * 1024 * 1024;
+const _: () = assert!(SESSION_LOAD_MAX_BYTES * 2 <= crate::proto::MAX_FRAME_LEN);
+
+/// `type` of the record `load_session` puts first when it dropped the session's oldest lines.
+/// It also carries `droppedLines`, the number of lines left out.
+pub const TRUNCATED_MARKER_TYPE: &str = "speedy-history-truncated";
+
+/// Every parseable JSON line of a session, in order, capped at [`SESSION_LOAD_MAX_BYTES`].
 pub fn load_session(root: &Path, project_path: &str, session_id: &str) -> Result<Vec<Value>, String> {
+    load_session_capped(root, project_path, session_id, SESSION_LOAD_MAX_BYTES)
+}
+
+/// [`load_session`] with an explicit cap: keeps the newest lines whose total size (with newlines)
+/// is at most `max_bytes`, dropping whole lines from the oldest end. When any are dropped, the
+/// result starts with a `{"type": TRUNCATED_MARKER_TYPE, "droppedLines": n}` record.
+pub fn load_session_capped(root: &Path, project_path: &str, session_id: &str, max_bytes: usize) -> Result<Vec<Value>, String> {
     let file = session_file(root, project_path, session_id)?;
-    Ok(read_lines(&file)
-        .map_err(|e| format!("reading {}: {e}", file.display()))?
-        .filter_map(|l| serde_json::from_str::<Value>(&l).ok())
-        .collect())
+    let lines = read_lines(&file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    // Holds raw lines (at most ~max_bytes of them) and parses only the kept ones.
+    let mut kept: VecDeque<String> = VecDeque::new();
+    let mut size = 0usize;
+    let mut dropped = 0u64;
+    for line in lines {
+        size += line.len() + 1;
+        kept.push_back(line);
+        while size > max_bytes {
+            let Some(old) = kept.pop_front() else { break };
+            size -= old.len() + 1;
+            dropped += 1;
+        }
+    }
+    let records = kept.iter().filter_map(|l| serde_json::from_str::<Value>(l).ok());
+    if dropped == 0 {
+        return Ok(records.collect());
+    }
+    let marker = serde_json::json!({ "type": TRUNCATED_MARKER_TYPE, "droppedLines": dropped });
+    Ok(std::iter::once(marker).chain(records).collect())
 }
 
 /// Appends `{"type":"custom-title","customTitle":…,"sessionId":…}`, the line the CLI writes on rename.
@@ -287,8 +319,9 @@ pub async fn sessions_list(project_path: String) -> Result<Vec<SessionMeta>, Str
     blocking(move || list_sessions(&default_projects_root(), &project_path)).await
 }
 
-/// Every parseable JSONL line of a session, in order, for seeding a resumed transcript
-/// and for finding a rewind's fork point (which walks the `parentUuid` chain through all lines).
+/// A session's parseable JSONL lines, in order, for seeding a resumed transcript and for finding a
+/// rewind's fork point (which walks the `parentUuid` chain). A session over the reply cap returns
+/// only its newest lines, after a truncation marker (see [`load_session_capped`]).
 pub async fn session_load(project_path: String, session_id: String) -> Result<Vec<Value>, String> {
     blocking(move || load_session(&default_projects_root(), &project_path, &session_id)).await
 }

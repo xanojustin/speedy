@@ -115,6 +115,20 @@ describe("rewind", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("fork and rewind leaves the code alone when the fork can't be made", async () => {
+    // A large session loaded only from u2 on: the message before u2 wasn't loaded.
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === "session_load" ? [{ type: "speedy-history-truncated", droppedLines: 3 }, ...lines.slice(3)] : cmd === "claude_control" ? rewindResponse : undefined,
+    );
+    openAction("u2", "Fork conversation and rewind code");
+    await screen.findByText("src/parser.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("too far back");
+    // Only the preview ran: no files were restored and no fork was created.
+    expect(controls()).toEqual([{ subtype: "rewind_files", user_message_id: "u2", dry_run: true }]);
+    expect(threads()).toHaveLength(1);
+  });
+
   it("cancelling at the file review sends nothing more", async () => {
     openAction("u2", "Fork conversation and rewind code");
     await screen.findByText("src/parser.ts");
@@ -180,5 +194,25 @@ describe("forkPoint", () => {
 
   it("rejects a message that isn't in the session", () => {
     expect(() => forkPoint(lines, "nope")).toThrow(/not found/);
+  });
+
+  describe("in a session loaded only in part", () => {
+    // session_load dropped u1 and a1: only the marker and the newest lines arrive.
+    const marker = { type: "speedy-history-truncated", droppedLines: 2 };
+    const partial = [marker, ...lines.slice(2), user("u3", "a2", "and test it"), assistant("a3", "u3", "msg_3", "Tested.")];
+
+    it("forks from a loaded message, noting that the fork's history is partial too", () => {
+      const { anchor, history } = forkPoint(partial, "u3");
+      expect(anchor).toBe("a2");
+      expect(history).toEqual([marker, ...partial.slice(1, 4)]);
+    });
+
+    it("refuses to fork where the previous message wasn't loaded, instead of starting fresh", () => {
+      expect(() => forkPoint(partial, "u2")).toThrow(/too far back/);
+    });
+
+    it("refuses a message that wasn't loaded", () => {
+      expect(() => forkPoint(partial, "u1")).toThrow(/too far back/);
+    });
   });
 });

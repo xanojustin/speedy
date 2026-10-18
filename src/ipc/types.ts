@@ -341,6 +341,15 @@ export interface SessionMeta {
   filePath: string;
 }
 
+/**
+ * `type` of the record `session_load` puts first when the session was too large to return whole
+ * (session_index.rs `TRUNCATED_MARKER_TYPE`): only the newest lines follow it, and
+ * `droppedLines` says how many older ones were left out.
+ */
+export const SESSION_TRUNCATED_TYPE = "speedy-history-truncated";
+
+export const TRUNCATED_HISTORY_NOTICE = "Older messages in this session weren't loaded (it's too large).";
+
 export interface FileHit {
   path: string;
   isDir: boolean;

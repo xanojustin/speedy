@@ -4,7 +4,8 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use speedy_core::state::session_index::{
-    encode_project_dir, list_sessions, load_session, rename_session_offline,
+    encode_project_dir, list_sessions, load_session, load_session_capped, rename_session_offline,
+    TRUNCATED_MARKER_TYPE,
 };
 use speedy_core::state::store::STATE_VERSION;
 use speedy_core::state::{ensure_chats_project, paths_exist, AppState, Group, Project, StateStore, Thread};
@@ -292,6 +293,32 @@ fn session_load_returns_parseable_lines_in_order() {
 
     let err = load_session(root.path(), "/p", "missing").unwrap_err();
     assert!(err.contains("missing"), "{err}");
+}
+
+#[test]
+fn session_load_over_the_cap_keeps_the_newest_lines_and_marks_the_cut() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join(encode_project_dir("/p"));
+    // Ten 100-byte lines (101 with the newline).
+    let line = |i: usize| {
+        let head = format!(r#"{{"type":"user","uuid":"u{i}","pad":""#);
+        format!(r#"{head}{}"}}"#, "x".repeat(100 - head.len() - 2))
+    };
+    let lines: Vec<String> = (0..10).map(line).collect();
+    assert!(lines.iter().all(|l| l.len() == 100));
+    write_session(&dir, "s", &lines, 1_000);
+
+    // Room for three and a half lines: the newest three are kept whole.
+    let got = load_session_capped(root.path(), "/p", "s", 101 * 3 + 50).unwrap();
+    assert_eq!(got[0], serde_json::json!({ "type": TRUNCATED_MARKER_TYPE, "droppedLines": 7 }));
+    let uuids: Vec<_> = got[1..].iter().map(|v| v["uuid"].as_str().unwrap()).collect();
+    assert_eq!(uuids, ["u7", "u8", "u9"]);
+
+    // Exactly at the cap nothing is dropped and no marker is added.
+    let all = load_session_capped(root.path(), "/p", "s", 101 * 10).unwrap();
+    assert_eq!(all.len(), 10);
+    assert_eq!(all[0]["uuid"], "u0");
+    assert_eq!(load_session(root.path(), "/p", "s").unwrap(), all);
 }
 
 #[test]
