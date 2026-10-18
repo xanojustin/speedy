@@ -19,9 +19,10 @@ use crate::env::EnvService;
 pub use diff::FileDiff;
 
 /// Lifecycle status per the plan's state diagram. "finished-unread" is derived by attention.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadStatus {
+    #[default]
     NotStarted,
     Starting,
     Idle,

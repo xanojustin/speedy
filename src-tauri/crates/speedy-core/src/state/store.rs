@@ -1,4 +1,5 @@
-//! U5: versioned, atomically written app state with debounced saves.
+//! U5: versioned, atomically written state files with debounced saves. The app's
+//! `state.json` uses it, and so does the agent's `host.json` (KTD6).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -7,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::{Condvar, Mutex};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 pub const STATE_VERSION: u32 = 1;
@@ -117,13 +119,30 @@ impl Default for Thread {
     }
 }
 
+/// A state type saved as one JSON file by a [`JsonStore`].
+pub trait StoredState: Serialize + DeserializeOwned + Default + Send + 'static {
+    /// File name inside the store's directory.
+    const FILE: &'static str;
+    /// Stamps the current schema version before a save and after a load.
+    fn stamp_version(&mut self);
+}
+
+impl StoredState for AppState {
+    const FILE: &'static str = "state.json";
+    fn stamp_version(&mut self) {
+        self.version = STATE_VERSION;
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LoadResult {
-    pub state: AppState,
+pub struct Loaded<T> {
+    pub state: T,
     /// Set when the state file was corrupt and moved aside.
     pub notice: Option<String>,
 }
+
+pub type LoadResult = Loaded<AppState>;
 
 /// The Chats project's name, as the sidebar and thread header show it.
 const CHATS_NAME: &str = "No Project";
@@ -143,40 +162,41 @@ pub fn ensure_chats_project(state: &mut AppState, dir: &Path) {
     );
 }
 
-const STATE_FILE: &str = "state.json";
-const TEMP_FILE: &str = "state.json.tmp";
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
-struct Pending {
-    state: Option<AppState>,
+struct Pending<T> {
+    state: Option<T>,
     last_save: Instant,
     shutdown: bool,
 }
 
-struct Shared {
+struct Shared<T> {
     dir: PathBuf,
-    pending: Mutex<Pending>,
+    pending: Mutex<Pending<T>>,
     wake: Condvar,
     /// Serializes file writes so a later state can't be overwritten by an earlier one.
     write_lock: Mutex<()>,
 }
 
-impl Shared {
+impl<T: StoredState> Shared<T> {
     /// Takes whatever is pending (if anything) and writes it.
     fn write_pending(&self) {
         let _w = self.write_lock.lock();
         let Some(state) = self.pending.lock().state.take() else { return };
         if let Err(e) = write_atomic(&self.dir, &state) {
-            log::error!("saving app state to {} failed: {e}", self.dir.display());
+            log::error!("saving {} in {} failed: {e}", T::FILE, self.dir.display());
         }
     }
 }
 
-pub struct StateStore {
-    shared: Arc<Shared>,
+pub struct JsonStore<T: StoredState> {
+    shared: Arc<Shared<T>>,
 }
 
-impl StateStore {
+/// The app's `state.json`.
+pub type StateStore = JsonStore<AppState>;
+
+impl<T: StoredState> JsonStore<T> {
     pub fn new(dir: PathBuf) -> Self {
         let shared = Arc::new(Shared {
             dir,
@@ -186,31 +206,31 @@ impl StateStore {
         });
         let bg = shared.clone();
         std::thread::spawn(move || debounce_loop(&bg));
-        StateStore { shared }
+        JsonStore { shared }
     }
 
-    pub fn load(&self) -> LoadResult {
-        let path = self.shared.dir.join(STATE_FILE);
+    pub fn load(&self) -> Loaded<T> {
+        let path = self.shared.dir.join(T::FILE);
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return LoadResult { state: AppState::default(), notice: None };
+                return Loaded { state: T::default(), notice: None };
             }
             Err(e) => {
-                return LoadResult {
-                    state: AppState::default(),
+                return Loaded {
+                    state: T::default(),
                     notice: Some(format!("Couldn't read saved state at {}: {e}. Starting empty.", path.display())),
                 };
             }
         };
-        match serde_json::from_slice::<AppState>(&bytes) {
+        match serde_json::from_slice::<T>(&bytes) {
             Ok(mut state) => {
-                state.version = STATE_VERSION;
-                LoadResult { state, notice: None }
+                state.stamp_version();
+                Loaded { state, notice: None }
             }
             Err(parse_err) => {
                 let ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-                let backup = self.shared.dir.join(format!("{STATE_FILE}.corrupt-{ms}"));
+                let backup = self.shared.dir.join(format!("{}.corrupt-{ms}", T::FILE));
                 let notice = match std::fs::rename(&path, &backup) {
                     Ok(()) => format!(
                         "Speedy's saved state was unreadable ({parse_err}) and was moved to {}. Starting with empty state.",
@@ -221,14 +241,14 @@ impl StateStore {
                         path.display()
                     ),
                 };
-                LoadResult { state: AppState::default(), notice: Some(notice) }
+                Loaded { state: T::default(), notice: Some(notice) }
             }
         }
     }
 
     /// Schedules a debounced atomic write.
-    pub fn save(&self, mut state: AppState) {
-        state.version = STATE_VERSION;
+    pub fn save(&self, mut state: T) {
+        state.stamp_version();
         let mut p = self.shared.pending.lock();
         p.state = Some(state);
         p.last_save = Instant::now();
@@ -241,14 +261,14 @@ impl StateStore {
     }
 }
 
-impl Drop for StateStore {
+impl<T: StoredState> Drop for JsonStore<T> {
     fn drop(&mut self) {
         self.shared.pending.lock().shutdown = true;
         self.shared.wake.notify_one();
     }
 }
 
-fn debounce_loop(shared: &Shared) {
+fn debounce_loop<T: StoredState>(shared: &Shared<T>) {
     loop {
         {
             let mut p = shared.pending.lock();
@@ -272,15 +292,15 @@ fn debounce_loop(shared: &Shared) {
 }
 
 /// Temp file in the same dir, fsync, rename over the real file, fsync the dir.
-fn write_atomic(dir: &Path, state: &AppState) -> std::io::Result<()> {
+fn write_atomic<T: StoredState>(dir: &Path, state: &T) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let tmp = dir.join(TEMP_FILE);
+    let tmp = dir.join(format!("{}.tmp", T::FILE));
     let bytes = serde_json::to_vec_pretty(state).map_err(std::io::Error::other)?;
     {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(&bytes)?;
         f.sync_all()?;
     }
-    std::fs::rename(&tmp, dir.join(STATE_FILE))?;
+    std::fs::rename(&tmp, dir.join(T::FILE))?;
     std::fs::File::open(dir)?.sync_all()
 }

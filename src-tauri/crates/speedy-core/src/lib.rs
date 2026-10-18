@@ -7,6 +7,7 @@ pub mod claude;
 pub mod env;
 pub mod explorer;
 pub mod files;
+pub mod host;
 pub mod proc_group;
 pub mod proto;
 pub mod pty;
