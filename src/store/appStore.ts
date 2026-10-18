@@ -589,8 +589,7 @@ export function hostSections(state: Pick<AppStore, "projects" | "groups" | "host
 
 /** Non-archived threads in sidebar order (Cmd+1–9 targets). */
 export function visibleThreads(state: Pick<AppStore, "projects" | "groups" | "hosts">) {
-  const sections = state.hosts ? hostSections(state).flatMap((h) => h.sections) : sidebarSections(state);
-  return sections.flatMap((sec) =>
+  return hostSections(state).flatMap((h) => h.sections).flatMap((sec) =>
     sec.group?.collapsed ? [] : sec.projects.flatMap((p) => (p.collapsed ? [] : p.threads.filter((t) => !t.archived))),
   );
 }

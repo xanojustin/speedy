@@ -18,7 +18,7 @@ const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
 });
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args: Record<string, unknown>) =>
-    // Host RPCs reach this fake by their method name, like the old commands.
+    // Host RPCs reach this fake by their method name.
     (cmd === "host_call" ? invoke((args as { method: string }).method, (args as { params: Record<string, unknown> }).params) : invoke(cmd, args)),
   Channel: class {
     onmessage: (m: unknown) => void = () => {};

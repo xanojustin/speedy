@@ -1,7 +1,7 @@
 //! U8: the app's hosts (KTD3, KTD11, KTD14). The webview never touches the network: it calls
 //! these commands with a host key, and the app's Rust side holds one [`HostConn`] per host and
-//! forwards RPCs and subscriptions over it. RPC names and params are the agent's, which match
-//! the old in-process Tauri commands. This Mac is the host key [`LOCAL`].
+//! forwards RPCs and subscriptions over it. RPC names and params are the agent's. This Mac is
+//! the host key [`LOCAL`].
 
 pub mod askpass;
 pub mod bootstrap;
@@ -197,9 +197,12 @@ impl HostRegistry {
     /// The Mac woke: masters that survived sleep may hang, so every host starts over.
     pub async fn woke(&self) {
         let ssh: Vec<Arc<Ssh>> = self.ssh.lock().values().cloned().collect();
+        // Concurrently: a master that survived sleep can hang until ssh gives up on it.
+        let mut drops = tokio::task::JoinSet::new();
         for s in ssh {
-            s.drop_master().await;
+            drops.spawn(async move { s.drop_master().await });
         }
+        drops.join_all().await;
         let conns: Vec<Arc<HostConn>> = self.hosts.lock().values().cloned().collect();
         for conn in conns {
             conn.reconnect_now();
@@ -217,18 +220,17 @@ impl HostRegistry {
         self.ssh.lock().insert(alias.to_owned(), ssh.clone());
         let conn = self.add(alias, ssh_connector(ssh.clone()), self.transition());
         let (registry, key, watched) = (self.clone(), alias.to_owned(), conn.clone());
-        tokio::spawn(async move { registry.keep_updated(&key, &watched, Some(ssh)).await });
+        tokio::spawn(async move { registry.keep_updated(&key, &watched, &ssh).await });
         conn
     }
 
     /// Swaps in the bundled agent once the host's older one is idle (KTD9).
-    async fn keep_updated(&self, key: &str, conn: &HostConn, ssh: Option<Arc<Ssh>>) {
+    async fn keep_updated(&self, key: &str, conn: &HostConn, ssh: &Ssh) {
         let mut state = conn.watch();
         loop {
             if state.wait_for(|s| matches!(s, ConnState::Connected { .. })).await.is_err() {
                 return;
             }
-            let Some(ssh) = &ssh else { return };
             let decision = match ssh_upgrade(ssh, conn).await {
                 Ok(decision) => decision,
                 Err(e) => {
@@ -236,16 +238,7 @@ impl HostRegistry {
                     return;
                 }
             };
-            let label = match decision {
-                Upgrade::Pending => Some("pending"),
-                Upgrade::Blocked => Some("blocked"),
-                Upgrade::UpToDate | Upgrade::Install => None,
-            };
-            match label {
-                Some(l) => self.updates.lock().insert(key.to_owned(), l),
-                None => self.updates.lock().remove(key),
-            };
-            if label.is_none() {
+            if !self.set_update(key, decision) {
                 // Watch again after the next reconnect (the install restarts the agent).
                 if state.wait_for(|s| !matches!(s, ConnState::Connected { .. })).await.is_err() {
                     return;
@@ -254,6 +247,21 @@ impl HostRegistry {
             }
             tokio::time::sleep(UPGRADE_RECHECK).await;
         }
+    }
+
+    /// Records whether `key`'s agent waits for a swap; true while it does.
+    fn set_update(&self, key: &str, decision: Upgrade) -> bool {
+        let label = decision.label();
+        let mut updates = self.updates.lock();
+        match label {
+            Some(label) => {
+                updates.insert(key.to_owned(), label);
+            }
+            None => {
+                updates.remove(key);
+            }
+        }
+        label.is_some()
     }
 
     /// Adds a host, feeding its live status transitions to `on_transition`.
@@ -297,12 +305,7 @@ impl HostRegistry {
                         return;
                     }
                 };
-                match decision {
-                    Upgrade::Pending => registry.updates.lock().insert(LOCAL.into(), "pending"),
-                    Upgrade::Blocked => registry.updates.lock().insert(LOCAL.into(), "blocked"),
-                    Upgrade::UpToDate | Upgrade::Install => registry.updates.lock().remove(LOCAL),
-                };
-                if matches!(decision, Upgrade::UpToDate | Upgrade::Install) {
+                if !registry.set_update(LOCAL, decision) {
                     return;
                 }
                 tokio::time::sleep(UPGRADE_RECHECK).await;
@@ -313,11 +316,12 @@ impl HostRegistry {
 
 /// One pass of the KTD9 rule for This Mac: install now, or report why not.
 async fn bootstrap_local(paths: &AgentPaths, conn: &HostConn) -> Result<Upgrade, String> {
-    let bundled = local::bundled_agent().map_err(|e| e.to_string())?;
-    let build = local::inspect(&bundled).map_err(|e| e.to_string())?;
+    let (bundled, build) = bootstrap::bundled()?;
     let installed = local::inspect(&local::current_agent(paths)).ok();
     let running = speedy_agent::daemon::agent_running(paths);
-    let busy = running && agent_busy(conn).await;
+    // Busy only matters when the running agent is a different build.
+    let same = installed.as_ref().is_some_and(|i| i.sha256 == build.sha256);
+    let busy = running && !same && agent_busy(conn).await;
     let decision = local::decide(installed.as_ref(), &build, running, busy);
     if decision == Upgrade::Install {
         let paths = paths.clone();
@@ -355,7 +359,8 @@ fn ssh_connector(ssh: Arc<Ssh>) -> Connector {
 async fn ssh_upgrade(ssh: &Ssh, conn: &HostConn) -> Result<Upgrade, String> {
     let (binary, build) = bootstrap::bundled()?;
     let probe = bootstrap::probe(ssh).await?;
-    let busy = agent_busy(conn).await;
+    let same = probe.installed.as_ref().is_some_and(|i| i.sha256 == build.sha256);
+    let busy = !same && agent_busy(conn).await;
     let decision = local::decide(probe.installed.as_ref(), &build, probe.running, busy);
     if decision == Upgrade::Install {
         bootstrap::upload_and_install(ssh, &binary, &build).await?;
@@ -389,7 +394,7 @@ pub fn host_list(hosts: Hosts<'_>) -> Vec<HostInfo> {
     hosts.list()
 }
 
-/// Forwards one RPC: `method` and `params` are the agent's (the old command names and args).
+/// Forwards one RPC: `method` and `params` are the agent's.
 #[tauri::command]
 pub async fn host_call(hosts: Hosts<'_>, host: String, method: String, params: Value) -> Result<Value, String> {
     hosts.get(&host)?.call(&method, params).await

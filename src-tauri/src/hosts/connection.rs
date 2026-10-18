@@ -16,6 +16,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{Value, json};
+use speedy_core::host::log::Cursor;
 use speedy_core::proto::{Body, Control, Frame, FrameReader, Hello, PROTOCOL_MAX, PROTOCOL_MIN, Request, encode, negotiate};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{Notify, oneshot, watch};
@@ -44,12 +45,6 @@ pub enum ConnState {
 pub type JsonSink = Arc<dyn Fn(Value) + Send + Sync>;
 pub type BytesSink = Arc<dyn Fn(Vec<u8>) + Send + Sync>;
 
-/// A cursor into a thread's events (KTD5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct Cursor {
-    pub epoch: u64,
-    pub seq: u64,
-}
 
 enum Kind {
     Host,
@@ -72,7 +67,6 @@ type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
 struct Live {
     out: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     pending: Pending,
-    hello: Hello,
     /// Stream frames that arrived before the subscribe reply naming their stream; the agent
     /// may send a replay's first events (or a terminal's catch-up) ahead of it.
     early: Mutex<HashMap<u32, Vec<Frame>>>,
@@ -231,7 +225,7 @@ impl HostConn {
                 }
             }
         });
-        let live = Arc::new(Live { out, pending: Arc::default(), hello: theirs.clone(), early: Mutex::default() });
+        let live = Arc::new(Live { out, pending: Arc::default(), early: Mutex::default() });
         *self.live.lock() = Some(live.clone());
         self.state.send_replace(ConnState::Connected {
             host_id: theirs.host_id.clone().unwrap_or_default(),
@@ -244,15 +238,23 @@ impl HostConn {
         }
 
         let mut ping = tokio::time::interval(PING_EVERY);
+        // Silence is measured from the last frame: a timeout around the read would restart
+        // with every ping tick and never fire. `read_frame` is cancel-safe.
+        let mut last_heard = tokio::time::Instant::now();
         let result = loop {
             tokio::select! {
-                frame = tokio::time::timeout(DEAD_AFTER, reader.read_frame()) => match frame {
-                    Ok(Ok(Some(frame))) => self.route(&live, frame),
-                    Ok(Ok(None)) => break Err("the agent closed the connection".to_owned()),
-                    Ok(Err(e)) => break Err(e.to_string()),
-                    Err(_) => break Err("the agent stopped answering".to_owned()),
+                frame = reader.read_frame() => match frame {
+                    Ok(Some(frame)) => {
+                        last_heard = tokio::time::Instant::now();
+                        self.route(&live, frame);
+                    }
+                    Ok(None) => break Err("the agent closed the connection".to_owned()),
+                    Err(e) => break Err(e.to_string()),
                 },
                 _ = ping.tick() => {
+                    if last_heard.elapsed() > DEAD_AFTER {
+                        break Err("the agent stopped answering".to_owned());
+                    }
                     let frame = Frame { stream_id: 0, body: Body::Control(Control::Ping { nonce: 0 }) };
                     let _ = live.out.send(encode(&frame).expect("ping encodes"));
                 }
@@ -344,7 +346,7 @@ impl HostConn {
             }
             Body::Event(event) => {
                 let mut subs = self.subs.lock();
-                let Some(sub) = subs.values_mut().find(|s| s.stream_id == Some(frame.stream_id)) else { return };
+                let Some(sub) = sub_for_stream(&mut subs, frame.stream_id) else { return };
                 if let Kind::Thread { cursor, .. } = &mut sub.kind {
                     // A replay can overlap events already delivered; each is delivered once.
                     if cursor.is_some_and(|c| c.epoch == event.epoch && event.seq <= c.seq) {
@@ -359,7 +361,7 @@ impl HostConn {
             }
             Body::PtyData { offset, data } => {
                 let mut subs = self.subs.lock();
-                let Some(sub) = subs.values_mut().find(|s| s.stream_id == Some(frame.stream_id)) else { return };
+                let Some(sub) = sub_for_stream(&mut subs, frame.stream_id) else { return };
                 let Kind::Pty { offset: seen, .. } = &mut sub.kind else { return };
                 let end = offset + data.len() as u64;
                 // Skip bytes already delivered on an earlier connection.
@@ -370,12 +372,12 @@ impl HostConn {
                 *seen = Some(end);
                 if let Some(sink) = sub.bytes.clone() {
                     drop(subs);
-                    sink(data[skip..].to_vec());
+                    sink(if skip == 0 { data } else { data[skip..].to_vec() });
                 }
             }
             Body::PtyReset { offset } => {
                 let mut subs = self.subs.lock();
-                let Some(sub) = subs.values_mut().find(|s| s.stream_id == Some(frame.stream_id)) else { return };
+                let Some(sub) = sub_for_stream(&mut subs, frame.stream_id) else { return };
                 let Kind::Pty { offset: seen, .. } = &mut sub.kind else { return };
                 let fresh = seen.is_none();
                 *seen = Some(offset);
@@ -397,10 +399,11 @@ impl HostConn {
         }
     }
 
-    /// The agent's Hello on the current connection.
-    pub fn agent_hello(&self) -> Option<Hello> {
-        self.live.lock().as_ref().map(|l| l.hello.clone())
-    }
+}
+
+/// The subscription that `stream_id` belongs to on the current connection.
+fn sub_for_stream(subs: &mut HashMap<u64, Sub>, stream_id: u32) -> Option<&mut Sub> {
+    subs.values_mut().find(|s| s.stream_id == Some(stream_id))
 }
 
 pub fn client_hello() -> Hello {

@@ -30,6 +30,11 @@ impl AgentPaths {
         self.state_dir().join("agent.lock")
     }
 
+    /// The installed agent, `bin/current/speedy-agent`.
+    pub fn current_binary(&self) -> PathBuf {
+        self.root.join("bin/current/speedy-agent")
+    }
+
     pub fn host_id(&self) -> PathBuf {
         self.state_dir().join("host-id")
     }

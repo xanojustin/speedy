@@ -3,7 +3,7 @@
 //!
 //! [`Host`] persists projects and threads in `host.json` and changes them only through
 //! the operations below, each of which is broadcast to every host subscriber. Each thread
-//! runs one [`ClaudeActor`] and does what the webview used to: it queues messages sent
+//! runs one [`ClaudeActor`] and owns its behavior: it queues messages sent
 //! mid-turn and sends them in order, echoes each sent message as `user_sent` (the CLI
 //! doesn't), titles a new thread from its first message, records the session binding, and
 //! creates a requested worktree before the first start. All of it works with no client

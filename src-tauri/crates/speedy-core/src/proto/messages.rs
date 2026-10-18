@@ -1,8 +1,8 @@
 //! U4: the msgpack-encoded messages carried by Control, Request, Response and Event
 //! frames, and `Hello` version negotiation (KTD4, KTD5, KTD9).
 //!
-//! RPC params and results, and event bodies, are the same JSON values the webview
-//! exchanges with Tauri today, so the app forwards them without knowing their types.
+//! RPC params and results, and event bodies, are the JSON values the webview sends and
+//! receives, so the app forwards them without knowing their types.
 
 use std::fmt;
 

@@ -227,3 +227,37 @@ fn the_bundled_agent_replaces_the_installed_one_only_when_that_interrupts_nothin
     let ancient = build("0000", (0, 0));
     assert_eq!(decide(Some(&ancient), &bundled, true, true), Upgrade::Blocked, "incompatible and busy");
 }
+
+#[tokio::test(start_paused = true)]
+async fn an_agent_that_goes_silent_is_dropped_even_while_pings_go_out() {
+    use speedy_core::proto::{Body, Control, Frame, Hello, MAGIC, WIRE_VERSION, encode};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Says Hello, then reads (and ignores) everything without ever answering.
+    let connector: Connector = Arc::new(|| {
+        let (ours, mut theirs) = tokio::io::duplex(1 << 16);
+        tokio::spawn(async move {
+            let hello = Hello {
+                protocol_min: 1,
+                protocol_max: 1,
+                agent_version: "test".into(),
+                build_sha: "test".into(),
+                host_id: Some("mute".into()),
+                epoch: Some(1),
+                capabilities: vec![],
+            };
+            let mut bytes = MAGIC.to_vec();
+            bytes.extend_from_slice(&WIRE_VERSION.to_le_bytes());
+            bytes.extend(encode(&Frame { stream_id: 0, body: Body::Control(Control::Hello(hello)) }).unwrap());
+            theirs.write_all(&bytes).await.unwrap();
+            let mut sink = [0u8; 1024];
+            while theirs.read(&mut sink).await.is_ok_and(|n| n > 0) {}
+        });
+        Box::pin(async move { Ok(Box::new(ours) as Box<dyn Stream>) })
+    });
+    let conn = HostConn::start(connector);
+    connected(&conn).await;
+    let mut state = conn.watch();
+    let dropped = state.wait_for(|s| matches!(s, ConnState::Reconnecting { error } if error.contains("stopped answering")));
+    tokio::time::timeout(Duration::from_secs(60), dropped).await.expect("dropped within a minute of silence").unwrap();
+}

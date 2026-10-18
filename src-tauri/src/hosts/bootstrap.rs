@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use super::local::{self, Build, VersionInfo};
-use super::ssh::Ssh;
+use super::ssh::{REMOTE_AGENT, Ssh};
 
 const PROBE_MARK: &str = "SPEEDY-PROBE";
 
@@ -20,7 +20,7 @@ pub struct Probe {
 }
 
 /// The probe script, fed to `/bin/sh -s`. Fields are NUL-separated after a marker, so
-/// whatever the user's shell startup prints first is skipped.
+/// whatever the user's shell startup prints first is skipped. `$a` is [`REMOTE_AGENT`].
 pub const PROBE: &str = r#"a="$HOME/.speedy/agent/bin/current/speedy-agent"
 printf 'SPEEDY-PROBE\0%s\0%s\0' "$(uname -s)" "$(uname -m)"
 if [ -x "$a" ]; then
@@ -59,7 +59,7 @@ pub fn plan(probe: &Probe, bundled: &Build, bundled_archs: &[String]) -> Result<
     if probe.os != "Darwin" {
         return Err(format!("{} isn't a Mac ({}); Speedy hosts are macOS for now", probe.os, probe.arch));
     }
-    let arch = if probe.arch == "arm64" { "arm64" } else { probe.arch.as_str() };
+    let arch = probe.arch.as_str();
     if !bundled_archs.iter().any(|a| a == arch) {
         return Err(format!("this Speedy's agent is built for {} only; the host is {arch}", bundled_archs.join(", ")));
     }
@@ -89,7 +89,7 @@ chmod 755 .speedy-agent-upload && mv -f .speedy-agent-upload speedy-agent && ./s
 
 /// Restarts the installed agent from `bin/current`.
 pub async fn start_installed(ssh: &Ssh) -> Result<(), String> {
-    run(ssh, "\"$HOME/.speedy/agent/bin/current/speedy-agent\" install").await
+    run(ssh, &format!("\"$HOME/{REMOTE_AGENT}\" install")).await
 }
 
 pub async fn probe(ssh: &Ssh) -> Result<Probe, String> {
@@ -102,18 +102,29 @@ async fn run(ssh: &Ssh, script: &str) -> Result<(), String> {
     if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()) }
 }
 
-/// The architectures the bundled agent runs on (`lipo -archs`).
+/// The architectures the bundled agent runs on (`lipo -archs`), read once.
 pub fn bundled_archs(binary: &Path) -> Vec<String> {
-    std::process::Command::new("/usr/bin/lipo")
-        .arg("-archs")
-        .arg(binary)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(str::to_owned).collect())
-        .unwrap_or_default()
+    static ARCHS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    ARCHS
+        .get_or_init(|| {
+            std::process::Command::new("/usr/bin/lipo")
+                .arg("-archs")
+                .arg(binary)
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(str::to_owned).collect())
+                .unwrap_or_default()
+        })
+        .clone()
 }
 
+/// The bundled agent and its build, inspected once: the sidecar can't change while the app runs.
 pub fn bundled() -> Result<(std::path::PathBuf, Build), String> {
-    let binary = local::bundled_agent().map_err(|e| e.to_string())?;
-    let build = local::inspect(&binary).map_err(|e| e.to_string())?;
-    Ok((binary, build))
+    static BUNDLED: std::sync::OnceLock<Result<(std::path::PathBuf, Build), String>> = std::sync::OnceLock::new();
+    BUNDLED
+        .get_or_init(|| {
+            let binary = local::bundled_agent().map_err(|e| e.to_string())?;
+            let build = local::inspect(&binary).map_err(|e| e.to_string())?;
+            Ok((binary, build))
+        })
+        .clone()
 }

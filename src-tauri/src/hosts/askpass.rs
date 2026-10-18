@@ -19,7 +19,6 @@ use tokio::sync::oneshot;
 
 const SOCKET_VAR: &str = "SPEEDY_ASKPASS_SOCKET";
 const TOKEN_VAR: &str = "SPEEDY_ASKPASS_TOKEN";
-const HOST_VAR: &str = "SPEEDY_ASKPASS_HOST";
 /// How long a prompt waits for the user before ssh gives up on it.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -75,7 +74,6 @@ impl Askpass {
             ("SSH_ASKPASS".into(), exe),
             (SOCKET_VAR.into(), self.socket.to_string_lossy().into_owned()),
             (TOKEN_VAR.into(), token),
-            (HOST_VAR.into(), host.to_owned()),
         ]
     }
 

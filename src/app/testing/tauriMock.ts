@@ -228,7 +228,7 @@ export function emptyState(): AppState {
 }
 
 export const invoke = vi.fn(async (outer: string, outerArgs?: Record<string, unknown>): Promise<unknown> => {
-  // A host RPC is recorded under its method, like the old command it replaces.
+  // A host RPC is recorded under its method name.
   const viaHost = outer === "host_call";
   const cmd = viaHost ? (outerArgs!.method as string) : outer;
   const args = viaHost ? (outerArgs!.params as Record<string, unknown>) : outerArgs;

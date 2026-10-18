@@ -50,7 +50,7 @@ pub fn plist_path() -> PathBuf {
 /// The LaunchAgent: `bin/current/speedy-agent run`, restarted only when it exits non-zero,
 /// and not throttled like a background job. `home` is set only for a non-default root.
 pub fn plist(paths: &AgentPaths, home: Option<&Path>) -> String {
-    let program = paths.root.join("bin/current/speedy-agent");
+    let program = paths.current_binary();
     let env = home.map_or_else(String::new, |h| {
         format!(
             "\t<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>SPEEDY_AGENT_HOME</key>\n\t\t<string>{}</string>\n\t</dict>\n",

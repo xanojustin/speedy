@@ -40,6 +40,17 @@ pub enum Upgrade {
     Blocked,
 }
 
+impl Upgrade {
+    /// What a host's header says while the swap waits, if anything.
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            Upgrade::Pending => Some("pending"),
+            Upgrade::Blocked => Some("blocked"),
+            Upgrade::UpToDate | Upgrade::Install => None,
+        }
+    }
+}
+
 pub fn decide(installed: Option<&Build>, bundled: &Build, running: bool, busy: bool) -> Upgrade {
     let Some(installed) = installed else { return Upgrade::Install };
     if installed.sha256 == bundled.sha256 {
@@ -61,7 +72,7 @@ pub fn bundled_agent() -> io::Result<PathBuf> {
 }
 
 pub fn current_agent(paths: &AgentPaths) -> PathBuf {
-    paths.root.join("bin/current/speedy-agent")
+    paths.current_binary()
 }
 
 pub fn inspect(binary: &Path) -> io::Result<Build> {

@@ -5,7 +5,7 @@ import { FolderBrowser } from "../hosts/FolderBrowser";
 import { HostHeader } from "../hosts/HostHeader";
 import { openInVscode, pathsExist } from "../ipc/commands";
 import { GROUP_COLORS, LOCAL_HOST, type Group, type HostInfo, type Project } from "../ipc/types";
-import { hostSections, sidebarSections, useAppStore, type SidebarSection } from "../store/appStore";
+import { hostLabel, hostSections, sidebarSections, useAppStore, type SidebarSection } from "../store/appStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { beginDragReorder } from "./dragReorder";
 import { GroupSection, groupColorVar } from "./GroupSection";
@@ -217,7 +217,7 @@ export function Sidebar({ unread }: SidebarProps) {
     </button>
   );
 
-  // One host: the sidebar as it always was. Several: a section per host, This Mac first (R13).
+  // One host: a single Projects list. Several: a section per host, This Mac first (R13).
   let body;
   if (hosts.length <= 1) {
     const [{ projects: chats }, ...folderSections] = sidebarSections({ projects, groups });
@@ -243,10 +243,10 @@ export function Sidebar({ unread }: SidebarProps) {
           {settingsButton}
         </SectionHeader>
         {hostSections({ projects, groups, hosts }).map(({ host, sections: [{ projects: chats }, ...folderSections] }) => (
-          <section key={host.key} className="sidebar-host" aria-label={host.key === LOCAL_HOST ? "This Mac" : host.key}>
+          <section key={host.key} className="sidebar-host" aria-label={hostLabel(host.key)}>
             <HostHeader host={host} onAddProject={() => addProjectOn(host.key)} onNewGroup={() => startNewGroup(undefined, host.key)} openMenu={openMenu} />
-            {renderChats(chats, `${CHATS_LABEL} on ${host.key === LOCAL_HOST ? "This Mac" : host.key}`)}
-            {renderTree(folderSections, `Projects and threads on ${host.key === LOCAL_HOST ? "This Mac" : host.key}`)}
+            {renderChats(chats, `${CHATS_LABEL} on ${hostLabel(host.key)}`)}
+            {renderTree(folderSections, `Projects and threads on ${hostLabel(host.key)}`)}
           </section>
         ))}
       </>

@@ -268,7 +268,8 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
         }
     }
 
-    /// The next frame, or `None` at a clean end of stream between frames.
+    /// The next frame, or `None` at a clean end of stream between frames. Cancel-safe: bytes
+    /// are kept only once a read completes, so a `select!` may drop it and call it again.
     pub async fn read_frame(&mut self) -> Result<Option<Frame>, ProtoError> {
         loop {
             if let Some(frame) = self.dec.next_frame()? {

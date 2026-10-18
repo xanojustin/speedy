@@ -100,6 +100,8 @@ impl Ssh {
         }
         let mut child = cmd.spawn().map_err(|e| format!("starting ssh: {e}"))?;
         let deadline = tokio::time::Instant::now() + MASTER_TIMEOUT;
+        // Quick at first, then slower while the user answers a prompt.
+        let mut wait = Duration::from_millis(150);
         loop {
             if let Ok(Some(status)) = child.try_wait() {
                 let mut err = String::new();
@@ -116,7 +118,8 @@ impl Ssh {
             if tokio::time::Instant::now() > deadline {
                 return Err(format!("ssh to {} timed out", self.alias));
             }
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            tokio::time::sleep(wait).await;
+            wait = (wait * 2).min(Duration::from_secs(1));
         }
     }
 
