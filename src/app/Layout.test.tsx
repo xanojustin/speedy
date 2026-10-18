@@ -123,7 +123,7 @@ describe("Layout", () => {
     const tabs = screen.getByRole("tablist", { name: "Terminals" });
     const tab = (name: string) => within(tabs).getByRole("tab", { name });
     expect(tab("Terminal 2")).toHaveAttribute("aria-selected", "true");
-    await waitFor(() => expect(callsTo("pty_open").map((c) => c.args?.terminalId)).toContain("app-t1:2"));
+    await waitFor(() => expect(callsTo("host_pty_attach").map((c) => c.args?.terminalId)).toContain("app-t1:2"));
     const panes = () => [...document.querySelectorAll<HTMLElement>(".terminal-pane")].map((p) => !p.hidden);
     expect(panes()).toEqual([false, true]);
 
@@ -142,7 +142,7 @@ describe("Layout", () => {
     // Reopening starts a fresh shell.
     act(() => emitMenu("toggle_terminal"));
     expect(panes()).toEqual([true]);
-    await waitFor(() => expect(callsTo("pty_open").map((c) => c.args?.terminalId)).toContain("app-t1:3"));
+    await waitFor(() => expect(callsTo("host_pty_attach").map((c) => c.args?.terminalId)).toContain("app-t1:3"));
   });
 
   it("shows an empty state with Add Project Folder when no thread is selected", async () => {

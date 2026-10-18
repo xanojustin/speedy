@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string, args: Record<string, unknown>) => invoke(cmd, args),
+  invoke: (cmd: string, args: Record<string, unknown>) =>
+    // Host RPCs reach this fake by their method name, like the old commands.
+    (cmd === "host_call" ? invoke((args as { method: string }).method, (args as { params: unknown }).params) : invoke(cmd, args)),
   Channel: class {
     onmessage: (m: unknown) => void = () => {};
   },
@@ -72,6 +74,8 @@ const blocksOf = (id: string) => useThreadStore.getState().threads[id]?.blocks ?
 const userBlock = (uuid: string) => blocksOf(threadId).find((b) => b.kind === "user" && b.uuid === uuid) as ViewBlock;
 const threads = () => useAppStore.getState().projects[0].threads;
 const forkStarts = () => calls("claude_start").filter((c) => (c[1] as { threadId: string }).threadId !== threadId);
+/** The thread the host was asked to create for the fork. */
+const forkCreated = () => (calls("thread_create").at(-1)?.[1] as { thread: Record<string, unknown> } | undefined)?.thread;
 
 function openAction(uuid: string, option: string) {
   render(<BlockView block={userBlock(uuid)} pos={NO_POS} stamp={null} threadId={threadId} />);
@@ -96,10 +100,9 @@ describe("rewind", () => {
     ]);
 
     const fork = threads().find((t) => t.id !== threadId)!;
-    expect(forkStarts()[0][1]).toMatchObject({
-      threadId: fork.id,
-      options: { cwd: "/work/proj", resumeSessionId: "s1", resumeSessionAt: "a1", forkSession: true },
-    });
+    expect(forkStarts()[0][1]).toEqual({ threadId: fork.id });
+    // The host spawns the fork with --resume s1 --resume-session-at a1 --fork-session.
+    expect(forkCreated()).toMatchObject({ id: fork.id, fork: { resumeSessionId: "s1", resumeSessionAt: "a1" } });
     expect(useAppStore.getState().selectedThreadId).toBe(fork.id);
     // The fork shows the conversation up to the rewound message; the original thread is untouched.
     expect(blocksOf(fork.id).map((b) => (b.kind === "user" || b.kind === "text" ? b.text : b.kind))).toEqual([
@@ -144,7 +147,7 @@ describe("rewind", () => {
     openAction("u2", "Fork conversation from here");
     await waitFor(() => expect(forkStarts()).toHaveLength(1));
     expect(controls()).toHaveLength(0);
-    expect(forkStarts()[0][1]).toMatchObject({ options: { resumeSessionId: "s1", resumeSessionAt: "a1", forkSession: true } });
+    expect(forkCreated()).toMatchObject({ fork: { resumeSessionId: "s1", resumeSessionAt: "a1" } });
   });
 
   it("forking from the first message starts a fresh conversation", async () => {

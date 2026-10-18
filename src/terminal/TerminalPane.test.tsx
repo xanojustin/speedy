@@ -8,7 +8,6 @@ const ipc = vi.hoisted(() => ({
   ptyWrite: vi.fn(),
   ptyResize: vi.fn(),
   ptyClose: vi.fn(),
-  onPtyExit: vi.fn(),
   openPath: vi.fn(),
 }));
 vi.mock("../ipc/commands", () => ipc);
@@ -77,9 +76,9 @@ beforeEach(() => {
   ipc.ptyWrite.mockResolvedValue(undefined);
   ipc.ptyResize.mockResolvedValue(undefined);
   ipc.ptyClose.mockResolvedValue(undefined);
-  ipc.onPtyExit.mockImplementation(async (cb: (e: PtyExit) => void) => {
-    exitListener = cb;
-    return () => {};
+  ipc.ptyOpen.mockImplementation(async (_id: string, _cwd: string, _c: number, _r: number, _data: unknown, onExit: (e: PtyExit) => void) => {
+    exitListener = onExit;
+    return 1;
   });
 });
 
@@ -220,7 +219,7 @@ describe("TerminalPane", () => {
 
   it("reports a shell exit and restarts the PTY on Enter", async () => {
     render(pane("x1"));
-    // The registry subscribes to pty-exit once, with its first terminal.
+    // The shell's exit arrives on the callback the registry passed to ptyOpen.
     act(() => exitListener({ terminalId: "x1", code: 0 }));
     await vi.waitFor(() => expect(screenText()).toContain("[Process exited with code 0]"));
     press({ key: "a", code: "KeyA", keyCode: 65 });

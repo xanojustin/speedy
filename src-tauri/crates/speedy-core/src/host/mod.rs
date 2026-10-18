@@ -78,6 +78,10 @@ pub struct NewThread {
     pub model: Option<String>,
     pub permission_mode: Option<String>,
     pub worktree_requested: bool,
+    /// Resume this CLI session (opening one from history).
+    pub session_id: Option<String>,
+    /// Run in this existing worktree (a fork of a worktree thread).
+    pub worktree: Option<ThreadWorktree>,
     /// A rewind fork: the new thread resumes this session, truncated, as a new session.
     pub fork: Option<ForkFrom>,
 }
@@ -91,6 +95,8 @@ pub struct ThreadPatch {
     pub model: Option<String>,
     pub permission_mode: Option<String>,
     pub worktree_requested: Option<bool>,
+    /// Drop the thread's worktree record (cleanup removed it); it falls back to the project folder.
+    pub clear_worktree: Option<bool>,
 }
 
 /// Everything a host subscriber needs before live host events.
@@ -235,6 +241,8 @@ impl Host {
             model: new.model,
             permission_mode: new.permission_mode,
             worktree_requested: new.worktree_requested,
+            session_id: new.session_id,
+            worktree: new.worktree,
             fork: new.fork,
             ..HostThread::default()
         };
@@ -262,6 +270,9 @@ impl Host {
             }
             if let Some(requested) = patch.worktree_requested {
                 t.worktree_requested = requested;
+            }
+            if patch.clear_worktree == Some(true) {
+                t.worktree = None;
             }
         })
     }
@@ -491,7 +502,7 @@ impl Host {
         let state = self.state.lock();
         let (project, thread) = state.thread(id).ok_or_else(|| format!("no thread {id}"))?;
         let (resume_session_id, resume_session_at, fork_session) = match &thread.fork {
-            Some(fork) => (Some(fork.resume_session_id.clone()), Some(fork.resume_session_at.clone()), Some(true)),
+            Some(fork) => (Some(fork.resume_session_id.clone()), fork.resume_session_at.clone(), Some(true)),
             None => (thread.session_id.clone(), None, None),
         };
         Ok(StartOptions {

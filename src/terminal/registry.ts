@@ -6,7 +6,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { onPtyExit, openPath, ptyClose, ptyOpen, ptyResize, ptyWrite } from "../ipc/commands";
+import { openPath, ptyClose, ptyOpen, ptyResize, ptyWrite } from "../ipc/commands";
+import type { PtyExit } from "../ipc/types";
 import { terminalKeyAction } from "./keys";
 import { useTerminalTabs } from "./tabs";
 import { attachWebgl } from "./webgl";
@@ -80,13 +81,6 @@ let listening = false;
 function listenOnce() {
   if (listening) return;
   listening = true;
-  void onPtyExit((e) => {
-    const entry = entries.get(e.terminalId);
-    if (!entry) return;
-    entry.exited = true;
-    const status = e.code == null ? "[Process exited]" : `[Process exited with code ${e.code}]`;
-    entry.term.write(`\r\n${status} — press Enter to restart\r\n`);
-  });
   // The theme tokens change with the OS appearance; re-read them after a light/dark switch.
   window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
     requestAnimationFrame(() => {
@@ -98,10 +92,18 @@ function listenOnce() {
 
 // ---- PTY ----
 
+function onExit(e: PtyExit) {
+  const entry = entries.get(e.terminalId);
+  if (!entry) return;
+  entry.exited = true;
+  const status = e.code == null ? "[Process exited]" : `[Process exited with code ${e.code}]`;
+  entry.term.write(`\r\n${status} — press Enter to restart\r\n`);
+}
+
 function startPty(entry: Entry) {
   const { terminalId, cwd, term } = entry;
   entry.exited = false;
-  ptyOpen(terminalId, cwd, term.cols, term.rows, (bytes) => term.write(bytes)).catch((err) => {
+  ptyOpen(terminalId, cwd, term.cols, term.rows, (bytes) => term.write(bytes), onExit).catch((err) => {
     if (entries.get(terminalId) !== entry) return;
     entry.exited = true;
     term.write(`\r\n\x1b[31m[Failed to start shell: ${String(err)}]\x1b[0m — press Enter to retry\r\n`);

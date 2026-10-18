@@ -20,17 +20,6 @@ pub fn chats_dir() -> PathBuf {
     default_state_dir().join("Chats")
 }
 
-/// Loads the app state and injects the Chats project, creating its folder.
-pub fn load_with_chats(store: &StateStore) -> LoadResult {
-    let mut result = store.load();
-    let dir = chats_dir();
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        log::error!("creating the Chats folder {} failed: {e}", dir.display());
-    }
-    ensure_chats_project(&mut result.state, &dir);
-    result
-}
-
 /// For each path, whether it exists on disk (missing projects render as missing).
 pub async fn paths_exist(paths: Vec<String>) -> Vec<bool> {
     // Stat calls can block (e.g. on a slow network volume); keep them off the async workers.

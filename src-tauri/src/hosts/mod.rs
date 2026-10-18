@@ -159,7 +159,7 @@ pub async fn host_call(hosts: Hosts<'_>, host: String, method: String, params: V
 
 /// Host events: a `host_snapshot` on every (re)connect, then upserts and status changes.
 #[tauri::command]
-pub fn host_subscribe(hosts: Hosts<'_>, host: String, on_event: Channel<Value>) -> Result<u64, String> {
+pub async fn host_subscribe(hosts: Hosts<'_>, host: String, on_event: Channel<Value>) -> Result<u64, String> {
     Ok(hosts.get(&host)?.subscribe_host(Arc::new(move |e| {
         let _ = on_event.send(e);
     })))
@@ -167,7 +167,7 @@ pub fn host_subscribe(hosts: Hosts<'_>, host: String, on_event: Channel<Value>) 
 
 /// A thread's events, continuous across reconnects (a `snapshot` event when the agent can't replay).
 #[tauri::command]
-pub fn host_thread_subscribe(hosts: Hosts<'_>, host: String, thread_id: String, on_event: Channel<Value>) -> Result<u64, String> {
+pub async fn host_thread_subscribe(hosts: Hosts<'_>, host: String, thread_id: String, on_event: Channel<Value>) -> Result<u64, String> {
     Ok(hosts.get(&host)?.subscribe_thread(&thread_id, Arc::new(move |e| {
         let _ = on_event.send(e);
     })))
@@ -176,7 +176,7 @@ pub fn host_thread_subscribe(hosts: Hosts<'_>, host: String, thread_id: String, 
 /// Attaches to a terminal (starting its shell if absent): raw output on `on_data`, `pty_exit` on `on_exit`.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn host_pty_attach(
+pub async fn host_pty_attach(
     hosts: Hosts<'_>,
     host: String,
     terminal_id: String,
@@ -203,14 +203,14 @@ pub async fn host_pty_resize(hosts: Hosts<'_>, host: String, terminal_id: String
 }
 
 #[tauri::command]
-pub fn host_unsubscribe(hosts: Hosts<'_>, host: String, sub_id: u64) -> Result<(), String> {
+pub async fn host_unsubscribe(hosts: Hosts<'_>, host: String, sub_id: u64) -> Result<(), String> {
     hosts.get(&host)?.unsubscribe(sub_id);
     Ok(())
 }
 
 /// The host's connection state now, then every change.
 #[tauri::command]
-pub fn host_watch(hosts: Hosts<'_>, host: String, on_state: Channel<ConnState>) -> Result<(), String> {
+pub async fn host_watch(hosts: Hosts<'_>, host: String, on_state: Channel<ConnState>) -> Result<(), String> {
     let mut rx = hosts.get(&host)?.watch();
     tokio::spawn(async move {
         loop {

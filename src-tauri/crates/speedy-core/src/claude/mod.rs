@@ -1,6 +1,6 @@
 //! U3: one `claude` CLI process per thread, speaking stream-json (KTD4, KTD5, KTD9).
-//! The public types here are the IPC contract. `actor.rs` runs one thread;
-//! `SessionManager` maps thread ids to actors. `diff.rs`
+//! The public types here are the IPC contract. `actor.rs` runs one thread (the agent's
+//! `host` module owns them). `diff.rs`
 //! computes the proposed file change shown with an edit tool's permission request.
 
 pub mod actor;
@@ -8,13 +8,10 @@ pub mod diff;
 pub mod process;
 pub mod protocol;
 
-use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::env::EnvService;
 
 pub use diff::FileDiff;
 
@@ -94,62 +91,5 @@ pub struct PermissionOutcome {
     pub refreshed_diff: Option<Vec<FileDiff>>,
 }
 
-/// Called on every thread status transition with `(thread_id, from, to)`.
-pub type StatusListener = Arc<dyn Fn(&str, ThreadStatus, ThreadStatus) + Send + Sync>;
-
-/// Owns every thread's actor.
-pub struct SessionManager {
-    env: Arc<EnvService>,
-    on_status: StatusListener,
-    actors: parking_lot::Mutex<HashMap<String, actor::ClaudeActor>>,
-}
-
 /// Grace between SIGTERM and SIGKILL when a thread is stopped.
 pub const STOP_GRACE: Duration = Duration::from_secs(3);
-
-impl SessionManager {
-    pub fn new(env: Arc<EnvService>, on_status: StatusListener) -> Self {
-        SessionManager { env, on_status, actors: Default::default() }
-    }
-
-    pub fn actor(&self, thread_id: &str) -> Result<actor::ClaudeActor, String> {
-        self.actors.lock().get(thread_id).cloned().ok_or_else(|| format!("thread {thread_id} has no claude session"))
-    }
-
-    /// Spawns lazily, rebinds the sink of a running actor, or relaunches a stopped one.
-    pub async fn start(&self, thread_id: String, options: StartOptions, sink: actor::EventSink) -> Result<ThreadStatus, String> {
-        if let Some(existing) = self.actors.lock().get(&thread_id) {
-            existing.rebind(sink);
-            return Ok(match existing.status() {
-                ThreadStatus::Stopped => existing.restart(options),
-                status => status,
-            });
-        }
-        let program = self.env.claude_path().await.ok_or("claude CLI not found; finish setup first")?;
-        let config = actor::ActorConfig {
-            program,
-            options,
-            env: self.env.env().await.vars,
-            extension_settings: self.env.extension_settings(),
-        };
-        let mut actors = self.actors.lock();
-        // Another start for this thread may have won while env was resolving.
-        if let Some(existing) = actors.get(&thread_id) {
-            existing.rebind(sink);
-            return Ok(existing.status());
-        }
-        let on_status = self.on_status.clone();
-        let id = thread_id.clone();
-        let observer: actor::StatusObserver = Arc::new(move |from, to| on_status(&id, from, to));
-        let actor = actor::ClaudeActor::start(config, sink, observer);
-        let status = actor.status();
-        actors.insert(thread_id, actor);
-        Ok(status)
-    }
-
-    /// KTD9 quit sequence across every actor; blocks up to `grace` before SIGKILL.
-    pub fn shutdown_all(&self, grace: Duration) {
-        let actors: Vec<actor::ClaudeActor> = self.actors.lock().values().cloned().collect();
-        actor::shutdown_all(&actors, grace);
-    }
-}

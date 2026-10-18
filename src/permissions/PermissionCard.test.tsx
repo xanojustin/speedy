@@ -4,7 +4,9 @@ import type { CanUseToolRequest, FileDiff, PermissionOutcome } from "../ipc/type
 
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string, args: unknown) => invoke(cmd, args),
+  invoke: (cmd: string, args: unknown) =>
+    // Host RPCs reach this fake by their method name, like the old commands.
+    (cmd === "host_call" ? invoke((args as { method: string }).method, (args as { params: unknown }).params) : invoke(cmd, args)),
   Channel: class {
     onmessage: (m: unknown) => void = () => {};
   },
@@ -221,7 +223,7 @@ describe("generic prompt choices", () => {
     const bypassOnly = [suggestions![1]];
     addRequest({ tool_name: "Bash", input: { command: "npm test" }, permission_suggestions: bypassOnly });
     card();
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_extension_settings", undefined));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_extension_settings", {}));
     await act(async () => {});
     fireEvent.click(await screen.findByRole("button", { name: /^2\s*Yes/ }));
     await waitFor(() => expect(respondCalls()).toHaveLength(1));

@@ -4,7 +4,9 @@ import type { SessionMeta } from "../ipc/types";
 
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string, args: Record<string, unknown>) => invoke(cmd, args),
+  invoke: (cmd: string, args: Record<string, unknown>) =>
+    // Host RPCs reach this fake by their method name, like the old commands.
+    (cmd === "host_call" ? invoke((args as { method: string }).method, (args as { params: unknown }).params) : invoke(cmd, args)),
   Channel: class {
     onmessage: (m: unknown) => void = () => {};
   },
@@ -110,7 +112,9 @@ describe("SessionList", () => {
     expect(created.title).toBe("Fix login bug");
     expect(useAppStore.getState().selectedThreadId).toBe(created.id);
     expect(calls("session_load")[0][1]).toEqual({ projectPath: "/work/proj", sessionId: "s-new" });
-    expect(calls("claude_start")[0][1]).toMatchObject({ threadId: created.id, options: { cwd: "/work/proj", resumeSessionId: "s-new" } });
+    // The host resumes the bound session in the project folder.
+    expect(calls("thread_create").at(-1)?.[1]).toMatchObject({ thread: { id: created.id, sessionId: "s-new" } });
+    expect(calls("claude_start")[0][1]).toEqual({ threadId: created.id });
     const blocks = useThreadStore.getState().threads[created.id].blocks;
     expect(blocks.map((b) => b.kind)).toEqual(["user", "text"]);
     expect(onClose).toHaveBeenCalled();

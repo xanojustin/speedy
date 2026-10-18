@@ -54,7 +54,7 @@ pub fn split_legacy(legacy: AppState, host_id: &str) -> (HostState, ClientState)
             .collect();
         host_projects.push(HostProject { id: p.id, path: p.path, name: p.name, scratch: p.scratch, threads });
     }
-    let host = HostState { projects: host_projects, claude_path_override: legacy.claude_path_override, ..HostState::default() };
+    let host = HostState { projects: host_projects, claude_path_override: legacy.claude_path_override.clone(), ..HostState::default() };
     let client = ClientState {
         groups: legacy.groups,
         projects: client_projects,
@@ -64,6 +64,7 @@ pub fn split_legacy(legacy: AppState, host_id: &str) -> (HostState, ClientState)
         notifications_enabled: legacy.notifications_enabled,
         completion_sound: legacy.completion_sound,
         activity_panel_visible: legacy.activity_panel_visible,
+        claude_path_override: legacy.claude_path_override,
         ..ClientState::default()
     };
     (host, client)

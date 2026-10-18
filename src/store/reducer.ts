@@ -163,15 +163,12 @@ export function initialRuntime(): ThreadRuntime {
 // ---------- actions ----------
 
 export type LocalAction =
-  | { kind: "local_user"; id: string; content: unknown[]; ts: number }
   | { kind: "seed"; lines: Record<string, unknown>[] }
   | { kind: "seed_state"; seed: ThreadRuntime["seed"] }
   | { kind: "local_notice"; variant: "info" | "warning"; text: string }
   | { kind: "local_status"; status: ThreadStatus; detail?: string | null }
   | { kind: "retrying" }
   | { kind: "permission_answered"; requestId: string }
-  | { kind: "queue_add"; item: QueuedMessage }
-  | { kind: "queue_remove"; id: string }
   | { kind: "context_usage"; usage: unknown };
 
 export type ThreadAction = ClaudeEvent | LocalAction;
@@ -789,15 +786,37 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
         a.seq,
       );
 
-    // ---- local actions ----
-    case "local_user": {
+    // ---- events the host adds (KTD6) ----
+    case "user_sent": {
+      // The CLI doesn't echo user messages; the host does, for every client and replay.
       const { text, images } = flattenText(a.content);
-      return {
-        ...s,
-        blocks: [...s.blocks, { kind: "user", id: a.id, uuid: null, text, images, ts: a.ts }],
-        status: s.status === "idle" ? "working" : s.status,
-      };
+      return withSeq(
+        {
+          ...s,
+          blocks: [...s.blocks, { kind: "user", id: a.id, uuid: null, text, images, ts: now }],
+          status: s.status === "idle" ? "working" : s.status,
+        },
+        a.seq,
+      );
     }
+    case "queue_changed":
+      return withSeq({ ...s, queue: a.queue }, a.seq);
+    case "send_failed":
+      return withSeq(
+        {
+          ...s,
+          // Undo the idle -> working the echo made, so the thread doesn't spin forever.
+          status: s.status === "working" ? "idle" : s.status,
+          blocks: [...s.blocks, { kind: "notice", id: `send-${a.id}`, variant: "warning", text: `Message not sent: ${a.error}`, ts: now }],
+        },
+        a.seq,
+      );
+    // The runtime reseeds from a snapshot; a refused subscribe shows as a notice there.
+    case "snapshot":
+    case "subscribe_failed":
+      return s;
+
+    // ---- local actions ----
     case "seed":
       return seedRuntime(s, a.lines, now, true);
     case "seed_state":
@@ -810,10 +829,6 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
       return { ...s, retrying: true };
     case "permission_answered":
       return { ...s, pendingPermissions: s.pendingPermissions.filter((p) => p.requestId !== a.requestId) };
-    case "queue_add":
-      return { ...s, queue: [...s.queue, a.item] };
-    case "queue_remove":
-      return { ...s, queue: s.queue.filter((q) => q.id !== a.id) };
     case "context_usage":
       return { ...s, contextUsage: a.usage };
   }

@@ -233,9 +233,9 @@ describe("reducer: runtime state", () => {
     expect(s.stderrTail).toContain("line 499");
   });
 
-  it("adds an optimistic user block and binds its uuid from the next assistant message", () => {
+  it("adds a user block from the host's echo and binds its uuid from the next assistant message", () => {
     const s = run([
-      { kind: "local_user", id: "u1", content: [{ type: "text", text: "hi there" }], ts: 5 },
+      { kind: "user_sent", seq: 1, id: "u1", content: [{ type: "text", text: "hi there" }] },
       asst([{ type: "text", text: "hello" }], null, "msg_1", { user_message_uuid: "uuid-1" }),
     ]);
     expect(s.blocks[0]).toMatchObject({ kind: "user", text: "hi there", uuid: "uuid-1" });
@@ -278,7 +278,7 @@ describe("reducer: recorded CLI fixture", () => {
       if (dir === "out") {
         if (msg.type === "user") {
           const content = (msg.message as { content: unknown[] }).content;
-          actions.push({ kind: "local_user", id: `local-${n}`, content, ts: n });
+          actions.push({ kind: "user_sent", seq: n, id: `local-${n}`, content });
         } else if (msg.type === "control_response") {
           const resp = msg.response as { request_id: string };
           actions.push({ kind: "permission_answered", requestId: resp.request_id });
@@ -341,7 +341,7 @@ function spikeLines(): Record<string, unknown>[] {
 function syntheticLines(messages: number): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   for (const a of syntheticSession(messages)) {
-    if (a.kind === "local_user") out.push({ type: "user", uuid: a.id, timestamp: new Date(a.ts).toISOString(), message: { role: "user", content: a.content } });
+    if (a.kind === "user_sent") out.push({ type: "user", uuid: a.id, timestamp: new Date(a.seq * 1000).toISOString(), message: { role: "user", content: a.content } });
     else if (a.kind === "message" && (a.raw.type === "user" || a.raw.type === "assistant")) out.push({ ...a.raw, timestamp: "2026-10-14T10:00:00.000Z" });
   }
   // A second text block for an existing message id, a duplicate tool id, a result for an unknown
@@ -364,7 +364,7 @@ function syntheticLines(messages: number): Record<string, unknown>[] {
 }
 
 describe("reducer: seeding", () => {
-  const prior = (): ThreadRuntime => run([{ kind: "local_user", id: "live", content: [{ type: "text", text: "typed before load" }], ts: 1 }]);
+  const prior = (): ThreadRuntime => run([{ kind: "user_sent", seq: 1, id: "live", content: [{ type: "text", text: "typed before load" }] }]);
 
   it("builds the same transcript as the copy-per-line path (spike fixture)", () => {
     const lines = spikeLines();

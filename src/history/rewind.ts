@@ -83,9 +83,10 @@ export async function forkConversation(threadId: string, userMessageId: string):
   const worktree = thread.worktree ?? null;
   if (!anchor) return app.createThread(project.id, { worktree }); // Nothing before the first message: a fresh conversation.
 
-  const forkId = app.createThread(project.id, { title: thread.title, worktree });
+  // The host spawns the fork with --resume/--resume-session-at/--fork-session until its own session binds.
+  const forkId = app.createThread(project.id, { title: thread.title, worktree, fork: { resumeSessionId: thread.sessionId, resumeSessionAt: anchor } });
   seedTranscript(forkId, history);
-  // The fork's own session id binds on its first turn (session_bound); start errors show on the thread.
-  void ensureStarted(forkId, { resumeSessionId: thread.sessionId, resumeSessionAt: anchor, forkSession: true }).catch(() => {});
+  // Start errors show on the thread.
+  void ensureStarted(forkId).catch(() => {});
   return forkId;
 }

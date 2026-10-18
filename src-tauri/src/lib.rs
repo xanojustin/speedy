@@ -1,28 +1,26 @@
-//! Speedy app: the Tauri shell around `speedy_core` (KTD1), plus the macOS-only
-//! pieces (menu, `speedy` command, notifications and Dock badge) and the IPC
-//! surface the single React webview talks to.
+//! Speedy app: a client of `speedy-agent` hosts (KTD1, KTD3, KTD11). The webview reaches
+//! every host through [`hosts`]; this crate adds the macOS-only pieces (menu, `speedy`
+//! command, notifications and Dock badge) and the app's own `client.json` preferences.
 
 pub mod attention;
 pub mod cli;
-mod commands;
 pub mod hosts;
 pub mod menu;
 
 use std::sync::Arc;
 
-use speedy_core::{claude, env, pty, state};
-use tauri::{Emitter, Manager, RunEvent, WindowEvent};
+use speedy_core::host::migrate::migrate_client;
+use speedy_core::state::client::ClientState;
+use speedy_core::state::default_state_dir;
+use speedy_core::state::store::{JsonStore, Loaded};
+use tauri::{Manager, RunEvent, WindowEvent};
 
-/// Emitted as the app event `pty-exit` when a terminal's shell exits.
-const PTY_EXIT_EVENT: &str = "pty-exit";
-
-/// Everything the commands need, managed by Tauri as shared state.
+/// Everything the app's own commands need, managed by Tauri as shared state.
 pub struct AppCtx {
-    pub env: Arc<env::EnvService>,
-    pub sessions: Arc<claude::SessionManager>,
-    pub ptys: Arc<pty::PtyManager>,
-    pub store: Arc<state::StateStore>,
     pub attention: Arc<attention::Attention>,
+    /// The app's preferences; threads and projects belong to the hosts.
+    pub client: JsonStore<ClientState>,
+    pub client_notice: Option<String>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -34,23 +32,16 @@ pub fn run() {
         .manage(hosts::HostRegistry::new())
         .setup(|app| {
             let handle = app.handle().clone();
-            let env = Arc::new(env::EnvService::start());
-            let resolving = env.clone();
-            tauri::async_runtime::spawn(async move { env::install_command_env(resolving.env().await.vars) });
             let attention = Arc::new(attention::Attention::new(handle.clone()));
+            // This Mac's preferences from the pre-hosts state.json, once (R18).
+            let client_notice = migrate_client(&default_state_dir(), &default_state_dir(), hosts::LOCAL);
+            let client = JsonStore::new(default_state_dir());
+            let registry = app.state::<Arc<hosts::HostRegistry>>().inner().clone();
             let on_status = attention.clone();
-            let sessions = Arc::new(claude::SessionManager::new(
-                env.clone(),
-                Arc::new(move |id: &str, from, to| on_status.on_status(id, "", from, to)),
-            ));
-            let exit_handle = handle.clone();
-            let ptys = Arc::new(pty::PtyManager::new(env.clone(), move |exit: pty::PtyExit| {
-                if let Err(e) = exit_handle.emit(PTY_EXIT_EVENT, exit) {
-                    log::warn!("emitting {PTY_EXIT_EVENT}: {e}");
-                }
-            }));
-            let store = Arc::new(state::StateStore::new(state::default_state_dir()));
-            app.manage(AppCtx { env, sessions, ptys, store, attention });
+            tauri::async_runtime::spawn(async move {
+                registry.start_local(Arc::new(move |id: &str, from, to| on_status.on_status(id, "", from, to)));
+            });
+            app.manage(AppCtx { attention, client, client_notice });
             menu::install(app)?;
             Ok(())
         })
@@ -62,37 +53,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::get_setup_state,
-            commands::recheck_setup,
-            commands::get_extension_settings,
-            commands::claude_start,
-            commands::claude_send_user,
-            commands::claude_control,
-            commands::claude_respond_permission,
-            commands::claude_interrupt,
-            commands::claude_stop,
-            commands::claude_retry,
-            commands::pty_open,
-            commands::pty_write,
-            commands::pty_resize,
-            commands::pty_close,
-            commands::pty_has_foreground_child,
-            commands::state_load,
-            commands::state_save,
-            commands::paths_exist,
-            commands::sessions_list,
-            commands::session_load,
-            commands::session_rename_offline,
-            commands::files_search,
-            commands::explorer_list,
-            commands::explorer_read,
-            commands::explorer_write,
-            commands::explorer_git_status,
-            commands::explorer_git_branch,
-            commands::worktree_create,
-            commands::worktree_unused,
-            commands::worktree_clean,
-            commands::explorer_git_diff,
+            client_state_load,
+            client_state_save,
             attention::attention_set_visible,
             attention::attention_mark_read,
             attention::attention_set_titles,
@@ -117,15 +79,27 @@ pub fn run() {
             if let RunEvent::Opened { urls } = &event {
                 cli::handle_opened(app, urls);
             }
+            // Threads and shells belong to the hosts' agents and keep running (R17, KTD11).
             if let RunEvent::ExitRequested { .. } = event
                 && let Some(ctx) = app.try_state::<AppCtx>()
             {
-                // KTD9: deny pending permissions, interrupt, then terminate process groups.
-                ctx.sessions.shutdown_all(std::time::Duration::from_secs(3));
-                ctx.ptys.shutdown_all(std::time::Duration::from_secs(3));
-                ctx.store.flush();
+                ctx.client.flush();
             }
         });
+}
+
+/// The app's preferences, with a notice when migrating them from state.json went wrong.
+#[tauri::command]
+fn client_state_load(ctx: tauri::State<'_, AppCtx>) -> Loaded<ClientState> {
+    let mut loaded = ctx.client.load();
+    loaded.notice = loaded.notice.or_else(|| ctx.client_notice.clone());
+    loaded
+}
+
+/// Debounced, atomic save of the app's preferences.
+#[tauri::command]
+fn client_state_save(ctx: tauri::State<'_, AppCtx>, state: ClientState) {
+    ctx.client.save(state);
 }
 
 /// Opens a web link or an existing document with the user's default handler

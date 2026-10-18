@@ -3,7 +3,20 @@
 // not import anything that imports a mocked module (the factory would wait on itself).
 // Store resets live in ./reset.ts.
 import { vi } from "vitest";
-import type { AppState, GitChange, MenuAction, Project, SetupState, Thread, UnusedWorktree, WorktreeCleanReport } from "../../ipc/types";
+import type {
+  AppState,
+  ClientState,
+  GitChange,
+  HostEvent,
+  HostProject,
+  MenuAction,
+  Project,
+  SetupState,
+  Thread,
+  ThreadPatch,
+  UnusedWorktree,
+  WorktreeCleanReport,
+} from "../../ipc/types";
 
 type Handler = (event: { payload: unknown }) => void;
 
@@ -34,6 +47,8 @@ export const backend = {
   /** terminalId -> whether its shell has a foreground child. */
   foreground: {} as Record<string, boolean>,
   calls: [] as Call[],
+  /** Every persisted view, after each client save or host change. */
+  saves: [] as AppState[],
   listeners: {} as Record<string, Handler[]>,
   dragDrop: null as ((e: { payload: unknown }) => void) | null,
   /** Folders the OS opened with Speedy (`speedy .`) that the webview hasn't taken. */
@@ -45,7 +60,134 @@ export const backend = {
   gitChanges: [] as GitChange[],
   worktreeUnused: [] as UnusedWorktree[],
   worktreeClean: { removed: [], skipped: [], deletedBranches: [] } as WorktreeCleanReport,
+  /** Host event channels from `host_subscribe`, by host key. */
+  hostChannels: {} as Record<string, { onmessage: (e: HostEvent) => void }>,
+  /** Thread event channels from `host_thread_subscribe`, by thread id. */
+  threadChannels: {} as Record<string, { onmessage: (e: unknown) => void }>,
 };
+
+/** The fake host's view of `backend.state`'s projects. */
+function hostProjects(state: AppState): HostProject[] {
+  return state.projects.map((p) => ({
+    id: p.id,
+    path: p.path,
+    name: p.name,
+    scratch: p.scratch ?? false,
+    threads: p.threads.map((t) => ({
+      id: t.id,
+      title: t.title,
+      sessionId: t.sessionId,
+      archived: t.archived,
+      createdAt: t.createdAt,
+      model: t.model,
+      permissionMode: t.permissionMode,
+      worktree: t.worktree ?? null,
+      worktreeRequested: t.worktreeRequested ?? false,
+      fork: t.fork ?? null,
+      queue: [],
+    })),
+  }));
+}
+
+function clientOf(state: AppState): ClientState {
+  return {
+    version: 1,
+    groups: state.groups,
+    projects: state.projects.map((p) => ({ hostId: p.hostKey ?? "local", projectId: p.id, collapsed: p.collapsed, groupId: p.groupId ?? null })),
+    threads: state.projects.flatMap((p) =>
+      p.threads.map((t) => ({ threadId: t.id, splitRatio: t.splitRatio, terminalVisible: t.terminalVisible, terminalMaximized: t.terminalMaximized })),
+    ),
+    selectedThreadId: state.selectedThreadId,
+    sidebarWidth: state.sidebarWidth,
+    notificationsEnabled: state.notificationsEnabled,
+    completionSound: state.completionSound,
+    activityPanelVisible: state.activityPanelVisible,
+    claudePathOverride: state.claudePathOverride,
+  };
+}
+
+/** Folds a client.json save into the persisted view: order, prefs and layout, keeping host fields. */
+function applyClientSave(c: ClientState) {
+  const old = backend.state;
+  const byId = new Map(old.projects.map((p) => [p.id, p]));
+  const projects = c.projects.flatMap((cp) => {
+    const p = byId.get(cp.projectId);
+    if (!p) return [];
+    const order = new Map(c.threads.map((t, i) => [t.threadId, i]));
+    const layout = new Map(c.threads.map((t) => [t.threadId, t]));
+    const threads = p.threads
+      .map((t) => ({ ...t, ...(layout.get(t.id) ? { splitRatio: layout.get(t.id)!.splitRatio, terminalVisible: layout.get(t.id)!.terminalVisible, terminalMaximized: layout.get(t.id)!.terminalMaximized } : {}) }))
+      .sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
+    return [{ ...p, collapsed: cp.collapsed, groupId: cp.groupId, threads }];
+  });
+  backend.state = {
+    ...old,
+    projects,
+    groups: c.groups,
+    selectedThreadId: c.selectedThreadId,
+    sidebarWidth: c.sidebarWidth,
+    notificationsEnabled: c.notificationsEnabled,
+    completionSound: c.completionSound,
+    activityPanelVisible: c.activityPanelVisible,
+    claudePathOverride: c.claudePathOverride,
+  };
+  backend.saves.push(structuredClone(backend.state));
+}
+
+/** The fake host's thread and project RPCs, applied to the persisted view. */
+function hostRpc(method: string, a: Record<string, unknown>): unknown {
+  const st = backend.state;
+  const edit = (threadId: string, fn: (t: Thread) => Thread) => {
+    st.projects = st.projects.map((p) => ({ ...p, threads: p.threads.map((t) => (t.id === threadId ? fn(t) : t)) }));
+  };
+  switch (method) {
+    case "project_add":
+      if (!st.projects.some((p) => p.id === a.id)) {
+        st.projects = [...st.projects, { id: a.id as string, hostKey: "local", path: a.path as string, name: a.name as string, collapsed: false, threads: [] }];
+      }
+      break;
+    case "project_remove":
+      st.projects = st.projects.filter((p) => p.id !== a.id);
+      break;
+    case "thread_create": {
+      const t = a.thread as Partial<Thread> & { id: string; createdAt: number };
+      const thread: Thread = {
+        id: t.id,
+        title: t.title ?? "New thread",
+        sessionId: t.sessionId ?? null,
+        archived: false,
+        createdAt: t.createdAt,
+        splitRatio: 0.65,
+        terminalVisible: false,
+        terminalMaximized: false,
+        model: t.model ?? null,
+        permissionMode: t.permissionMode ?? null,
+        worktree: t.worktree ?? null,
+        worktreeRequested: t.worktreeRequested ?? false,
+        fork: t.fork ?? null,
+      };
+      st.projects = st.projects.map((p) => (p.id === a.projectId && !p.threads.some((x) => x.id === t.id) ? { ...p, threads: [...p.threads, thread] } : p));
+      break;
+    }
+    case "thread_update": {
+      const patch = a.patch as ThreadPatch;
+      edit(a.threadId as string, (t) => ({
+        ...t,
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.archived !== undefined ? { archived: patch.archived } : {}),
+        ...(patch.model !== undefined ? { model: patch.model } : {}),
+        ...(patch.permissionMode !== undefined ? { permissionMode: patch.permissionMode } : {}),
+        ...(patch.worktreeRequested !== undefined ? { worktreeRequested: patch.worktreeRequested } : {}),
+        ...(patch.clearWorktree ? { worktree: null } : {}),
+      }));
+      break;
+    }
+    default:
+      return undefined;
+  }
+  backend.saves.push(structuredClone(backend.state));
+  return undefined;
+}
 
 /** Direct children of `dir` in `backend.projectFiles`, folders first. */
 function listProjectDir(dir: string) {
@@ -79,14 +221,37 @@ export function emptyState(): AppState {
   };
 }
 
-export const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
+export const invoke = vi.fn(async (outer: string, outerArgs?: Record<string, unknown>): Promise<unknown> => {
+  // A host RPC is recorded under its method, like the old command it replaces.
+  const viaHost = outer === "host_call";
+  const cmd = viaHost ? (outerArgs!.method as string) : outer;
+  const args = viaHost ? (outerArgs!.params as Record<string, unknown>) : outerArgs;
   backend.calls.push({ cmd, args });
   switch (cmd) {
-    case "state_load":
-      return { state: structuredClone(backend.state), notice: backend.notice };
-    case "state_save":
-      backend.state = structuredClone(args!.state as AppState);
+    case "client_state_load":
+      return { state: clientOf(backend.state), notice: backend.notice };
+    case "client_state_save":
+      applyClientSave(args!.state as ClientState);
       return undefined;
+    case "host_subscribe": {
+      const channel = args!.onEvent as { onmessage: (e: HostEvent) => void };
+      backend.hostChannels[args!.host as string] = channel;
+      const snapshot = { epoch: 1, projects: hostProjects(backend.state), statuses: {} };
+      channel.onmessage({ kind: "host_snapshot", snapshot });
+      return 1;
+    }
+    case "host_thread_subscribe":
+      backend.threadChannels[args!.threadId as string] = args!.onEvent as { onmessage: (e: unknown) => void };
+      return 1;
+    case "host_pty_attach":
+      return 1;
+    case "project_add":
+    case "project_remove":
+    case "thread_create":
+    case "thread_update":
+      return hostRpc(cmd, args!);
+    case "claude_start":
+      return "idle";
     case "get_setup_state":
     case "recheck_setup":
       return backend.setup;
@@ -176,7 +341,8 @@ export function openFolders(...paths: string[]) {
 }
 
 export const callsTo = (cmd: string) => backend.calls.filter((c) => c.cmd === cmd);
-export const lastSaved = () => callsTo("state_save").at(-1)?.args?.state as AppState | undefined;
+/** The latest persisted view: host fields from host RPCs plus client.json fields from saves. */
+export const lastSaved = () => backend.saves.at(-1);
 
 /** Reset the fake backend between tests (see ./reset.ts for the stores). */
 export function resetFakeBackend(state: AppState = emptyState()) {
@@ -195,6 +361,9 @@ export function resetFakeBackend(state: AppState = emptyState()) {
   backend.gitChanges = [];
   backend.worktreeUnused = [];
   backend.worktreeClean = { removed: [], skipped: [], deletedBranches: [] };
+  backend.hostChannels = {};
+  backend.threadChannels = {};
+  backend.saves = [];
   invoke.mockClear();
   dialog.open.mockReset().mockResolvedValue(null);
   dialog.ask.mockReset().mockResolvedValue(true);
@@ -206,6 +375,7 @@ export function project(name: string, threads: Partial<Thread>[] = [{}], extra: 
   n += 1;
   return {
     id: `p-${name}`,
+    hostKey: "local",
     path: `/Users/me/${name}`,
     name,
     collapsed: false,

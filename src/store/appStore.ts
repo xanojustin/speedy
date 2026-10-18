@@ -1,8 +1,35 @@
-// Projects, threads, selection, and layout: Speedy's own persisted state (KTD6).
-// Every mutation schedules a save through the Rust store (which debounces and writes atomically).
+// Projects, threads, selection, and layout: a merged view of each host's projects and threads
+// (host-owned, KTD6) and the app's own preferences in `client.json` (groups, order, collapse,
+// layout, selection, settings). A change to a host field goes to the host, which broadcasts it
+// back to every client; a change to a preference is saved to `client.json`.
 import { create } from "zustand";
-import { stateLoad, stateSave } from "../ipc/commands";
-import { GROUP_COLORS, type AppState, type Group, type GroupColor, type Project, type Thread } from "../ipc/types";
+import {
+  clientStateLoad,
+  clientStateSave,
+  hostSubscribe,
+  projectAdd,
+  projectRemove,
+  setHostLookup,
+  threadCreate,
+  threadUpdate,
+  type NewThread,
+} from "../ipc/commands";
+import {
+  GROUP_COLORS,
+  LOCAL_HOST,
+  type AppState,
+  type ClientState,
+  type Group,
+  type GroupColor,
+  type HostEvent,
+  type HostProject,
+  type HostThread,
+  type Project,
+  type Thread,
+  type ThreadPatch,
+  type ThreadStatus,
+} from "../ipc/types";
+import { useThreadStore } from "./threadStore";
 
 export interface AppStore extends AppState {
   loaded: boolean;
@@ -17,7 +44,9 @@ export interface AppStore extends AppState {
   explorerReveal: { path: string; line: number | null } | null;
 
   load(): Promise<void>;
-  addProject(path: string): string; // returns the new thread id
+  /** Applies one of `host`'s events (also used by tests). */
+  applyHostEvent(host: string, event: HostEvent): void;
+  addProject(path: string, hostKey?: string): string; // returns the new thread id
   removeProject(projectId: string): void;
   moveProject(projectId: string, toIndex: number): void;
   setProjectCollapsed(projectId: string, collapsed: boolean): void;
@@ -32,7 +61,7 @@ export interface AppStore extends AppState {
   setGroupCollapsed(groupId: string, collapsed: boolean): void;
   setGroupColor(groupId: string, color: GroupColor): void;
 
-  createThread(projectId: string, init?: Partial<Pick<Thread, "title" | "sessionId" | "worktree">>): string;
+  createThread(projectId: string, init?: Partial<Pick<Thread, "title" | "sessionId" | "worktree" | "fork">>): string;
   updateThread(threadId: string, patch: Partial<Omit<Thread, "id">>): void;
   archiveThread(threadId: string): void;
   restoreThread(threadId: string): void;
@@ -76,17 +105,111 @@ function basename(path: string) {
   return parts[parts.length - 1] || path;
 }
 
-const snapshot = (s: AppStore): AppState => ({
-  version: s.version,
-  projects: s.projects,
+/** The app's half of the state, for `client.json`. */
+const clientSnapshot = (s: AppStore): ClientState => ({
+  version: 1,
   groups: s.groups,
+  projects: s.projects.map((p) => ({ hostId: p.hostKey, projectId: p.id, collapsed: p.collapsed, groupId: p.groupId ?? null })),
+  threads: s.projects.flatMap((p) =>
+    p.threads.map((t) => ({ threadId: t.id, splitRatio: t.splitRatio, terminalVisible: t.terminalVisible, terminalMaximized: t.terminalMaximized })),
+  ),
   selectedThreadId: s.selectedThreadId,
-  claudePathOverride: s.claudePathOverride,
   sidebarWidth: s.sidebarWidth,
   notificationsEnabled: s.notificationsEnabled,
   completionSound: s.completionSound,
   activityPanelVisible: s.activityPanelVisible,
+  claudePathOverride: s.claudePathOverride,
 });
+
+/** Layout prefs for threads the client hasn't seen yet. */
+const THREAD_LAYOUT = { splitRatio: 0.65, terminalVisible: false, terminalMaximized: false };
+
+/** A host thread with this client's layout for it (or the defaults). */
+function mergeThread(host: HostThread, prev: Thread | undefined, client?: ClientState["threads"][number]): Thread {
+  const layout = prev ?? client ?? THREAD_LAYOUT;
+  return {
+    id: host.id,
+    title: host.title,
+    sessionId: host.sessionId,
+    archived: host.archived,
+    createdAt: host.createdAt,
+    model: host.model,
+    permissionMode: host.permissionMode,
+    worktree: host.worktree,
+    worktreeRequested: host.worktreeRequested,
+    fork: host.fork,
+    splitRatio: layout.splitRatio,
+    terminalVisible: layout.terminalVisible,
+    terminalMaximized: layout.terminalMaximized,
+  };
+}
+
+/** Threads in this client's order: known ones as before, new ones after. */
+function mergeThreads(host: HostThread[], prev: Thread[], client: ClientState | null): Thread[] {
+  const order = new Map(prev.map((t, i) => [t.id, i]));
+  if (!prev.length && client) client.threads.forEach((t, i) => order.set(t.threadId, i));
+  const prefs = new Map(client?.threads.map((t) => [t.threadId, t]));
+  return host
+    .map((t) => mergeThread(t, prev.find((p) => p.id === t.id), prefs.get(t.id)))
+    .sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
+}
+
+function mergeProject(hostKey: string, host: HostProject, prev: Project | undefined, client: ClientState | null): Project {
+  const pref = client?.projects.find((p) => p.hostId === hostKey && p.projectId === host.id);
+  return {
+    id: host.id,
+    hostKey,
+    path: host.path,
+    name: host.name,
+    scratch: host.scratch,
+    collapsed: prev?.collapsed ?? pref?.collapsed ?? false,
+    groupId: prev ? prev.groupId : (pref?.groupId ?? null),
+    threads: mergeThreads(host.threads, prev?.threads ?? [], client),
+  };
+}
+
+/** Replaces `hostKey`'s projects, keeping this client's order and prefs. */
+function mergeHost(projects: Project[], hostKey: string, host: HostProject[], client: ClientState | null): Project[] {
+  const others = projects.filter((p) => p.hostKey !== hostKey);
+  const merged = host.map((hp) => mergeProject(hostKey, hp, projects.find((p) => p.hostKey === hostKey && p.id === hp.id), client));
+  const order = new Map(projects.map((p, i) => [`${p.hostKey}/${p.id}`, i]));
+  client?.projects.forEach((p, i) => {
+    const key = `${p.hostId}/${p.projectId}`;
+    if (!order.has(key)) order.set(key, i);
+  });
+  return [...others, ...merged].sort((a, b) => (order.get(`${a.hostKey}/${a.id}`) ?? Infinity) - (order.get(`${b.hostKey}/${b.id}`) ?? Infinity));
+}
+
+function toHostThread(t: Thread): HostThread {
+  return {
+    id: t.id,
+    title: t.title,
+    sessionId: t.sessionId,
+    archived: t.archived,
+    createdAt: t.createdAt,
+    model: t.model,
+    permissionMode: t.permissionMode,
+    worktree: t.worktree ?? null,
+    worktreeRequested: t.worktreeRequested ?? false,
+    fork: t.fork ?? null,
+    queue: [],
+  };
+}
+
+/** The host's half of a thread patch; layout fields stay with the client. */
+function hostPatch(patch: Partial<Omit<Thread, "id">>): ThreadPatch | null {
+  const out: ThreadPatch = {};
+  if (patch.title !== undefined) out.title = patch.title;
+  if (patch.archived !== undefined) out.archived = patch.archived;
+  if (patch.model !== undefined) out.model = patch.model;
+  if (patch.permissionMode !== undefined) out.permissionMode = patch.permissionMode;
+  if (patch.worktreeRequested !== undefined) out.worktreeRequested = patch.worktreeRequested;
+  if (patch.worktree === null) out.clearWorktree = true;
+  return Object.keys(out).length ? out : null;
+}
+
+/** Host calls fail when the host is offline; the next host snapshot shows what actually happened. */
+const report = (what: string) => (err: unknown) => console.warn(`${what} failed`, err);
 
 const mapThreads = (projects: Project[], threadId: string, fn: (t: Thread) => Thread) =>
   projects.map((p) => (p.threads.some((t) => t.id === threadId) ? { ...p, threads: p.threads.map((t) => (t.id === threadId ? fn(t) : t)) } : p));
@@ -114,11 +237,14 @@ function move<T>(list: T[], from: number, to: number): T[] {
 }
 
 export const useAppStore = create<AppStore>((set, get) => {
+  /** Applies a change and saves the client's half. */
   const commit = (fn: (s: AppStore) => Partial<AppStore>) => {
     set(fn);
     const s = get();
-    if (s.loaded) void stateSave(snapshot(s)).catch(() => {});
+    if (s.loaded) void clientStateSave(clientSnapshot(s)).catch(() => {});
   };
+  /** `client.json` as loaded, to place projects and threads as hosts report them. */
+  let client: ClientState | null = null;
 
   return {
     version: 1,
@@ -138,12 +264,73 @@ export const useAppStore = create<AppStore>((set, get) => {
     explorerWidth: 380,
 
     async load() {
-      const { state, notice } = await stateLoad();
-      set({ ...state, groups: withColors(state.groups ?? []), notice, loaded: true });
+      const { state, notice } = await clientStateLoad();
+      client = state;
+      setHostLookup(({ threadId, path }) => {
+        const s = get();
+        if (threadId) return findThread(s, threadId)?.project.hostKey;
+        if (path) return s.projects.find((p) => path === p.path || path.startsWith(`${p.path}/`))?.hostKey;
+        return undefined;
+      });
+      set({
+        groups: withColors(state.groups ?? []),
+        selectedThreadId: state.selectedThreadId,
+        sidebarWidth: state.sidebarWidth,
+        notificationsEnabled: state.notificationsEnabled,
+        completionSound: state.completionSound,
+        activityPanelVisible: state.activityPanelVisible,
+        claudePathOverride: state.claudePathOverride,
+        notice,
+        loaded: true,
+      });
+      await hostSubscribe(LOCAL_HOST, (event) => get().applyHostEvent(LOCAL_HOST, event));
     },
 
-    addProject(path) {
-      const existing = get().projects.find((p) => p.path === path);
+    applyHostEvent(host, event) {
+      const statuses = (entries: [string, ThreadStatus][]) => {
+        const dispatch = useThreadStore.getState().dispatch;
+        for (const [id, status] of entries) dispatch(id, { kind: "local_status", status });
+      };
+      switch (event.kind) {
+        case "host_snapshot":
+          set((s) => ({ projects: mergeHost(s.projects, host, event.snapshot.projects, client) }));
+          statuses(Object.entries(event.snapshot.statuses));
+          break;
+        case "project_upserted":
+          set((s) => {
+            const prev = s.projects.find((p) => p.hostKey === host && p.id === event.project.id);
+            const project = mergeProject(host, { ...event.project, threads: prev ? prev.threads.map(toHostThread) : event.project.threads }, prev, client);
+            return { projects: prev ? s.projects.map((p) => (p === prev ? project : p)) : [...s.projects, project] };
+          });
+          break;
+        case "project_removed":
+          set((s) => ({ projects: s.projects.filter((p) => !(p.hostKey === host && p.id === event.id)) }));
+          break;
+        case "thread_upserted":
+          set((s) => ({
+            projects: s.projects.map((p) => {
+              if (p.hostKey !== host || p.id !== event.projectId) return p;
+              const prev = p.threads.find((t) => t.id === event.thread.id);
+              const prefs = client?.threads.find((t) => t.threadId === event.thread.id);
+              const thread = mergeThread(event.thread, prev, prefs);
+              return { ...p, threads: prev ? p.threads.map((t) => (t === prev ? thread : t)) : [...p.threads, thread] };
+            }),
+          }));
+          break;
+        case "thread_removed":
+          set((s) => ({ projects: s.projects.map((p) => (p.hostKey === host ? { ...p, threads: p.threads.filter((t) => t.id !== event.id) } : p)) }));
+          break;
+        case "thread_status":
+          statuses([[event.id, event.status]]);
+          break;
+        case "subscribe_failed":
+          console.warn(`subscribing to host ${host} failed: ${event.error}`);
+          break;
+      }
+    },
+
+    addProject(path, hostKey = LOCAL_HOST) {
+      const existing = get().projects.find((p) => p.hostKey === hostKey && p.path === path);
       if (existing) {
         const live = existing.threads.find((t) => !t.archived);
         const id = live?.id ?? get().createThread(existing.id);
@@ -151,12 +338,17 @@ export const useAppStore = create<AppStore>((set, get) => {
         return id;
       }
       const thread = makeThread();
-      const project: Project = { id: newId(), path, name: basename(path), collapsed: false, threads: [thread] };
+      const project: Project = { id: newId(), hostKey, path, name: basename(path), collapsed: false, threads: [thread] };
       commit((s) => ({ projects: [...s.projects, project], selectedThreadId: thread.id }));
+      void projectAdd(hostKey, { id: project.id, path, name: project.name })
+        .then(() => threadCreate(hostKey, project.id, { id: thread.id, createdAt: thread.createdAt }))
+        .catch(report("adding the project"));
       return thread.id;
     },
 
     removeProject(projectId) {
+      const removed = get().projects.find((p) => p.id === projectId);
+      if (removed) void projectRemove(removed.hostKey, projectId).catch(report("removing the project"));
       commit((s) => {
         const project = s.projects.find((p) => p.id === projectId);
         const selectedGone = project?.threads.some((t) => t.id === s.selectedThreadId);
@@ -210,6 +402,18 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     createThread(projectId, init) {
       const thread = makeThread(init);
+      const project = get().projects.find((p) => p.id === projectId);
+      if (project) {
+        const created: NewThread = {
+          id: thread.id,
+          title: init?.title ?? null,
+          createdAt: thread.createdAt,
+          sessionId: thread.sessionId,
+          worktree: thread.worktree ?? null,
+          fork: thread.fork ?? null,
+        };
+        void threadCreate(project.hostKey, projectId, created).catch(report("creating the thread"));
+      }
       commit((s) => ({
         projects: s.projects.map((p) => (p.id === projectId ? { ...p, collapsed: false, threads: [...p.threads, thread] } : p)),
         selectedThreadId: thread.id,
@@ -222,10 +426,13 @@ export const useAppStore = create<AppStore>((set, get) => {
       // state: no re-render for subscribers and no state_save.
       const current = findThread(get(), threadId)?.thread;
       if (current && (Object.keys(patch) as (keyof typeof patch)[]).every((k) => Object.is(current[k], patch[k]))) return;
+      const forHost = hostPatch(patch);
+      if (forHost) void threadUpdate(threadId, forHost).catch(report("updating the thread"));
       commit((s) => ({ projects: mapThreads(s.projects, threadId, (t) => ({ ...t, ...patch })) }));
     },
 
     archiveThread(threadId) {
+      void threadUpdate(threadId, { archived: true }).catch(report("archiving the thread"));
       commit((s) => {
         const projects = mapThreads(s.projects, threadId, (t) => ({ ...t, archived: true }));
         let selectedThreadId = s.selectedThreadId;
@@ -238,6 +445,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
 
     restoreThread(threadId) {
+      void threadUpdate(threadId, { archived: false }).catch(report("restoring the thread"));
       commit((s) => ({ projects: mapThreads(s.projects, threadId, (t) => ({ ...t, archived: false })), selectedThreadId: threadId }));
     },
 

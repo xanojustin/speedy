@@ -62,6 +62,13 @@ export type ClaudeEvent =
     }
   | { kind: "permission_resolved"; seq: number; request_id: string; reason: string }
   | { kind: "diff_refreshed"; seq: number; request_id: string; diff: FileDiff[] }
+  // Thread events the host adds (KTD6): the message it wrote, the queue, a failed send.
+  | { kind: "user_sent"; seq: number; id: string; content: unknown[] }
+  | { kind: "queue_changed"; seq: number; queue: QueueItem[] }
+  | { kind: "send_failed"; seq: number; id: string; error: string }
+  // From the app's connection: catch-up the agent couldn't replay, or a refused subscribe.
+  | { kind: "snapshot"; seq?: number; snapshot: ThreadSnapshot }
+  | { kind: "subscribe_failed"; seq?: number; error: string }
   | { kind: "stderr"; seq: number; text: string }
   | { kind: "protocol_error"; seq: number; line: string };
 
@@ -110,12 +117,107 @@ export interface StartOptions {
   maxThinkingTokens?: number | null;
 }
 
+/** A message waiting for the current turn, held by the host. */
+export interface QueueItem {
+  id: string;
+  content: unknown[];
+}
+
+/** A thread's live state when the host can't replay what a client missed (KTD5). */
+export interface ThreadSnapshot {
+  epoch: number;
+  seq: number;
+  sessionId: string | null;
+  queue: QueueItem[];
+  /** Live events to reduce after seeding history: init, session, pending prompts, partials, status. */
+  events: ClaudeEvent[];
+}
+
 export interface PermissionOutcome {
   sent: boolean;
   refreshedDiff: FileDiff[] | null;
 }
 
-// ---- App state (KTD6) ----
+// ---- Hosts (KTD6, KTD14) ----
+
+/** This Mac's host key. */
+export const LOCAL_HOST = "local";
+
+/** A thread as its host stores it. */
+export interface HostThread {
+  id: string;
+  title: string;
+  sessionId: string | null;
+  archived: boolean;
+  createdAt: number;
+  model: string | null;
+  permissionMode: PermissionMode | null;
+  worktree: ThreadWorktree | null;
+  worktreeRequested: boolean;
+  fork: ForkFrom | null;
+  queue: QueueItem[];
+}
+
+export interface HostProject {
+  id: string;
+  path: string;
+  name: string;
+  scratch: boolean;
+  threads: HostThread[];
+}
+
+export interface ForkFrom {
+  resumeSessionId: string;
+  resumeSessionAt: string | null;
+}
+
+export interface HostSnapshot {
+  epoch: number;
+  projects: HostProject[];
+  statuses: Record<string, ThreadStatus>;
+}
+
+export type HostEvent =
+  | { kind: "host_snapshot"; snapshot: HostSnapshot }
+  | { kind: "project_upserted"; project: HostProject }
+  | { kind: "project_removed"; id: string }
+  | { kind: "thread_upserted"; projectId: string; thread: HostThread }
+  | { kind: "thread_removed"; id: string }
+  | { kind: "thread_status"; id: string; status: ThreadStatus }
+  | { kind: "subscribe_failed"; error: string };
+
+/** Thread fields a client may change on its host. */
+export interface ThreadPatch {
+  title?: string;
+  archived?: boolean;
+  model?: string | null;
+  permissionMode?: PermissionMode | null;
+  worktreeRequested?: boolean;
+  clearWorktree?: boolean;
+}
+
+export type ConnState =
+  | { state: "connecting" }
+  | { state: "connected"; host_id: string; agent_version: string }
+  | { state: "reconnecting"; error: string };
+
+/** The app's own preferences (`client.json`), keyed by host and project. */
+export interface ClientState {
+  version: number;
+  groups: Group[];
+  /** Per-project prefs, in display order. */
+  projects: { hostId: string; projectId: string; collapsed: boolean; groupId: string | null }[];
+  /** Per-thread layout, in display order within each project. */
+  threads: { threadId: string; splitRatio: number; terminalVisible: boolean; terminalMaximized: boolean }[];
+  selectedThreadId: string | null;
+  sidebarWidth: number;
+  notificationsEnabled: boolean;
+  completionSound: string | null;
+  activityPanelVisible: boolean;
+  claudePathOverride: string | null;
+}
+
+// ---- App state: the webview's merged view of hosts and client prefs ----
 
 export interface AppState {
   version: number;
@@ -135,6 +237,8 @@ export interface AppState {
 
 export interface Project {
   id: string;
+  /** The host this project lives on (R13). */
+  hostKey: string;
   path: string;
   name: string;
   collapsed: boolean;
@@ -172,6 +276,8 @@ export interface Thread {
   worktree?: ThreadWorktree | null;
   /** Create a worktree when the thread starts (set before its first message). */
   worktreeRequested?: boolean;
+  /** A rewind fork's starting point, until its own session binds. */
+  fork?: ForkFrom | null;
 }
 
 export interface ThreadWorktree {
@@ -198,8 +304,8 @@ export interface WorktreeCleanReport {
   deletedBranches: string[];
 }
 
-export interface LoadResult {
-  state: AppState;
+export interface LoadResult<T> {
+  state: T;
   notice: string | null;
 }
 

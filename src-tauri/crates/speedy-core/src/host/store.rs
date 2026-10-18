@@ -82,12 +82,13 @@ impl Default for HostThread {
     }
 }
 
-/// Where a rewind fork starts: `resume_session_id` truncated at `resume_session_at`, as a new session.
+/// Where a rewind fork starts: `resume_session_id` truncated at `resume_session_at` (from the
+/// start when absent), as a new session.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ForkFrom {
     pub resume_session_id: String,
-    pub resume_session_at: String,
+    pub resume_session_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

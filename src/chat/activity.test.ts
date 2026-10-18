@@ -15,7 +15,7 @@ const done = (id: string, structured?: unknown, isError = false): ClaudeEvent =>
     parent_tool_use_id: null,
     ...(structured === undefined ? {} : { tool_use_result: structured }),
   });
-const user = (text: string): ThreadAction => ({ kind: "local_user", id: `u-${text}`, content: [{ type: "text", text }], ts: 0 });
+const user = (text: string): ThreadAction => ({ kind: "user_sent", seq: 0, id: `u-${text}`, content: [{ type: "text", text }] });
 const bg = (tasks: Record<string, unknown>[]): ClaudeEvent => m({ type: "system", subtype: "background_tasks_changed", tasks });
 
 describe("deriveTodos", () => {

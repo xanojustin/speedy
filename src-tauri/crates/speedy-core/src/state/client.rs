@@ -24,6 +24,8 @@ pub struct ClientState {
     pub completion_sound: Option<String>,
     /// Show the activity panel (the agent's todos and subagents) above the composer.
     pub activity_panel_visible: bool,
+    /// This Mac's `claude` path when it isn't on the login PATH.
+    pub claude_path_override: Option<String>,
 }
 
 impl Default for ClientState {
@@ -38,6 +40,7 @@ impl Default for ClientState {
             notifications_enabled: true,
             completion_sound: None,
             activity_panel_visible: false,
+            claude_path_override: None,
         }
     }
 }
