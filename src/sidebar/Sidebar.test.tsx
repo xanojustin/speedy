@@ -104,7 +104,7 @@ describe("Sidebar", () => {
     fireEvent.contextMenu(projectHeader("alpha"));
     fireEvent.click(screen.getByRole("menuitem", { name: "Open in VS Code" }));
 
-    await waitFor(() => expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([{ path: useAppStore.getState().projects[0].path }]));
+    await waitFor(() => expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([{ path: useAppStore.getState().projects[0].path, host: "local" }]));
   });
 
   describe("Clean Up Worktrees", () => {
@@ -185,7 +185,9 @@ describe("Sidebar", () => {
     await waitFor(() => expect(projectNames()).toEqual(["beta"]));
     expect(lastSaved()!.projects.map((p) => p.name)).toEqual(["beta"]);
     expect(callsTo("claude_stop").map((c) => c.args)).toEqual([{ threadId: "alpha-t1" }, { threadId: "alpha-t2" }]);
-    const sessionCalls = backend.calls.filter((c) => /session|delete|remove/i.test(c.cmd));
+    expect(callsTo("project_remove").map((c) => c.args)).toEqual([{ id: "p-alpha" }]);
+    // The project goes from the host's list; its CLI sessions stay on disk.
+    const sessionCalls = backend.calls.filter((c) => /session|delete/i.test(c.cmd));
     expect(sessionCalls).toEqual([]);
   });
 

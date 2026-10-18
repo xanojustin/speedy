@@ -29,13 +29,13 @@ const STATUS_LABEL: Record<GitStatus, string> = {
 const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
 const extOf = (path: string) => /\.([^./]+)$/.exec(path)?.[1]?.toLowerCase();
 
-function useGitChanges(root: string) {
+function useGitChanges(host: string, root: string) {
   const [changes, setChanges] = useState<Map<string, GitStatus>>(new Map());
   const refresh = useCallback(() => {
-    void explorerGitStatus(root)
+    void explorerGitStatus(host, root)
       .then((list) => setChanges(new Map(list.map((c) => [c.path, c.status]))))
       .catch(() => setChanges(new Map()));
-  }, [root]);
+  }, [host, root]);
   useEffect(() => {
     refresh();
     const id = window.setInterval(refresh, STATUS_POLL_MS);
@@ -67,8 +67,9 @@ interface OpenFile {
   seq: number;
 }
 
-export function Explorer({ root, name, onClose }: { root: string; name: string; onClose: () => void }) {
-  const { changes, refresh } = useGitChanges(root);
+/** `root` is a folder on `host`, the thread's host: every file and git call goes there. */
+export function Explorer({ root, name, host, onClose }: { root: string; name: string; host: string; onClose: () => void }) {
+  const { changes, refresh } = useGitChanges(host, root);
   const [open, setOpen] = useState<OpenFile | null>(null);
   const openPath = open?.path ?? null;
   const setOpenPath = useCallback((path: string | null) => setOpen((prev) => (path === null ? null : { path, line: null, seq: (prev?.seq ?? 0) + 1 })), []);
@@ -100,7 +101,7 @@ export function Explorer({ root, name, onClose }: { root: string; name: string; 
     const target = useAppStore.getState().takeExplorerReveal();
     if (!target) return;
     void (async () => {
-      const path = await resolveReveal(root, target.path);
+      const path = await resolveReveal(host, root, target.path);
       if (path === null) {
         setRevealError(`${target.path} is outside this thread's folder.`);
         return;
@@ -111,7 +112,7 @@ export function Explorer({ root, name, onClose }: { root: string; name: string; 
       setRevealError(null);
       setOpen((prev) => ({ path, line: target.line, seq: (prev?.seq ?? 0) + 1 }));
     })();
-  }, [reveal, root, openPath]);
+  }, [reveal, host, root, openPath]);
 
   return (
     <div className="explorer" aria-label="Explorer">
@@ -125,7 +126,7 @@ export function Explorer({ root, name, onClose }: { root: string; name: string; 
             className="icon-button"
             aria-label="Open in VS Code"
             title="Open in VS Code"
-            onClick={() => void openInVscode(root).catch((err) => console.warn("open_in_vscode failed", err))}
+            onClick={() => void openInVscode(root, host).catch((err) => console.warn("open_in_vscode failed", err))}
           >
             <span className="codicon codicon-vscode" aria-hidden />
           </button>
@@ -143,6 +144,7 @@ export function Explorer({ root, name, onClose }: { root: string; name: string; 
       {open !== null ? (
         <FileView
           key={open.path}
+          host={host}
           root={root}
           path={open.path}
           line={open.line}
@@ -156,6 +158,7 @@ export function Explorer({ root, name, onClose }: { root: string; name: string; 
         <div className="explorer-tree" role="tree" aria-label={`Files in ${name}`}>
           <TreeLevel
             key={treeVersion}
+            host={host}
             root={root}
             dir=""
             depth={0}
@@ -171,6 +174,7 @@ export function Explorer({ root, name, onClose }: { root: string; name: string; 
 }
 
 function TreeLevel({
+  host,
   root,
   dir,
   depth,
@@ -179,6 +183,7 @@ function TreeLevel({
   onToggle,
   onOpen,
 }: {
+  host: string;
   root: string;
   dir: string;
   depth: number;
@@ -192,13 +197,13 @@ function TreeLevel({
 
   useEffect(() => {
     let live = true;
-    explorerList(root, dir)
+    explorerList(host, root, dir)
       .then((list) => live && setEntries(list))
       .catch((e) => live && setError(String(e)));
     return () => {
       live = false;
     };
-  }, [root, dir]);
+  }, [host, root, dir]);
 
   const indent = { paddingLeft: 8 + depth * 12 };
   if (error) return <div className="explorer-note" style={indent}>{error}</div>;
@@ -230,6 +235,7 @@ function TreeLevel({
             </button>
             {open && (
               <TreeLevel
+                host={host}
                 root={root}
                 dir={e.path}
                 depth={depth + 1}
@@ -249,6 +255,7 @@ function TreeLevel({
 type Mode = "preview" | "edit" | "changes";
 
 function FileView({
+  host,
   root,
   path,
   line,
@@ -258,6 +265,7 @@ function FileView({
   onSaved,
   onDirty,
 }: {
+  host: string;
   root: string;
   path: string;
   line: number | null;
@@ -284,7 +292,7 @@ function FileView({
 
   useEffect(() => {
     let live = true;
-    explorerRead(root, path)
+    explorerRead(host, root, path)
       .then((text) => {
         if (!live) return;
         setSaved(text);
@@ -294,13 +302,13 @@ function FileView({
     return () => {
       live = false;
     };
-  }, [root, path]);
+  }, [host, root, path]);
 
   const save = async () => {
     if (!dirty || saving) return;
     setSaving(true);
     try {
-      await explorerWrite(root, path, draft);
+      await explorerWrite(host, root, path, draft);
       setSaved(draft);
       setError(null);
       onSaved();
@@ -361,7 +369,7 @@ function FileView({
           }}
         />
       ) : mode === "changes" ? (
-        <ChangesView root={root} path={path} version={saved} />
+        <ChangesView host={host} root={root} path={path} version={saved} />
       ) : isMarkdown(path) && line === null ? (
         <div className="explorer-preview">
           <Markdown text={draft} />
@@ -403,18 +411,18 @@ function ModeTab({
 }
 
 /** The saved file against HEAD; `version` re-fetches after a save. */
-function ChangesView({ root, path, version }: { root: string; path: string; version: string }) {
+function ChangesView({ host, root, path, version }: { host: string; root: string; path: string; version: string }) {
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
-    explorerGitDiff(root, path)
+    explorerGitDiff(host, root, path)
       .then((d) => live && setDiff(d))
       .catch((e) => live && setError(String(e)));
     return () => {
       live = false;
     };
-  }, [root, path, version]);
+  }, [host, root, path, version]);
   if (error) return <div className="explorer-error">{error}</div>;
   if (!diff) return <div className="explorer-note">Loading…</div>;
   return (

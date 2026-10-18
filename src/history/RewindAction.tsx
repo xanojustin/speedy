@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { findThread, threadCwd, useAppStore } from "../store/appStore";
 import { useThreadStore } from "../store/threadStore";
-import { forkConversation, previewRewind, rewindCode, type RewindFilesResult } from "./rewind";
+import { forkConversation, prepareFork, previewRewind, rewindCode, type RewindFilesResult } from "./rewind";
 import "./history.css";
 
 type Mode = "code" | "both";
@@ -44,8 +44,10 @@ function RewindDialog({ threadId, uuid, mode, onClose }: { threadId: string; uui
     setRunning(true);
     setFailure(null);
     try {
+      // Check the fork can be made before touching code, so a failure leaves both as they were.
+      const fork = mode === "both" ? await prepareFork(threadId, uuid) : null;
       await rewindCode(threadId, uuid);
-      if (mode === "both") await forkConversation(threadId, uuid);
+      fork?.();
       onClose();
     } catch (err) {
       setFailure(errorText(err));

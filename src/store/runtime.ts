@@ -1,6 +1,8 @@
-// U8: the bridge between the Rust session actor (ClaudeEvent channel) and the thread store.
-// Processes start lazily on first send (KTD9); every thread's events are ingested regardless of
-// which thread is visible (KTD2).
+// U8: the bridge between a thread's host events and the thread store. The host owns the
+// thread's behavior (KTD6): it queues messages sent mid-turn, echoes each sent message as
+// `user_sent`, titles new threads, binds the session and creates a requested worktree. This
+// module subscribes each thread once, starts its process lazily on first send (KTD9), and
+// ingests every subscribed thread's events whether or not it is visible (KTD2).
 import {
   claudeControl,
   claudeInterrupt,
@@ -8,86 +10,89 @@ import {
   claudeRetry,
   claudeSendUser,
   claudeStart,
+  queueRemove,
   sessionLoad,
-  worktreeCreate,
+  threadSubscribe,
 } from "../ipc/commands";
-import type { ClaudeEvent, PermissionOutcome, PermissionResult, StartOptions, ThreadStatus } from "../ipc/types";
-import { findThread, newId, threadCwd, useAppStore } from "./appStore";
+import type { ClaudeEvent, PermissionOutcome, PermissionResult, ThreadSnapshot, ThreadStatus } from "../ipc/types";
+import { findThread, threadCwd, useAppStore } from "./appStore";
+import { initialRuntime } from "./reducer";
 import { __resetThreadEventsForTests, getRuntime, queueThreadEvent, useThreadStore, type ThreadAction } from "./threadStore";
 
 const started = new Map<string, Promise<void>>();
-/** Threads with a user message written and no `result` yet; guards against double-sending the queue. */
-const inFlight = new Set<string>();
+/** Threads with a live subscription; each thread is subscribed once per run. */
+const subscribed = new Set<string>();
+/** Threads that got their first snapshot; a later one means the client fell out of the replay window. */
+const caughtUp = new Set<string>();
 
 const dispatch = (threadId: string, action: ThreadAction) => useThreadStore.getState().dispatch(threadId, action);
 
 export function __resetRuntimeForTests() {
   started.clear();
-  inFlight.clear();
+  subscribed.clear();
+  caughtUp.clear();
   __resetThreadEventsForTests();
 }
 
 function handleEvent(threadId: string, ev: ClaudeEvent) {
-  // Applied with the next frame's batch; the reads below (`getRuntime`) apply it first.
-  queueThreadEvent(threadId, ev);
   switch (ev.kind) {
-    case "session_bound":
-      useAppStore.getState().updateThread(threadId, { sessionId: ev.session_id });
-      break;
-    case "message":
-      if (ev.raw.type === "result") {
-        inFlight.delete(threadId);
-        flushQueue(threadId);
-      }
-      break;
-    case "status":
-      if (ev.status === "idle") flushQueue(threadId);
-      else if (ev.status === "crashed" || ev.status === "errored" || ev.status === "stopped") inFlight.delete(threadId);
-      break;
+    case "snapshot":
+      void applySnapshot(threadId, ev.snapshot);
+      return;
+    case "subscribe_failed":
+      dispatch(threadId, { kind: "local_notice", variant: "warning", text: `Couldn't follow this thread: ${ev.error}` });
+      return;
   }
+  // Applied with the next frame's batch.
+  queueThreadEvent(threadId, ev);
 }
 
-/** Where a rewind fork starts: resume `resumeSessionId` truncated at `resumeSessionAt`, as a new session (U11). */
-export type ForkFrom = Required<Pick<StartOptions, "resumeSessionId" | "resumeSessionAt" | "forkSession">>;
+/**
+ * Catches up from the host's live state. The first snapshot of a run tops up whatever the
+ * transcript already shows (history the chat pane seeds from the session file). A later one
+ * means events were missed beyond replay, so the transcript is rebuilt from the session file.
+ */
+async function applySnapshot(threadId: string, snap: ThreadSnapshot) {
+  if (caughtUp.has(threadId)) {
+    useThreadStore.setState((s) => ({ threads: { ...s.threads, [threadId]: initialRuntime() } }));
+    await loadSessionHistory(threadId);
+  }
+  caughtUp.add(threadId);
+  for (const ev of snap.events) dispatch(threadId, ev);
+  dispatch(threadId, { kind: "queue_changed", seq: snap.seq, queue: snap.queue });
+}
+
+/** Follows the thread's events (once per run). */
+function subscribe(threadId: string) {
+  if (subscribed.has(threadId)) return;
+  subscribed.add(threadId);
+  void threadSubscribe(threadId, (ev) => handleEvent(threadId, ev)).catch((err: unknown) => {
+    subscribed.delete(threadId);
+    dispatch(threadId, { kind: "local_notice", variant: "warning", text: `Couldn't follow this thread: ${String(err)}` });
+  });
+}
 
 /**
  * Drops the cached start so the next `ensureStarted` calls `claude_start` again: that is the only
- * way the Rust actor leaves Stopped (archive, project removal, then restore or resume).
+ * way the host's actor leaves Stopped (archive, project removal, then restore or resume).
  */
 export function forgetStarted(threadId: string) {
   started.delete(threadId);
 }
 
-/**
- * Spawns (or rebinds to) the thread's claude process once per run. Idempotent until the thread
- * stops (see `forgetStarted`). `fork` applies to the first spawn only.
- */
-export function ensureStarted(threadId: string, fork?: ForkFrom): Promise<void> {
+/** Subscribes and spawns (or reuses) the thread's claude process once per run. Idempotent until it stops. */
+export function ensureStarted(threadId: string): Promise<void> {
   const existing = started.get(threadId);
   if (existing) return existing;
-  const found = findThread(useAppStore.getState(), threadId);
-  if (!found) return Promise.reject(new Error(`unknown thread ${threadId}`));
+  if (!findThread(useAppStore.getState(), threadId)) return Promise.reject(new Error(`unknown thread ${threadId}`));
+  subscribe(threadId);
   // Only this run's own stop or failure may clear its cache entry, not a later run's.
   const isCurrent = () => started.get(threadId) === p;
-  const p: Promise<void> = prepareWorktree(threadId)
-    .then(() => {
-      const { project, thread } = findThread(useAppStore.getState(), threadId) ?? found;
-      return claudeStart(
-        threadId,
-        { cwd: threadCwd(project, thread), resumeSessionId: thread.sessionId, model: thread.model, permissionMode: thread.permissionMode, ...fork },
-        (ev) => {
-          if (ev.kind === "status" && ev.status === "stopped" && isCurrent()) started.delete(threadId);
-          handleEvent(threadId, ev);
-        },
-      );
-    })
-    .then(
+  const p: Promise<void> = claudeStart(threadId).then(
     (status: ThreadStatus) => {
-      // Channel events may already have moved the status on; only fill in the initial one
-      // (or replace the previous run's "stopped" on a restart, or the worktree step's "starting").
+      // Events may already have moved the status on; only fill in the initial one.
       const cur = getRuntime(threadId).status;
       if (cur === "not_started" || cur === "stopped" || cur === "starting") dispatch(threadId, { kind: "local_status", status });
-      if (status === "idle") flushQueue(threadId);
     },
     (err: unknown) => {
       if (isCurrent()) started.delete(threadId);
@@ -99,71 +104,20 @@ export function ensureStarted(threadId: string, fork?: ForkFrom): Promise<void> 
   return p;
 }
 
-/**
- * Gives a thread that asked for a worktree its own checkout before its first start, on a new
- * `speedy/<id>` branch from the project folder's `HEAD`. Rename it later with `git branch -m`.
- */
-async function prepareWorktree(threadId: string): Promise<void> {
-  const found = findThread(useAppStore.getState(), threadId);
-  if (!found?.thread.worktreeRequested || found.thread.worktree || found.thread.sessionId) return;
-  dispatch(threadId, { kind: "local_status", status: "starting" });
-  const worktree = await worktreeCreate(found.project.path, `speedy/${threadId.slice(0, 8)}`).catch((err: unknown) => {
-    throw new Error(`Couldn't create a worktree: ${String(err)}`);
-  });
-  useAppStore.getState().updateThread(threadId, { worktree, worktreeRequested: false });
-}
-
-function textOf(content: unknown[]): string {
-  return content
-    .map((c) => (c && typeof c === "object" && (c as { type?: string }).type === "text" ? String((c as { text?: unknown }).text ?? "") : ""))
-    .join(" ");
-}
-
-const TITLE_MAX = 60;
-function maybeTitle(threadId: string, content: unknown[]) {
-  const found = findThread(useAppStore.getState(), threadId);
-  if (!found || found.thread.title !== "New thread") return;
-  if (getRuntime(threadId).blocks.some((b) => b.kind === "user")) return;
-  const text = textOf(content).replace(/\s+/g, " ").trim();
-  if (!text) return;
-  const title = text.length > TITLE_MAX ? `${text.slice(0, TITLE_MAX).trimEnd()}…` : text;
-  useAppStore.getState().updateThread(threadId, { title });
-}
-
-function send(threadId: string, content: unknown[]) {
-  inFlight.add(threadId);
-  dispatch(threadId, { kind: "local_user", id: newId(), content, ts: Date.now() });
-  claudeSendUser(threadId, content).catch((err: unknown) => {
-    inFlight.delete(threadId);
-    // Undo the optimistic idle -> working so the thread doesn't show a spinner forever.
-    if (getRuntime(threadId).status === "working") dispatch(threadId, { kind: "local_status", status: "idle" });
-    dispatch(threadId, { kind: "local_notice", variant: "warning", text: `Message not sent: ${String(err)}` });
-  });
-}
-
-function flushQueue(threadId: string) {
-  if (inFlight.has(threadId)) return;
-  const next = getRuntime(threadId).queue[0];
-  if (!next) return;
-  dispatch(threadId, { kind: "queue_remove", id: next.id });
-  send(threadId, next.content);
-}
-
-/** Sends now when idle; otherwise queues and sends after the current turn's `result`. */
+/** Sends now when idle; otherwise the host queues it and sends it after the current turn. */
 export async function sendUserMessage(threadId: string, content: unknown[]): Promise<void> {
-  maybeTitle(threadId, content);
+  subscribe(threadId);
   try {
-    await ensureStarted(threadId);
-  } catch {
-    // Start failed (status is errored); keep the message so a retry sends it.
+    await claudeSendUser(threadId, content);
+  } catch (err) {
+    dispatch(threadId, { kind: "local_notice", variant: "warning", text: `Message not sent: ${String(err)}` });
   }
-  const rt = getRuntime(threadId);
-  if (rt.status === "idle" && !inFlight.has(threadId) && rt.queue.length === 0) send(threadId, content);
-  else dispatch(threadId, { kind: "queue_add", item: { id: newId(), content } });
+  // The host started the process for this send; later calls reuse it.
+  if (!started.has(threadId)) void ensureStarted(threadId).catch(() => {});
 }
 
 export function removeQueued(threadId: string, id: string) {
-  dispatch(threadId, { kind: "queue_remove", id });
+  void queueRemove(threadId, id).catch((err: unknown) => console.warn("removing a queued message failed", err));
 }
 
 export function interruptThread(threadId: string): Promise<void> {
@@ -177,11 +131,10 @@ export async function retryThread(threadId: string): Promise<void> {
   if (cur === "crashed" || cur === "errored" || cur === "not_started") dispatch(threadId, { kind: "local_status", status });
 }
 
-/** Answers a can_use_tool request. On a stale diff nothing is sent and the card's diff is refreshed. */
+/** Answers a can_use_tool request. On a stale diff nothing is sent; the `diff_refreshed` event updates the card. */
 export async function respondPermission(threadId: string, requestId: string, result: PermissionResult): Promise<PermissionOutcome> {
   const outcome = await claudeRespondPermission(threadId, requestId, result);
   if (outcome.sent) dispatch(threadId, { kind: "permission_answered", requestId });
-  else dispatch(threadId, { kind: "permission_refreshed", requestId, diff: outcome.refreshedDiff });
   return outcome;
 }
 
@@ -204,7 +157,7 @@ export async function loadSessionHistory(threadId: string): Promise<void> {
   if (!found?.thread.sessionId || rt.seed !== "none" || rt.blocks.length > 0) return;
   dispatch(threadId, { kind: "seed_state", seed: "loading" });
   try {
-    const lines = await sessionLoad(threadCwd(found.project, found.thread), found.thread.sessionId);
+    const lines = await sessionLoad(found.project.hostKey, threadCwd(found.project, found.thread), found.thread.sessionId);
     seedTranscript(threadId, lines);
   } catch (err) {
     dispatch(threadId, { kind: "seed_state", seed: "failed" });

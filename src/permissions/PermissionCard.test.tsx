@@ -4,7 +4,9 @@ import type { CanUseToolRequest, FileDiff, PermissionOutcome } from "../ipc/type
 
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string, args: unknown) => invoke(cmd, args),
+  invoke: (cmd: string, args: unknown) =>
+    // Host RPCs reach this fake by their method name.
+    (cmd === "host_call" ? invoke((args as { method: string }).method, (args as { params: unknown }).params) : invoke(cmd, args)),
   Channel: class {
     onmessage: (m: unknown) => void = () => {};
   },
@@ -54,14 +56,23 @@ beforeEach(() => {
   invoke.mockReset();
   settings = {};
   outcomes = [];
-  invoke.mockImplementation(async (cmd: string) => {
+  invoke.mockImplementation(async (cmd: string, args?: { threadId: string; requestId: string }) => {
     if (cmd === "get_extension_settings") return settings;
-    if (cmd === "claude_respond_permission") return outcomes.shift() ?? { sent: true, refreshedDiff: null };
+    if (cmd === "claude_respond_permission") {
+      const outcome = outcomes.shift() ?? { sent: true, refreshedDiff: null };
+      // Like the core: a stale-diff refresh is announced as an event before the call returns.
+      if (!outcome.sent && outcome.refreshedDiff && args) {
+        const event = { kind: "diff_refreshed", seq: ++seq, request_id: args.requestId, diff: outcome.refreshedDiff } as const;
+        useThreadStore.getState().dispatch(args.threadId, event);
+      }
+      return outcome;
+    }
     return undefined;
   });
   __resetRuntimeForTests();
   useThreadStore.setState({ threads: {} });
-  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false });
+  // This Mac is connected, as it is by the time a thread shows.
+  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false, hosts: [{ key: "local", state: { state: "connected", host_id: "this-mac", agent_version: "test" }, update: null }] });
   threadId = useAppStore.getState().addProject("/work/proj");
 });
 
@@ -213,7 +224,7 @@ describe("generic prompt choices", () => {
     const bypassOnly = [suggestions![1]];
     addRequest({ tool_name: "Bash", input: { command: "npm test" }, permission_suggestions: bypassOnly });
     card();
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_extension_settings", undefined));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_extension_settings", {}));
     await act(async () => {});
     fireEvent.click(await screen.findByRole("button", { name: /^2\s*Yes/ }));
     await waitFor(() => expect(respondCalls()).toHaveLength(1));

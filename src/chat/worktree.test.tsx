@@ -3,22 +3,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const WT = "/data/worktrees/proj/feature-x";
 let branchOf: Record<string, string | null> = {};
-let failCreate = false;
+/** The host couldn't create the requested worktree, so its start fails. */
+let failStart = false;
 const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
   switch (cmd) {
     case "explorer_git_branch":
       return branchOf[args!.root as string] ?? null;
-    case "worktree_create":
-      if (failCreate) throw "could not lock config file";
-      return { path: WT, branch: args!.branch };
     case "claude_start":
+      if (failStart) throw "Couldn't create a worktree: could not lock config file";
       return "idle";
     default:
       return undefined;
   }
 });
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string, args: Record<string, unknown>) => invoke(cmd, args),
+  invoke: (cmd: string, args: Record<string, unknown>) =>
+    // Host RPCs reach this fake by their method name.
+    (cmd === "host_call" ? invoke((args as { method: string }).method, (args as { params: Record<string, unknown> }).params) : invoke(cmd, args)),
   Channel: class {
     onmessage: (m: unknown) => void = () => {};
   },
@@ -44,11 +45,12 @@ const worktreeToggle = () => screen.queryByRole("button", { name: "Worktree" });
 
 beforeEach(() => {
   branchOf = { "/work/proj": "main", [WT]: "speedy/abc" };
-  failCreate = false;
+  failStart = false;
   invoke.mockClear();
   __resetRuntimeForTests();
   useThreadStore.setState({ threads: {} });
-  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false });
+  // This Mac is connected, as it is by the time a thread shows.
+  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false, hosts: [{ key: "local", state: { state: "connected", host_id: "this-mac", agent_version: "test" }, update: null }] });
   threadId = useAppStore.getState().addProject("/work/proj");
 });
 afterEach(() => {
@@ -78,37 +80,37 @@ describe("Branch and worktree", () => {
     expect(screen.queryByTitle(/^Branch:/)).not.toBeInTheDocument();
   });
 
-  it("starts a checked thread on a new branch in its own worktree, then locks it", async () => {
+  it("asks the host for a worktree, then shows and locks the branch the host made", async () => {
     renderThread();
     await settle();
     fireEvent.click(worktreeToggle()!);
     expect(thread().worktreeRequested).toBe(true);
     expect(worktreeToggle()).toHaveAttribute("aria-pressed", "true");
-    expect(invoke).not.toHaveBeenCalledWith("worktree_create", expect.anything());
+    expect(invoke).toHaveBeenCalledWith("thread_update", { threadId, patch: { worktreeRequested: true } });
 
     await act(() => sendUserMessage(threadId, [{ type: "text", text: "hi" }]));
+    // The host creates the worktree before its first start, then reports the thread.
+    const hostThread = { ...thread(), worktree: { path: WT, branch: "speedy/abc" }, worktreeRequested: false, fork: null, queue: [] };
+    act(() => useAppStore.getState().applyHostEvent("local", { kind: "thread_upserted", projectId: useAppStore.getState().projects[0].id, thread: hostThread }));
     await settle();
 
-    expect(invoke).toHaveBeenCalledWith("worktree_create", { root: "/work/proj", branch: `speedy/${threadId.slice(0, 8)}` });
-    expect(invoke).toHaveBeenCalledWith("claude_start", expect.objectContaining({ options: expect.objectContaining({ cwd: WT }) }));
     expect(thread()).toMatchObject({ worktree: { path: WT }, worktreeRequested: false });
     expect(worktreeToggle()).not.toBeInTheDocument();
     expect(screen.getByTitle(/^Branch: speedy\/abc \(worktree at/)).toBeInTheDocument();
   });
 
-  it("an unchecked thread starts in the project folder", async () => {
+  it("an unchecked thread asks for no worktree", async () => {
     await act(() => sendUserMessage(threadId, [{ type: "text", text: "hi" }]));
-    expect(invoke).not.toHaveBeenCalledWith("worktree_create", expect.anything());
-    expect(invoke).toHaveBeenCalledWith("claude_start", expect.objectContaining({ options: expect.objectContaining({ cwd: "/work/proj" }) }));
+    expect(invoke).toHaveBeenCalledWith("claude_send_user", expect.objectContaining({ threadId }));
+    expect(invoke).not.toHaveBeenCalledWith("thread_update", expect.objectContaining({ patch: { worktreeRequested: true } }));
   });
 
-  it("keeps the choice open when the worktree can't be created", async () => {
-    failCreate = true;
+  it("keeps the choice open when the host can't create the worktree", async () => {
+    failStart = true;
     useAppStore.getState().updateThread(threadId, { worktreeRequested: true });
     renderThread();
     await act(() => sendUserMessage(threadId, [{ type: "text", text: "hi" }]));
     await settle();
-    expect(invoke).not.toHaveBeenCalledWith("claude_start", expect.anything());
     expect(thread().worktree).toBeNull();
     fireEvent.click(worktreeToggle()!);
     expect(thread().worktreeRequested).toBe(false);

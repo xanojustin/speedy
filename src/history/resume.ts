@@ -51,7 +51,7 @@ export async function resumeSession(projectId: string, session: SessionMeta, now
     );
     if (!ok) return "cancelled";
   }
-  const lines = await sessionLoad(project.path, session.sessionId);
+  const lines = await sessionLoad(project.hostKey, project.path, session.sessionId);
   const threadId = useAppStore.getState().createThread(projectId, { sessionId: session.sessionId, title: session.title });
   seedTranscript(threadId, lines);
   // Start failures surface as the thread's errored status (ErrorCard), not here.
@@ -67,7 +67,7 @@ export async function renameSession(projectId: string, sessionId: string, title:
   const project = projectOf(projectId);
   const bound = boundThread(projectId, sessionId);
   if (bound && hasLiveActor(bound.id)) await controlRequest(bound.id, { subtype: "rename_session", title });
-  else await sessionRenameOffline(bound ? threadCwd(project, bound) : project.path, sessionId, title);
+  else await sessionRenameOffline(project.hostKey, bound ? threadCwd(project, bound) : project.path, sessionId, title);
   if (bound) useAppStore.getState().updateThread(bound.id, { title });
 }
 

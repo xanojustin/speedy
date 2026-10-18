@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ClaudeEvent, ThreadStatus } from "../ipc/types";
+import type { ClaudeEvent, ThreadSnapshot, ThreadStatus } from "../ipc/types";
 
 const invoke = vi.fn();
 let channel: { onmessage: (e: ClaudeEvent) => void } | null = null;
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args: Record<string, unknown>) => {
-    if (cmd === "claude_start") channel = args.onEvent as typeof channel;
+    if (cmd === "host_thread_subscribe") channel = args.onEvent as typeof channel;
+    // Host RPCs reach this fake by their method name.
+    if (cmd === "host_call") return invoke(args.method, args.params);
     return invoke(cmd, args);
   },
   Channel: class {
@@ -15,28 +17,14 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { useAppStore } from "./appStore";
 import { flushThreadEvents, setThreadEventBatching, useThreadStore } from "./threadStore";
-import {
-  ensureStarted,
-  interruptThread,
-  removeQueued,
-  respondPermission,
-  retryThread,
-  sendUserMessage,
-  __resetRuntimeForTests,
-} from "./runtime";
+import { ensureStarted, interruptThread, removeQueued, respondPermission, retryThread, sendUserMessage, __resetRuntimeForTests } from "./runtime";
 
 const emit = (e: ClaudeEvent) => channel!.onmessage(e);
-const status = (s: ThreadStatus, seq = 1): ClaudeEvent => ({
-  kind: "status",
-  seq,
-  status: s,
-  detail: null,
-  stderr_tail: null,
-  reconnecting: false,
-});
+const status = (s: ThreadStatus, seq = 1): ClaudeEvent => ({ kind: "status", seq, status: s, detail: null, stderr_tail: null, reconnecting: false });
 const rt = (id: string) => useThreadStore.getState().threads[id];
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd);
 const flush = () => new Promise((r) => setTimeout(r, 0));
+const text = (t: string) => [{ type: "text", text: t }];
 
 let threadId = "";
 
@@ -46,64 +34,76 @@ beforeEach(() => {
   channel = null;
   __resetRuntimeForTests();
   useThreadStore.setState({ threads: {} });
-  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false });
+  // This Mac is connected, as it is by the time a thread shows.
+  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false, hosts: [{ key: "local", state: { state: "connected", host_id: "this-mac", agent_version: "test" }, update: null }] });
   threadId = useAppStore.getState().addProject("/work/proj");
-  useAppStore.getState().updateThread(threadId, { sessionId: "old-session", model: "opus", permissionMode: "plan" });
 });
 
 describe("runtime bridge", () => {
-  it("starts lazily once with the project's cwd, resume id, model, and mode", async () => {
+  it("subscribes and starts once; the host picks the thread's cwd, session, model and mode", async () => {
     await Promise.all([ensureStarted(threadId), ensureStarted(threadId)]);
+    expect(calls("host_thread_subscribe")).toHaveLength(1);
     expect(calls("claude_start")).toHaveLength(1);
-    expect(calls("claude_start")[0][1]).toMatchObject({
-      threadId,
-      options: { cwd: "/work/proj", resumeSessionId: "old-session", model: "opus", permissionMode: "plan" },
-    });
+    expect(calls("claude_start")[0][1]).toEqual({ threadId });
     expect(rt(threadId).status).toBe("starting");
   });
 
-  it("queues while not idle, sends on idle, and sends the next queued message when a result arrives", async () => {
-    await sendUserMessage(threadId, [{ type: "text", text: "first" }]);
-    expect(calls("claude_send_user")).toHaveLength(0);
-    expect(rt(threadId).queue).toHaveLength(1);
+  it("sends every message to the host, which echoes it and owns the queue", async () => {
+    await sendUserMessage(threadId, text("first"));
+    await sendUserMessage(threadId, text("second"));
+    expect(calls("claude_send_user").map((c) => c[1].content)).toEqual([text("first"), text("second")]);
+    // Nothing is shown or queued until the host says so.
+    expect(rt(threadId)?.blocks ?? []).toHaveLength(0);
 
-    emit(status("idle"));
-    await flush();
-    expect(calls("claude_send_user").map((c) => c[1].content)).toEqual([[{ type: "text", text: "first" }]]);
-    expect(rt(threadId).queue).toHaveLength(0);
+    emit(status("idle", 1));
+    emit({ kind: "user_sent", seq: 2, id: "m1", content: text("first") });
+    emit({ kind: "queue_changed", seq: 3, queue: [{ id: "q1", content: text("second") }] });
     expect(rt(threadId).blocks.filter((b) => b.kind === "user")).toHaveLength(1);
+    expect(rt(threadId).status).toBe("working");
+    expect(rt(threadId).queue.map((q) => q.content)).toEqual([text("second")]);
 
-    emit(status("working", 2));
-    await sendUserMessage(threadId, [{ type: "text", text: "second" }]);
-    await sendUserMessage(threadId, [{ type: "text", text: "third" }]);
-    expect(calls("claude_send_user")).toHaveLength(1);
-    expect(rt(threadId).queue.map((q) => q.content)).toEqual([[{ type: "text", text: "second" }], [{ type: "text", text: "third" }]]);
-
-    emit({ kind: "message", seq: 3, raw: { type: "result", subtype: "success", is_error: false } });
-    emit(status("idle", 4)); // the actor's own idle after the result must not double-send
+    removeQueued(threadId, "q1");
     await flush();
-    expect(calls("claude_send_user").map((c) => c[1].content)).toEqual([
-      [{ type: "text", text: "first" }],
-      [{ type: "text", text: "second" }],
-    ]);
+    expect(calls("queue_remove").at(-1)?.[1]).toEqual({ threadId, id: "q1" });
+  });
+
+  it("shows a message another client sent, and a failed send as a notice", async () => {
+    await ensureStarted(threadId);
+    emit(status("idle", 1));
+    emit({ kind: "user_sent", seq: 2, id: "other", content: text("from the laptop") });
+    expect(rt(threadId).blocks.at(-1)).toMatchObject({ kind: "user", text: "from the laptop" });
+    emit({ kind: "send_failed", seq: 3, id: "other", error: "claude isn't running" });
+    expect(rt(threadId).status).toBe("idle");
+    expect(rt(threadId).blocks.at(-1)).toMatchObject({ kind: "notice", text: "Message not sent: claude isn't running" });
+  });
+
+  it("catches up from a snapshot: pending prompts, status and queue", async () => {
+    await ensureStarted(threadId);
+    const snapshot: ThreadSnapshot = {
+      epoch: 9,
+      seq: 40,
+      sessionId: null,
+      queue: [{ id: "q1", content: text("later") }],
+      events: [
+        { kind: "permission_request", seq: 30, request_id: "r1", request: { subtype: "can_use_tool", tool_name: "Bash", input: {} }, diff: null },
+        status("awaiting_user", 31),
+      ],
+    };
+    emit({ kind: "snapshot", snapshot });
+    await flush();
+    expect(rt(threadId).status).toBe("awaiting_user");
+    expect(rt(threadId).pendingPermissions.map((p) => p.requestId)).toEqual(["r1"]);
     expect(rt(threadId).queue).toHaveLength(1);
-
-    removeQueued(threadId, rt(threadId).queue[0].id);
-    expect(rt(threadId).queue).toHaveLength(0);
   });
 
-  it("titles a new thread from its first message and persists session_bound", async () => {
-    await sendUserMessage(threadId, [{ type: "text", text: "  Refactor   the parser so that it handles nested blocks and also reports errors nicely  " }]);
-    const title = useAppStore.getState().projects[0].threads[0].title;
-    expect(title.startsWith("Refactor the parser so that it handles")).toBe(true);
-    expect(title.length).toBeLessThanOrEqual(61);
-
-    emit({ kind: "session_bound", seq: 5, session_id: "new-session" });
-    expect(useAppStore.getState().projects[0].threads[0].sessionId).toBe("new-session");
-    expect(rt(threadId).sessionId).toBe("new-session");
+  it("drops a prompt another client answered", async () => {
+    await ensureStarted(threadId);
+    emit({ kind: "permission_request", seq: 2, request_id: "r1", request: { subtype: "can_use_tool", tool_name: "Bash", input: {} }, diff: null });
+    emit({ kind: "permission_resolved", seq: 3, request_id: "r1", reason: "allowed" });
+    expect(rt(threadId).pendingPermissions).toEqual([]);
   });
 
-  it("removes a pending permission when sent, and swaps in the refreshed diff when stale", async () => {
+  it("removes a pending permission when sent, and swaps in the refreshed diff from its event when stale", async () => {
     await ensureStarted(threadId);
     const req = { subtype: "can_use_tool" as const, tool_name: "Edit", input: {} };
     emit({ kind: "permission_request", seq: 2, request_id: "r1", request: req, diff: [{ path: "a", isNewFile: false, unified: "old", baseFingerprint: "1" }] });
@@ -112,6 +112,7 @@ describe("runtime bridge", () => {
     invoke.mockResolvedValueOnce({ sent: false, refreshedDiff: [{ path: "a", isNewFile: false, unified: "new", baseFingerprint: "2" }] });
     const stale = await respondPermission(threadId, "r1", { behavior: "allow", updatedInput: {} });
     expect(stale.sent).toBe(false);
+    emit({ kind: "diff_refreshed", seq: 4, request_id: "r1", diff: [{ path: "a", isNewFile: false, unified: "new", baseFingerprint: "2" }] });
     expect(rt(threadId).pendingPermissions.find((p) => p.requestId === "r1")?.diff?.[0].unified).toBe("new");
 
     invoke.mockResolvedValueOnce({ sent: true, refreshedDiff: null });
@@ -120,7 +121,7 @@ describe("runtime bridge", () => {
     expect(calls("claude_respond_permission").at(-1)?.[1]).toEqual({ threadId, requestId: "r2", response: { behavior: "deny", message: "no" } });
   });
 
-  it("interrupts and retries through the IPC commands", async () => {
+  it("interrupts and retries through the host", async () => {
     await ensureStarted(threadId);
     emit({ kind: "status", seq: 2, status: "crashed", detail: "exited 1", stderr_tail: "boom", reconnecting: false });
     await interruptThread(threadId);
@@ -137,50 +138,19 @@ describe("runtime bridge", () => {
     emit({ kind: "message", seq: 2, raw: { type: "assistant", parent_tool_use_id: null, message: { id: "m", content: [{ type: "text", text: "bg" }] } } });
     expect(rt(threadId).blocks).toHaveLength(1);
   });
-
-  it("restarts a stopped thread on the next send and delivers the message queued while stopped", async () => {
-    await ensureStarted(threadId);
-    emit(status("idle", 1));
-    emit(status("stopped", 2)); // archived: claude_stop moved the actor to Stopped
-    await flush();
-    expect(rt(threadId).status).toBe("stopped");
-
-    await sendUserMessage(threadId, [{ type: "text", text: "after restore" }]);
-    expect(calls("claude_start")).toHaveLength(2);
-    expect(calls("claude_start")[1][1]).toMatchObject({ threadId, options: { resumeSessionId: "old-session" } });
-    expect(calls("claude_send_user")).toHaveLength(0);
-    expect(rt(threadId).queue).toHaveLength(1);
-
-    emit(status("idle", 3));
-    await flush();
-    expect(calls("claude_send_user").map((c) => c[1].content)).toEqual([[{ type: "text", text: "after restore" }]]);
-    expect(rt(threadId).queue).toHaveLength(0);
-  });
 });
 
 describe("runtime bridge with per-frame batching", () => {
   beforeEach(() => setThreadEventBatching(true));
   afterEach(() => setThreadEventBatching(false));
 
-  it("buffers channel events until the frame, but decisions read the applied state", async () => {
-    await sendUserMessage(threadId, [{ type: "text", text: "first" }]);
-    expect(rt(threadId).queue).toHaveLength(1);
-
+  it("buffers host events until the frame", async () => {
+    await ensureStarted(threadId);
     const before = useThreadStore.getState();
     emit({ kind: "message", seq: 2, raw: { type: "assistant", parent_tool_use_id: null, message: { id: "m", content: [{ type: "text", text: "bg" }] } } });
-    // Not applied yet: subscribers are not notified per channel event.
+    // Not applied yet: subscribers are not notified per event.
     expect(useThreadStore.getState()).toBe(before);
-
-    // The idle status sends the queued message, which lands after the buffered events.
-    emit(status("idle", 3));
-    await flush();
-    expect(calls("claude_send_user").map((c) => c[1].content)).toEqual([[{ type: "text", text: "first" }]]);
-    expect(rt(threadId).blocks.map((b) => b.kind)).toEqual(["text", "user"]);
-    expect(rt(threadId).status).toBe("working");
-
-    emit({ kind: "session_bound", seq: 4, session_id: "new-session" });
-    expect(useAppStore.getState().projects[0].threads[0].sessionId).toBe("new-session");
     flushThreadEvents();
-    expect(rt(threadId).sessionId).toBe("new-session");
+    expect(rt(threadId).blocks.map((b) => b.kind)).toEqual(["text"]);
   });
 });

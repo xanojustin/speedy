@@ -1,29 +1,34 @@
-//! Speedy core: one `claude` actor and one PTY per thread, app state, and the
-//! IPC surface the single React webview talks to.
+//! Speedy app: a client of `speedy-agent` hosts (KTD1, KTD3, KTD11). The webview reaches
+//! every host through [`hosts`]; this crate adds the macOS-only pieces (menu, `speedy`
+//! command, notifications and Dock badge) and the app's own `client.json` preferences.
 
 pub mod attention;
-pub mod claude;
 pub mod cli;
-pub mod env;
-pub mod explorer;
-pub mod files;
+pub mod hosts;
 pub mod menu;
-pub mod proc_group;
-pub mod pty;
-pub mod state;
-pub mod worktree;
 
 use std::sync::Arc;
 
-use tauri::{Manager, RunEvent, WindowEvent};
+use speedy_core::host::migrate::migrate_client;
+use speedy_core::state::client::ClientState;
+use speedy_core::state::default_state_dir;
+use speedy_core::state::store::{JsonStore, Loaded};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
-/// Everything the commands need, managed by Tauri as shared state.
+/// App event carrying an SSH prompt for the webview: payload `hosts::askpass::Prompt`.
+const ASKPASS_EVENT: &str = "askpass";
+/// App event asking the webview to confirm quitting while This Mac's threads work: payload `{ working }`.
+const QUIT_EVENT: &str = "quit_requested";
+
+/// Set once the user confirmed quitting with threads working.
+static QUIT_CONFIRMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Everything the app's own commands need, managed by Tauri as shared state.
 pub struct AppCtx {
-    pub env: Arc<env::EnvService>,
-    pub sessions: Arc<claude::SessionManager>,
-    pub ptys: Arc<pty::PtyManager>,
-    pub store: Arc<state::StateStore>,
     pub attention: Arc<attention::Attention>,
+    /// The app's preferences; threads and projects belong to the hosts.
+    pub client: JsonStore<ClientState>,
+    pub client_notice: Option<String>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -32,14 +37,33 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(cli::PendingOpens::default())
+        .manage(hosts::HostRegistry::new())
         .setup(|app| {
             let handle = app.handle().clone();
-            let env = Arc::new(env::EnvService::start());
             let attention = Arc::new(attention::Attention::new(handle.clone()));
-            let sessions = Arc::new(claude::SessionManager::new(env.clone(), attention.clone()));
-            let ptys = Arc::new(pty::PtyManager::new(env.clone(), handle.clone()));
-            let store = Arc::new(state::StateStore::new(state::default_state_dir()));
-            app.manage(AppCtx { env, sessions, ptys, store, attention });
+            // This Mac's preferences from the pre-hosts state.json, once (R18).
+            let client_notice = migrate_client(&default_state_dir(), &default_state_dir(), hosts::LOCAL);
+            let client = JsonStore::new(default_state_dir());
+            let registry = app.state::<Arc<hosts::HostRegistry>>().inner().clone();
+            let on_status = attention.clone();
+            let prompts = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                match hosts::askpass::Askpass::start(move |prompt| {
+                    if let Err(e) = prompts.emit(ASKPASS_EVENT, prompt) {
+                        log::warn!("emitting {ASKPASS_EVENT}: {e}");
+                    }
+                }) {
+                    Ok(askpass) => registry.set_askpass(askpass),
+                    Err(e) => log::error!("SSH prompts won't work: {e}"),
+                }
+                registry.start_local(Arc::new(move |id: &str, from, to| on_status.on_status(id, "", from, to)));
+                registry.start_saved();
+                hosts::wake::on_wake(move || {
+                    let registry = registry.clone();
+                    tauri::async_runtime::spawn(async move { registry.woke().await });
+                });
+            });
+            app.manage(AppCtx { attention, client, client_notice });
             menu::install(app)?;
             Ok(())
         })
@@ -51,37 +75,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            env::get_setup_state,
-            env::recheck_setup,
-            env::get_extension_settings,
-            claude::claude_start,
-            claude::claude_send_user,
-            claude::claude_control,
-            claude::claude_respond_permission,
-            claude::claude_interrupt,
-            claude::claude_stop,
-            claude::claude_retry,
-            pty::pty_open,
-            pty::pty_write,
-            pty::pty_resize,
-            pty::pty_close,
-            pty::pty_has_foreground_child,
-            state::state_load,
-            state::state_save,
-            state::paths_exist,
-            state::session_index::sessions_list,
-            state::session_index::session_load,
-            state::session_index::session_rename_offline,
-            files::files_search,
-            explorer::explorer_list,
-            explorer::explorer_read,
-            explorer::explorer_write,
-            explorer::explorer_git_status,
-            explorer::explorer_git_branch,
-            worktree::worktree_create,
-            worktree::worktree_unused,
-            worktree::worktree_clean,
-            explorer::explorer_git_diff,
+            client_state_load,
+            client_state_save,
             attention::attention_set_visible,
             attention::attention_mark_read,
             attention::attention_set_titles,
@@ -90,6 +85,22 @@ pub fn run() {
             open_path,
             open_in_vscode,
             cli::open_folders_take,
+            hosts::host_list,
+            hosts::host_call,
+            hosts::host_subscribe,
+            hosts::host_thread_subscribe,
+            hosts::host_pty_attach,
+            hosts::host_pty_resize,
+            hosts::host_unsubscribe,
+            hosts::host_watch,
+            hosts::host_aliases,
+            hosts::host_add,
+            hosts::host_remove,
+            hosts::host_reconnect,
+            hosts::askpass_answer,
+            hosts::local_agent_stop,
+            hosts::local_agent_start,
+            quit_confirmed,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Speedy")
@@ -98,15 +109,41 @@ pub fn run() {
             if let RunEvent::Opened { urls } = &event {
                 cli::handle_opened(app, urls);
             }
-            if let RunEvent::ExitRequested { .. } = event
-                && let Some(ctx) = app.try_state::<AppCtx>()
-            {
-                // KTD9: deny pending permissions, interrupt, then terminate process groups.
-                ctx.sessions.shutdown_all(std::time::Duration::from_secs(3));
-                ctx.ptys.shutdown_all(std::time::Duration::from_secs(3));
-                ctx.store.flush();
+            // Threads and shells belong to the hosts' agents and keep running (R17, KTD11).
+            if let RunEvent::ExitRequested { api, .. } = &event {
+                let working = app.try_state::<Arc<hosts::HostRegistry>>().map_or(0, |r| r.working(hosts::LOCAL));
+                if working > 0 && !QUIT_CONFIRMED.load(std::sync::atomic::Ordering::SeqCst) {
+                    // The webview says the threads keep running, then calls `quit_confirmed`.
+                    api.prevent_exit();
+                    let _ = app.emit(QUIT_EVENT, serde_json::json!({ "working": working }));
+                    return;
+                }
+                if let Some(ctx) = app.try_state::<AppCtx>() {
+                    ctx.client.flush();
+                }
             }
         });
+}
+
+/// Quits after the user saw that This Mac's working threads keep running.
+#[tauri::command]
+fn quit_confirmed(app: tauri::AppHandle) {
+    QUIT_CONFIRMED.store(true, std::sync::atomic::Ordering::SeqCst);
+    app.exit(0);
+}
+
+/// The app's preferences, with a notice when migrating them from state.json went wrong.
+#[tauri::command]
+fn client_state_load(ctx: tauri::State<'_, AppCtx>) -> Loaded<ClientState> {
+    let mut loaded = ctx.client.load();
+    loaded.notice = loaded.notice.or_else(|| ctx.client_notice.clone());
+    loaded
+}
+
+/// Debounced, atomic save of the app's preferences.
+#[tauri::command]
+fn client_state_save(ctx: tauri::State<'_, AppCtx>, state: ClientState) {
+    ctx.client.save(state);
 }
 
 /// Opens a web link or an existing document with the user's default handler
@@ -127,9 +164,20 @@ fn open_path(path: String) -> Result<(), String> {
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Opens a folder in VS Code by bundle id, so it works without the `code` CLI on PATH.
+/// Opens a folder in VS Code by bundle id, so it works without the `code` CLI on PATH. A
+/// folder on an SSH host opens as a VS Code remote window on that alias (R16).
 #[tauri::command]
-fn open_in_vscode(path: String) -> Result<(), String> {
+fn open_in_vscode(hosts: tauri::State<'_, Arc<hosts::HostRegistry>>, path: String, host: Option<String>) -> Result<(), String> {
+    if let Some(alias) = host.filter(|h| h != hosts::LOCAL) {
+        // Only an added host, and an absolute path, become part of the URL.
+        hosts.get(&alias)?;
+        if !path.starts_with('/') {
+            return Err(format!("cannot open {path} in VS Code: not an absolute path"));
+        }
+        let url = format!("vscode://vscode-remote/ssh-remote+{}{}", url_escape(&alias), url_escape(&path));
+        let status = std::process::Command::new("open").arg(url).status().map_err(|e| e.to_string())?;
+        return if status.success() { Ok(()) } else { Err("VS Code isn't installed".into()) };
+    }
     let p = std::path::Path::new(&path);
     if !p.is_absolute() || !p.is_dir() {
         return Err(format!("cannot open {path} in VS Code: not an existing folder"));
@@ -140,6 +188,16 @@ fn open_in_vscode(path: String) -> Result<(), String> {
         .status()
         .map_err(|e| e.to_string())?;
     if status.success() { Ok(()) } else { Err("VS Code isn't installed".into()) }
+}
+
+/// Percent-escapes everything but unreserved characters and `/`.
+fn url_escape(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 fn is_web_link(path: &str) -> bool {

@@ -12,7 +12,7 @@ export function syntheticSession(count: number): ThreadAction[] {
     const tool = `tu_${turn}`;
     const msg = (raw: Record<string, unknown>): ThreadAction => ({ kind: "message", seq: ++seq, raw: raw as never });
     const steps: ThreadAction[] = [
-      { kind: "local_user", id: `u_${turn}`, content: [{ type: "text", text: `Question ${turn}: please look at file ${turn}.ts` }], ts: turn * 1000 },
+      { kind: "user_sent", seq: ++seq, id: `u_${turn}`, content: [{ type: "text", text: `Question ${turn}: please look at file ${turn}.ts` }] },
       msg({ type: "assistant", parent_tool_use_id: null, message: { id, content: [{ type: "thinking", thinking: `Thinking about ${turn}` }] } }),
       msg({
         type: "assistant",

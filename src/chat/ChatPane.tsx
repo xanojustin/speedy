@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { Composer } from "../composer/Composer";
 import { loadSessionHistory } from "../store/runtime";
+import { ActivityPanel } from "./ActivityPanel";
 import { ChatHeader } from "./ChatHeader";
 import { Transcript } from "./Transcript";
 import "./chat.css";
@@ -17,6 +18,7 @@ export function ChatPane({ threadId }: { threadId: string }) {
     <div className="chat-pane" data-thread={threadId}>
       <ChatHeader threadId={threadId} />
       <Transcript threadId={threadId} />
+      <ActivityPanel threadId={threadId} />
       <Composer threadId={threadId} />
     </div>
   );

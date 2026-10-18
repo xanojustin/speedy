@@ -35,10 +35,11 @@ bun install
 echo "==> Building $APP_NAME.app"
 bun run tauri build
 
-# Quit through AppleScript so Speedy's exit hook runs: it stops running Claude threads
-# and flushes app state. Refuse to replace the app while it's still running.
+# Quit through AppleScript so Speedy's exit hook runs and saves its preferences. Threads
+# belong to This Mac's agent and keep running; with threads working, Speedy asks first.
+# Refuse to replace the app while it's still running.
 if running; then
-  echo "==> Quitting $APP_NAME (running threads will be stopped)"
+  echo "==> Quitting $APP_NAME (threads keep running in This Mac's agent)"
   osascript -e "tell application \"$APP_NAME\" to quit" || true
   for _ in $(seq 1 30); do
     running || break

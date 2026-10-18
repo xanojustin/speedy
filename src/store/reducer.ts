@@ -1,6 +1,15 @@
 // U8: pure reducer from the actor's ClaudeEvent stream (and a few local actions) to a thread's
 // runtime state and transcript view blocks. No IO here; `now` is passed in so durations are testable.
-import type { CanUseToolRequest, ClaudeEvent, FileDiff, PermissionMode, RawMessage, ThreadStatus } from "../ipc/types";
+import {
+  SESSION_TRUNCATED_TYPE,
+  TRUNCATED_HISTORY_NOTICE,
+  type CanUseToolRequest,
+  type ClaudeEvent,
+  type FileDiff,
+  type PermissionMode,
+  type RawMessage,
+  type ThreadStatus,
+} from "../ipc/types";
 import type { SDKAssistantMessage, SDKPartialAssistantMessage, SDKResultMessage, SDKUserMessage } from "./sdk";
 
 // ---------- view blocks ----------
@@ -23,6 +32,8 @@ export interface ToolResultView {
 }
 
 export interface TaskProgress {
+  /** The CLI's task id (matches `BackgroundTask.taskId`). */
+  taskId: string | null;
   description: string | null;
   lastToolName: string | null;
   toolUses: number | null;
@@ -161,16 +172,12 @@ export function initialRuntime(): ThreadRuntime {
 // ---------- actions ----------
 
 export type LocalAction =
-  | { kind: "local_user"; id: string; content: unknown[]; ts: number }
   | { kind: "seed"; lines: Record<string, unknown>[] }
   | { kind: "seed_state"; seed: ThreadRuntime["seed"] }
   | { kind: "local_notice"; variant: "info" | "warning"; text: string }
   | { kind: "local_status"; status: ThreadStatus; detail?: string | null }
   | { kind: "retrying" }
   | { kind: "permission_answered"; requestId: string }
-  | { kind: "permission_refreshed"; requestId: string; diff: FileDiff[] | null }
-  | { kind: "queue_add"; item: QueuedMessage }
-  | { kind: "queue_remove"; id: string }
   | { kind: "context_usage"; usage: unknown };
 
 export type ThreadAction = ClaudeEvent | LocalAction;
@@ -673,6 +680,7 @@ function onSystem(s: ThreadRuntime, raw: RawMessage, now: number, seeding: boole
           const t = b as ToolBlock;
           const prev = t.progress;
           const progress: TaskProgress = {
+            taskId: typeof raw.task_id === "string" ? raw.task_id : prev?.taskId ?? null,
             description: typeof raw.description === "string" ? raw.description : prev?.description ?? null,
             lastToolName: typeof raw.last_tool_name === "string" ? raw.last_tool_name : prev?.lastToolName ?? null,
             toolUses: usage.tool_uses ?? prev?.toolUses ?? null,
@@ -769,6 +777,8 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
       );
     case "permission_resolved":
       return withSeq({ ...s, pendingPermissions: s.pendingPermissions.filter((p) => p.requestId !== a.request_id) }, a.seq);
+    case "diff_refreshed":
+      return withSeq({ ...s, pendingPermissions: s.pendingPermissions.map((p) => (p.requestId === a.request_id ? { ...p, diff: a.diff } : p)) }, a.seq);
     case "stderr": {
       const tail = (s.stderrTail + a.text + (a.text.endsWith("\n") ? "" : "\n")).slice(-STDERR_TAIL_MAX);
       return withSeq({ ...s, stderrTail: tail }, a.seq);
@@ -785,15 +795,37 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
         a.seq,
       );
 
-    // ---- local actions ----
-    case "local_user": {
+    // ---- events the host adds (KTD6) ----
+    case "user_sent": {
+      // The CLI doesn't echo user messages; the host does, for every client and replay.
       const { text, images } = flattenText(a.content);
-      return {
-        ...s,
-        blocks: [...s.blocks, { kind: "user", id: a.id, uuid: null, text, images, ts: a.ts }],
-        status: s.status === "idle" ? "working" : s.status,
-      };
+      return withSeq(
+        {
+          ...s,
+          blocks: [...s.blocks, { kind: "user", id: a.id, uuid: null, text, images, ts: now }],
+          status: s.status === "idle" ? "working" : s.status,
+        },
+        a.seq,
+      );
     }
+    case "queue_changed":
+      return withSeq({ ...s, queue: a.queue }, a.seq);
+    case "send_failed":
+      return withSeq(
+        {
+          ...s,
+          // Undo the idle -> working the echo made, so the thread doesn't spin forever.
+          status: s.status === "working" ? "idle" : s.status,
+          blocks: [...s.blocks, { kind: "notice", id: `send-${a.id}`, variant: "warning", text: `Message not sent: ${a.error}`, ts: now }],
+        },
+        a.seq,
+      );
+    // The runtime reseeds from a snapshot; a refused subscribe shows as a notice there.
+    case "snapshot":
+    case "subscribe_failed":
+      return s;
+
+    // ---- local actions ----
     case "seed":
       return seedRuntime(s, a.lines, now, true);
     case "seed_state":
@@ -806,12 +838,6 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
       return { ...s, retrying: true };
     case "permission_answered":
       return { ...s, pendingPermissions: s.pendingPermissions.filter((p) => p.requestId !== a.requestId) };
-    case "permission_refreshed":
-      return { ...s, pendingPermissions: s.pendingPermissions.map((p) => (p.requestId === a.requestId ? { ...p, diff: a.diff } : p)) };
-    case "queue_add":
-      return { ...s, queue: [...s.queue, a.item] };
-    case "queue_remove":
-      return { ...s, queue: s.queue.filter((q) => q.id !== a.id) };
     case "context_usage":
       return { ...s, contextUsage: a.usage };
   }
@@ -824,6 +850,10 @@ function seedRuntime(s: ThreadRuntime, lines: Record<string, unknown>[], now: nu
   try {
     for (const line of lines) {
       const type = line.type;
+      if (type === SESSION_TRUNCATED_TYPE) {
+        next = { ...next, blocks: push(next.blocks, { kind: "notice", id: "seed-truncated", variant: "info", text: TRUNCATED_HISTORY_NOTICE, ts: null }, null) };
+        continue;
+      }
       if (type !== "user" && type !== "assistant") continue;
       if (line.isSidechain === true) continue;
       next = onMessage(next, { ...line, parent_tool_use_id: null } as unknown as RawMessage, now, true);

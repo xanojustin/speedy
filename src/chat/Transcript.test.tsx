@@ -4,7 +4,9 @@ import type { ClaudeEvent, RawMessage } from "../ipc/types";
 
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string, args: unknown) => invoke(cmd, args),
+  invoke: (cmd: string, args: unknown) =>
+    // Host RPCs reach this fake by their method name.
+    (cmd === "host_call" ? invoke((args as { method: string }).method, (args as { params: unknown }).params) : invoke(cmd, args)),
   Channel: class {
     onmessage: (m: unknown) => void = () => {};
   },
@@ -65,7 +67,8 @@ beforeEach(() => {
   __resetRuntimeForTests();
   resetUnknownTypeLog();
   useThreadStore.setState({ threads: {} });
-  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false });
+  // This Mac is connected, as it is by the time a thread shows.
+  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false, hosts: [{ key: "local", state: { state: "connected", host_id: "this-mac", agent_version: "test" }, update: null }] });
   threadId = useAppStore.getState().addProject("/work/proj");
 });
 afterEach(cleanup);
@@ -340,6 +343,22 @@ describe("ChatPane", () => {
 
     send({ kind: "permission_request", seq: ++seq, request_id: "r9", request: { subtype: "can_use_tool", tool_name: "Bash", input: {} }, diff: null });
     expect(document.querySelector(".permission-card[data-request='r9']")).not.toBeNull();
+  });
+
+  it("notes at the top when a large session was only loaded in part", async () => {
+    useAppStore.getState().updateThread(threadId, { sessionId: "s-big" });
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "session_load")
+        return [
+          { type: "speedy-history-truncated", droppedLines: 5000 },
+          { type: "user", uuid: "u9", message: { role: "user", content: "a recent question" } },
+        ];
+      return {};
+    });
+    render(<ChatPane threadId={threadId} />);
+    const notice = await screen.findByText("Older messages in this session weren't loaded (it's too large).");
+    const recent = screen.getByText("a recent question");
+    expect(notice.compareDocumentPosition(recent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("shows a non-blocking notice when the session file cannot be loaded", async () => {

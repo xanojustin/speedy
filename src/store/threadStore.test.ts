@@ -82,9 +82,9 @@ describe("thread event batching", () => {
 
   it("applies a thread's buffered events before a local dispatch, preserving order", () => {
     queueThreadEvent("t1", { kind: "status", seq: 1, status: "idle", detail: null, stderr_tail: null, reconnecting: false });
-    useThreadStore.getState().dispatch("t1", { kind: "local_user", id: "u1", content: [{ type: "text", text: "hi" }], ts: 5 });
+    useThreadStore.getState().dispatch("t1", { kind: "user_sent", seq: 2, id: "u1", content: [{ type: "text", text: "hi" }] });
     const rt = useThreadStore.getState().threads.t1;
-    // idle (from the buffered status) then local_user -> working; the reverse order would leave it idle.
+    // idle (from the buffered status) then user_sent -> working; the reverse order would leave it idle.
     expect(rt.status).toBe("working");
     expect(rt.blocks.map((b) => b.kind)).toEqual(["user"]);
   });

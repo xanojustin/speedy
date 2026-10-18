@@ -76,7 +76,11 @@ export function Layout() {
       {explorerOpen && selected && (
         <ExplorerPanel
           key={threadCwd(selected.project, selected.thread)}
-          root={threadCwd(selected.project, selected.thread)} name={selected.project.name} onClose={() => setExplorerOpen(false)} />
+          root={threadCwd(selected.project, selected.thread)}
+          name={selected.project.name}
+          host={selected.project.hostKey}
+          onClose={() => setExplorerOpen(false)}
+        />
       )}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </div>
@@ -84,7 +88,7 @@ export function Layout() {
 }
 
 /** The explorer docked on the right, resizable from its left edge. */
-function ExplorerPanel({ root, name, onClose }: { root: string; name: string; onClose: () => void }) {
+function ExplorerPanel({ root, name, host, onClose }: { root: string; name: string; host: string; onClose: () => void }) {
   const storedWidth = useAppStore((s) => s.explorerWidth);
   const setExplorerWidth = useAppStore((s) => s.setExplorerWidth);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
@@ -123,7 +127,7 @@ function ExplorerPanel({ root, name, onClose }: { root: string; name: string; on
         style={{ left: -2 }}
         onPointerDown={onSashPointerDown}
       />
-      <Explorer root={root} name={name} onClose={onClose} />
+      <Explorer root={root} name={name} host={host} onClose={onClose} />
     </aside>
   );
 }

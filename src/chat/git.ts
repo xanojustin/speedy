@@ -5,14 +5,14 @@ import { useThreadStore } from "../store/threadStore";
 
 const BRANCH_POLL_MS = 4000;
 
-/** The checked-out branch at `root` (null outside a repository), kept current while agents and terminals switch it. */
-export function useGitBranch(root: string | undefined) {
+/** The checked-out branch at `root` on `host` (null outside a repository), kept current while agents and terminals switch it. */
+export function useGitBranch(host: string | undefined, root: string | undefined) {
   const [branch, setBranch] = useState<string | null>(null);
   useEffect(() => {
-    if (!root) return;
+    if (!host || !root) return;
     let live = true;
     const refresh = () =>
-      void explorerGitBranch(root)
+      void explorerGitBranch(host, root)
         .then((b) => live && setBranch(typeof b === "string" ? b : null))
         .catch(() => live && setBranch(null));
     refresh();
@@ -23,7 +23,7 @@ export function useGitBranch(root: string | undefined) {
       window.clearInterval(id);
       window.removeEventListener("focus", refresh);
     };
-  }, [root]);
+  }, [host, root]);
   return branch;
 }
 
@@ -37,7 +37,8 @@ export function useWorktreeChoosable(threadId: string): boolean {
     const found = findThread(s, threadId);
     return found ? threadCwd(found.project, found.thread) : undefined;
   });
-  const branch = useGitBranch(cwd);
+  const host = useAppStore((s) => findThread(s, threadId)?.project.hostKey);
+  const branch = useGitBranch(host, cwd);
   const fresh = useThreadStore((s) => {
     const rt = s.threads[threadId];
     return !rt || (rt.blocks.length === 0 && (rt.status === "not_started" || rt.status === "errored"));

@@ -128,7 +128,7 @@ export async function cleanUpWorktrees(projectId: string): Promise<void> {
 
   let unused;
   try {
-    unused = await worktreeUnused(project.path, keep);
+    unused = await worktreeUnused(project.hostKey, project.path, keep);
   } catch (err) {
     return failed(err);
   }
@@ -155,7 +155,7 @@ export async function cleanUpWorktrees(projectId: string): Promise<void> {
 
   let report;
   try {
-    report = await worktreeClean(project.path, removable.map((w) => w.path));
+    report = await worktreeClean(project.hostKey, project.path, removable.map((w) => w.path));
   } catch (err) {
     return failed(err);
   }

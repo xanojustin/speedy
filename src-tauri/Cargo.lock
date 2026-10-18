@@ -2970,6 +2970,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmp"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "rmp-serde"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72f81bee8c8ef9b577d1681a70ebbc962c232461e397b22c208c43c04b67a155"
+dependencies = [
+ "rmp",
+ "serde",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3406,28 +3425,62 @@ dependencies = [
 name = "speedy"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "block2",
  "dirs",
- "ignore",
  "libc",
  "log",
- "nucleo-matcher",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-user-notifications",
  "parking_lot",
- "portable-pty",
  "serde",
  "serde_json",
- "similar",
+ "sha2",
+ "speedy-agent",
+ "speedy-core",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tempfile",
- "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "speedy-agent"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "libc",
+ "log",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "speedy-core",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "speedy-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "ignore",
+ "libc",
+ "log",
+ "nucleo-matcher",
+ "parking_lot",
+ "portable-pty",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "similar",
+ "tempfile",
  "tokio",
  "uuid",
 ]

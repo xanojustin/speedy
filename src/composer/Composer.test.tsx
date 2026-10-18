@@ -5,7 +5,9 @@ import type { ClaudeEvent, RawMessage, ThreadStatus } from "../ipc/types";
 
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string, args: unknown) => invoke(cmd, args),
+  invoke: (cmd: string, args: unknown) =>
+    // Host RPCs reach this fake by their method name.
+    (cmd === "host_call" ? invoke((args as { method: string }).method, (args as { params: unknown }).params) : invoke(cmd, args)),
   Channel: class {
     onmessage: (m: unknown) => void = () => {};
   },
@@ -89,7 +91,8 @@ beforeEach(() => {
   __resetRuntimeForTests();
   __resetSessionControlsForTests();
   useThreadStore.setState({ threads: {} });
-  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false });
+  // This Mac is connected, as it is by the time a thread shows.
+  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false, hosts: [{ key: "local", state: { state: "connected", host_id: "this-mac", agent_version: "test" }, update: null }] });
   threadId = useAppStore.getState().addProject("/work/proj");
 });
 
@@ -121,8 +124,9 @@ describe("sending", () => {
 
     await user.type(input, "again");
     await user.keyboard("{Control>}{Enter}{/Control}");
-    // The first turn is still running, so the runtime queues this one.
-    await waitFor(() => expect(useThreadStore.getState().threads[threadId].queue.map((q) => q.content)).toEqual([[{ type: "text", text: "again" }]]));
+    // Sent to the host too, which queues it behind the running turn.
+    await waitFor(() => expect(calls("claude_send_user")).toHaveLength(2));
+    expect(calls("claude_send_user")[1].content).toEqual([{ type: "text", text: "again" }]);
     expect(input.value).toBe("");
   });
 
@@ -277,20 +281,22 @@ describe("images", () => {
 });
 
 describe("queue and interrupt", () => {
-  it("messages sent while working are queued and shown; removing one drops it from the queue", async () => {
+  it("shows the host's queue while working; removing a message asks the host to drop it", async () => {
     goLive();
     dispatch(status("working"));
     const { user, input } = await renderComposer();
     expect(input).toHaveAttribute("placeholder", "Queue another message…");
     await user.type(input, "one{Enter}");
-    await user.type(input, "two{Enter}");
+    await waitFor(() => expect(calls("claude_send_user")).toHaveLength(1));
+    const item = (id: string, t: string) => ({ id, content: [{ type: "text", text: t }] });
+    dispatch({ kind: "queue_changed", seq: ++seq, queue: [item("q1", "one"), item("q2", "two")] });
     const queue = await screen.findByRole("list", { name: "Queued messages" });
-    await waitFor(() => expect(within(queue).getAllByRole("listitem")).toHaveLength(2));
     expect(within(queue).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["one", "two"]);
-    expect(calls("claude_send_user")).toHaveLength(0);
 
     await user.click(within(queue).getAllByRole("button", { name: "Remove queued message" })[0]);
-    expect(useThreadStore.getState().threads[threadId].queue.map((q) => q.content)).toEqual([[{ type: "text", text: "two" }]]);
+    await waitFor(() => expect(calls("queue_remove")).toHaveLength(1));
+    expect(calls("queue_remove")[0]).toEqual({ threadId, id: "q1" });
+    dispatch({ kind: "queue_changed", seq: ++seq, queue: [item("q2", "two")] });
     expect(within(screen.getByRole("list", { name: "Queued messages" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["two"]);
   });
 

@@ -1,6 +1,7 @@
 // App shortcuts (KTD10): native menu accelerators emit the `menu` event with an item id
 // (src-tauri/src/menu.rs); this module dispatches them.
 import { useEffect } from "react";
+import { stopLocalAgent } from "../hosts/localAgent";
 import { onMenu } from "../ipc/commands";
 import type { MenuAction } from "../ipc/types";
 import { findThread, useAppStore, visibleThreads } from "../store/appStore";
@@ -93,6 +94,8 @@ function handleMenuAction(action: MenuAction) {
       return;
     case "open_settings":
       return s.setSettingsOpen(true);
+    case "stop_local_agent":
+      return void stopLocalAgent();
     default: {
       const m = /^switch_thread_([1-9])$/.exec(action);
       const target = m && visibleThreads(s)[Number(m[1]) - 1];

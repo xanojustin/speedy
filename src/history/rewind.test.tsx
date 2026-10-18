@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string, args: Record<string, unknown>) => invoke(cmd, args),
+  invoke: (cmd: string, args: Record<string, unknown>) =>
+    // Host RPCs reach this fake by their method name.
+    (cmd === "host_call" ? invoke((args as { method: string }).method, (args as { params: unknown }).params) : invoke(cmd, args)),
   Channel: class {
     onmessage: (m: unknown) => void = () => {};
   },
@@ -61,7 +63,8 @@ beforeEach(() => {
   });
   __resetRuntimeForTests();
   useThreadStore.setState({ threads: {} });
-  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false });
+  // This Mac is connected, as it is by the time a thread shows.
+  useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false, hosts: [{ key: "local", state: { state: "connected", host_id: "this-mac", agent_version: "test" }, update: null }] });
   threadId = useAppStore.getState().addProject("/work/proj");
   useAppStore.getState().updateThread(threadId, { sessionId: "s1", title: "Parser work" });
   seedTranscript(threadId, lines);
@@ -72,6 +75,8 @@ const blocksOf = (id: string) => useThreadStore.getState().threads[id]?.blocks ?
 const userBlock = (uuid: string) => blocksOf(threadId).find((b) => b.kind === "user" && b.uuid === uuid) as ViewBlock;
 const threads = () => useAppStore.getState().projects[0].threads;
 const forkStarts = () => calls("claude_start").filter((c) => (c[1] as { threadId: string }).threadId !== threadId);
+/** The thread the host was asked to create for the fork. */
+const forkCreated = () => (calls("thread_create").at(-1)?.[1] as { thread: Record<string, unknown> } | undefined)?.thread;
 
 function openAction(uuid: string, option: string) {
   render(<BlockView block={userBlock(uuid)} pos={NO_POS} stamp={null} threadId={threadId} />);
@@ -96,10 +101,9 @@ describe("rewind", () => {
     ]);
 
     const fork = threads().find((t) => t.id !== threadId)!;
-    expect(forkStarts()[0][1]).toMatchObject({
-      threadId: fork.id,
-      options: { cwd: "/work/proj", resumeSessionId: "s1", resumeSessionAt: "a1", forkSession: true },
-    });
+    expect(forkStarts()[0][1]).toEqual({ threadId: fork.id });
+    // The host spawns the fork with --resume s1 --resume-session-at a1 --fork-session.
+    expect(forkCreated()).toMatchObject({ id: fork.id, fork: { resumeSessionId: "s1", resumeSessionAt: "a1" } });
     expect(useAppStore.getState().selectedThreadId).toBe(fork.id);
     // The fork shows the conversation up to the rewound message; the original thread is untouched.
     expect(blocksOf(fork.id).map((b) => (b.kind === "user" || b.kind === "text" ? b.text : b.kind))).toEqual([
@@ -109,6 +113,20 @@ describe("rewind", () => {
     expect(blocksOf(threadId)).toHaveLength(4);
     expect(findThread(useAppStore.getState(), threadId)?.thread.sessionId).toBe("s1");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("fork and rewind leaves the code alone when the fork can't be made", async () => {
+    // A large session loaded only from u2 on: the message before u2 wasn't loaded.
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === "session_load" ? [{ type: "speedy-history-truncated", droppedLines: 3 }, ...lines.slice(3)] : cmd === "claude_control" ? rewindResponse : undefined,
+    );
+    openAction("u2", "Fork conversation and rewind code");
+    await screen.findByText("src/parser.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("too far back");
+    // Only the preview ran: no files were restored and no fork was created.
+    expect(controls()).toEqual([{ subtype: "rewind_files", user_message_id: "u2", dry_run: true }]);
+    expect(threads()).toHaveLength(1);
   });
 
   it("cancelling at the file review sends nothing more", async () => {
@@ -144,7 +162,7 @@ describe("rewind", () => {
     openAction("u2", "Fork conversation from here");
     await waitFor(() => expect(forkStarts()).toHaveLength(1));
     expect(controls()).toHaveLength(0);
-    expect(forkStarts()[0][1]).toMatchObject({ options: { resumeSessionId: "s1", resumeSessionAt: "a1", forkSession: true } });
+    expect(forkCreated()).toMatchObject({ fork: { resumeSessionId: "s1", resumeSessionAt: "a1" } });
   });
 
   it("forking from the first message starts a fresh conversation", async () => {
@@ -176,5 +194,25 @@ describe("forkPoint", () => {
 
   it("rejects a message that isn't in the session", () => {
     expect(() => forkPoint(lines, "nope")).toThrow(/not found/);
+  });
+
+  describe("in a session loaded only in part", () => {
+    // session_load dropped u1 and a1: only the marker and the newest lines arrive.
+    const marker = { type: "speedy-history-truncated", droppedLines: 2 };
+    const partial = [marker, ...lines.slice(2), user("u3", "a2", "and test it"), assistant("a3", "u3", "msg_3", "Tested.")];
+
+    it("forks from a loaded message, noting that the fork's history is partial too", () => {
+      const { anchor, history } = forkPoint(partial, "u3");
+      expect(anchor).toBe("a2");
+      expect(history).toEqual([marker, ...partial.slice(1, 4)]);
+    });
+
+    it("refuses to fork where the previous message wasn't loaded, instead of starting fresh", () => {
+      expect(() => forkPoint(partial, "u2")).toThrow(/too far back/);
+    });
+
+    it("refuses a message that wasn't loaded", () => {
+      expect(() => forkPoint(partial, "u1")).toThrow(/too far back/);
+    });
   });
 });

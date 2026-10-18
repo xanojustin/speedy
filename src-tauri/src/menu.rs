@@ -1,12 +1,15 @@
 //! U6: native menu with app-level accelerators (KTD10).
 //! Each custom item emits the app event `menu` with its id as payload:
 //! `new_thread`, `close_thread`, `toggle_terminal`, `maximize_terminal`, `new_terminal`,
-//! `toggle_explorer`, `focus_chat`, `switch_thread_1` … `switch_thread_9`, `add_project`, `open_settings`.
+//! `toggle_explorer`, `focus_chat`, `switch_thread_1` … `switch_thread_9`, `add_project`, `open_settings`,
+//! `stop_local_agent`. They go to the focused window only, so a second window doesn't act too.
 //! Accelerators live on native menu items so WKWebView can't swallow them.
-//! `install_cli` is handled here in Rust (see `cli.rs`).
+//! `install_cli` and `new_window` are handled here in Rust (see `cli.rs`).
 
-use tauri::Emitter;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::{Emitter, EventTarget, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// App event carrying a menu item id.
 pub const MENU_EVENT: &str = "menu";
@@ -30,12 +33,16 @@ const THREAD_ITEMS: &[(&str, &str, &str)] = &[
 
 const INSTALL_CLI: &str = "install_cli";
 const OPEN_SETTINGS: &str = "open_settings";
+const NEW_WINDOW: &str = "new_window";
+/// Asks the webview to confirm, then stops This Mac's agent (R17).
+const STOP_LOCAL_AGENT: &str = "stop_local_agent";
 
 const SWITCH_PREFIX: &str = "switch_thread_";
 
 /// Whether a menu event id is one of ours (predefined items have their own ids).
 fn is_app_action(id: &str) -> bool {
     id == OPEN_SETTINGS
+        || id == STOP_LOCAL_AGENT
         || THREAD_ITEMS.iter().any(|(item, _, _)| *item == id)
         || id
             .strip_prefix(SWITCH_PREFIX)
@@ -55,6 +62,7 @@ pub fn install(app: &mut tauri::App) -> tauri::Result<()> {
         .item(&MenuItemBuilder::with_id(OPEN_SETTINGS, "Settings…").accelerator("CmdOrCtrl+,").build(app)?)
         .separator()
         .item(&MenuItemBuilder::with_id(INSTALL_CLI, "Install 'speedy' Command in PATH…").build(app)?)
+        .item(&MenuItemBuilder::with_id(STOP_LOCAL_AGENT, "Stop This Mac's Agent…").build(app)?)
         .separator()
         .hide_with_text("Hide Speedy")
         .hide_others()
@@ -95,6 +103,8 @@ pub fn install(app: &mut tauri::App) -> tauri::Result<()> {
 
     // No predefined Close Window item: Cmd+W closes threads.
     let window_menu = SubmenuBuilder::new(app, "Window")
+        .item(&MenuItemBuilder::with_id(NEW_WINDOW, "New Window").accelerator("CmdOrCtrl+Shift+N").build(app)?)
+        .separator()
         .minimize()
         .maximize_with_text("Zoom")
         .build()?;
@@ -108,12 +118,33 @@ pub fn install(app: &mut tauri::App) -> tauri::Result<()> {
         let id = event.id().as_ref();
         if id == INSTALL_CLI {
             crate::cli::install_command(app);
-        } else if is_app_action(id)
-            && let Err(err) = app.emit(MENU_EVENT, id)
-        {
-            log::warn!("failed to emit menu event {id}: {err}");
+        } else if id == NEW_WINDOW {
+            if let Err(err) = new_window(app) {
+                log::warn!("opening a window failed: {err}");
+            }
+        } else if is_app_action(id) {
+            let focused = app.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false));
+            let sent = match focused {
+                Some(w) => app.emit_to(EventTarget::webview_window(w.label()), MENU_EVENT, id),
+                None => app.emit(MENU_EVENT, id),
+            };
+            if let Err(err) = sent {
+                log::warn!("failed to emit menu event {id}: {err}");
+            }
         }
     });
+    Ok(())
+}
+
+/// Another window on the same hosts (R10): it subscribes on its own and sees the same threads.
+fn new_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    static NEXT: AtomicU32 = AtomicU32::new(2);
+    let label = format!("window-{}", NEXT.fetch_add(1, Ordering::SeqCst));
+    WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+        .title("Speedy")
+        .inner_size(1440.0, 920.0)
+        .min_inner_size(800.0, 500.0)
+        .build()?;
     Ok(())
 }
 

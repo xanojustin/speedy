@@ -4,7 +4,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { isLiveStatus, type FileHit, type PermissionMode } from "../ipc/types";
 import { useWorktreeChoosable } from "../chat/git";
-import { findThread, threadCwd, useAppStore } from "../store/appStore";
+import "../hosts/hosts.css";
+import { findThread, hostLabel, hostStateLabel, threadCwd, useAppStore } from "../store/appStore";
 import { controlRequest, interruptThread, removeQueued, sendUserMessage } from "../store/runtime";
 import { getRuntime, useThreadRuntime, useThreadStore } from "../store/threadStore";
 import { ADD_TO_COMPOSER_EVENT, FOCUS_COMPOSER_EVENT, type AddToComposerDetail, type FocusComposerDetail } from "./focusEvent";
@@ -67,7 +68,14 @@ function notice(threadId: string, text: string) {
 export function Composer({ threadId }: { threadId: string }) {
   const rt = useThreadRuntime(threadId);
   const thread = useAppStore((s) => findThread(s, threadId)?.thread ?? null);
+  // While the thread's host is away the transcript stays readable, but nothing can be sent.
+  const host = useAppStore((s) => {
+    const key = findThread(s, threadId)?.project.hostKey;
+    return key ? s.hosts.find((h) => h.key === key) : undefined;
+  });
+  const hostAway = !!host && host.state.state !== "connected";
   const projectPath = useAppStore((s) => findThread(s, threadId)?.project.path ?? null);
+  const hostKey = useAppStore((s) => findThread(s, threadId)?.project.hostKey ?? null);
   const root = useAppStore((s) => {
     const found = findThread(s, threadId);
     return found ? threadCwd(found.project, found.thread) : null;
@@ -105,7 +113,7 @@ export function Composer({ threadId }: { threadId: string }) {
   // Before the session starts, the last list this project (or any project) reported.
   const commands = useMemo(() => liveCommands ?? (projectPath ? cachedCommands(projectPath) : null), [liveCommands, projectPath]);
   const slashItems: SlashCommand[] = slashQuery !== null && commands ? filterSlash(commands, slashQuery) : [];
-  const hits = useFileMentions(root, mentionQuery, settings?.respectGitIgnore ?? true);
+  const hits = useFileMentions(hostKey, root, mentionQuery, settings?.respectGitIgnore ?? true);
   const menu = slashQuery !== null ? "slash" : mentionQuery !== null ? "mention" : null;
   const menuCount = menu === "slash" ? slashItems.length : menu === "mention" ? hits.length : 0;
   const menuKey = `${menu}:${slashQuery ?? mentionQuery ?? ""}`;
@@ -164,9 +172,10 @@ export function Composer({ threadId }: { threadId: string }) {
   };
 
   // ---------- sending ----------
-  const canSend = text.trim() !== "" || images.length > 0 || snippets.length > 0;
+  const canSend = !hostAway && (text.trim() !== "" || images.length > 0 || snippets.length > 0);
 
   const submit = () => {
+    if (hostAway) return;
     const trimmed = expandSlash(text.trim(), commands);
     if (!trimmed && images.length === 0 && snippets.length === 0) return;
     // The typed text leads, so a slash command still runs (and takes the output as its arguments).
@@ -342,6 +351,12 @@ export function Composer({ threadId }: { threadId: string }) {
 
   return (
     <div className="composer" data-thread={threadId}>
+      {hostAway && host && (
+        <div className="host-banner" role="status">
+          <span className="codicon codicon-plug" aria-hidden />
+          {hostLabel(host.key)} is {hostStateLabel(host).toLowerCase()}. Messages and prompts wait until it's back.
+        </div>
+      )}
       <QueueList queue={rt.queue} onRemove={(id) => removeQueued(threadId, id)} />
       <div className="composer-input-wrap">
         {menu === "slash" && (
@@ -386,6 +401,7 @@ export function Composer({ threadId }: { threadId: string }) {
             ref={inputRef}
             className="composer-input"
             aria-label="Message input"
+            disabled={hostAway}
             rows={1}
             value={text}
             placeholder={busy ? "Queue another message…" : "Ask Claude to edit…"}
