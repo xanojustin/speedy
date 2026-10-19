@@ -83,3 +83,44 @@
   opacity: 0.4;
   cursor: default;
 }
+
+/* Light | Dark | System Setting: radios drawn as one segmented control. */
+.settings-segmented {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, #454545));
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.settings-segment {
+  position: relative;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.settings-segment + .settings-segment {
+  border-left: 1px solid var(--vscode-input-border, var(--vscode-widget-border, #454545));
+}
+
+.settings-segment:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+
+.settings-segment[data-checked] {
+  background: var(--vscode-button-background, #0078d4);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+
+.settings-segment input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-segment:has(input:focus-visible) {
+  outline: 1px solid var(--vscode-focusBorder, #0078d4);
+  outline-offset: -1px;
+}

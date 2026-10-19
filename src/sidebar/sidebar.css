@@ -1,4 +1,6 @@
-/* Sidebar styled like VS Code's explorer view: 35px title, 22px rows, list colors. */
+/* Sidebar in VS Code's list colors, with macOS-style rows: 24px tall, highlighted as rounded
+   pills inset from the edges. Hierarchy comes from weight and color, not boxes: host band,
+   uppercase group labels, medium-weight projects, regular threads. */
 
 .sidebar {
   display: flex;
@@ -9,6 +11,8 @@
   color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
   border-right: 1px solid var(--vscode-sideBar-border, transparent);
   padding-top: 4px;
+  /* Hover darkens whatever is underneath, so rows on a tinted host look right too. */
+  --row-hover: color-mix(in srgb, var(--vscode-foreground, #616161) 8%, transparent);
 }
 
 .sidebar-title {
@@ -54,16 +58,18 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 22px;
-  line-height: 22px;
-  padding-right: 8px;
+  height: 24px;
+  line-height: 24px;
+  margin: 0 6px;
+  padding-right: 6px;
+  border-radius: 5px;
   white-space: nowrap;
   cursor: pointer;
   outline-offset: -1px;
 }
 
 .sidebar-row:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--row-hover);
   color: var(--vscode-list-hoverForeground, inherit);
 }
 
@@ -71,7 +77,8 @@
   flex: 0 0 16px;
   width: 16px;
   text-align: center;
-  font-size: 16px;
+  font-size: 14px;
+  color: var(--vscode-descriptionForeground);
 }
 
 /* Project rows: plain rows; weight alone sets them apart from their threads. */
@@ -80,9 +87,9 @@
 }
 
 .project-header {
-  padding-left: 4px;
+  padding-left: 0;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .project-name {
@@ -102,10 +109,72 @@
 }
 
 /* Thread rows line up under the section title's icon. */
+/* Several hosts: one scroll area under the Hosts header holds every host's section. */
+.sidebar-hosts {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.sidebar-hosts .sidebar-tree,
+.sidebar-hosts .sidebar-chats {
+  flex: none;
+  max-height: none;
+  overflow: visible;
+}
+
+.sidebar-hosts .sidebar-chats {
+  padding: 4px 0 0;
+  border-bottom: none;
+}
+
+/* Inside a host, No Project is labelled like a group: small, uppercase and muted, with its
+   actions on hover. */
+.sidebar-hosts .sidebar-chats .sidebar-title {
+  flex: none;
+  height: 24px;
+  margin: 0 6px;
+  padding: 0 6px 0 2px;
+  border-radius: 5px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.sidebar-hosts .sidebar-chats .sidebar-title:hover {
+  background: var(--row-hover);
+}
+
+.sidebar-hosts .sidebar-chats .sidebar-title-icon {
+  width: 16px;
+  margin-right: 4px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.sidebar-hosts .sidebar-chats .sidebar-title-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+}
+
+.sidebar-hosts .sidebar-chats .sidebar-title-actions {
+  visibility: hidden;
+}
+
+.sidebar-hosts .sidebar-chats .sidebar-title:hover .sidebar-title-actions,
+.sidebar-hosts .sidebar-chats .sidebar-title:focus-within .sidebar-title-actions,
+.sidebar-hosts .sidebar-chats .sidebar-title-actions:has([aria-pressed="true"]) {
+  visibility: visible;
+}
+
+.sidebar-hosts .sidebar-tree {
+  padding-bottom: 4px;
+}
+
 .sidebar-chats .thread-row,
 .sidebar-chats .archived-toggle,
 .sidebar-chats .thread-empty {
-  padding-left: 18px;
+  padding-left: 20px;
 }
 
 .sidebar-chats .archived-row {
@@ -146,7 +215,7 @@
    The chevron shows on hover, or while collapsed. */
 .group {
   position: relative;
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .group:first-child {
@@ -154,11 +223,11 @@
 }
 
 .group-header {
-  padding-left: 4px;
+  padding-left: 0;
   color: var(--vscode-descriptionForeground);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 
@@ -194,12 +263,12 @@
 }
 
 .group-projects .project-header {
-  padding-left: 12px;
+  padding-left: 8px;
 }
 
 .group-projects .thread-row,
 .group-projects .archived-toggle {
-  padding-left: 30px;
+  padding-left: 28px;
 }
 
 .group-projects .archived-row {
@@ -216,7 +285,7 @@
 /* Thread rows. */
 .thread-row,
 .archived-row {
-  padding-left: 22px;
+  padding-left: 20px;
   font-size: 13px;
 }
 
@@ -282,8 +351,8 @@
 
 /* Placeholder under a project with no live threads; clicking it starts one. */
 .thread-empty {
-  width: 100%;
-  padding-left: 22px;
+  width: calc(100% - 12px);
+  padding-left: 20px;
   border: none;
   background: none;
   color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
@@ -293,13 +362,13 @@
 }
 
 .group-projects .thread-empty {
-  padding-left: 30px;
+  padding-left: 28px;
 }
 
 /* Archived section. */
 .archived-toggle {
-  width: 100%;
-  padding-left: 22px;
+  width: calc(100% - 12px);
+  padding-left: 20px;
   border: none;
   background: none;
   color: var(--vscode-descriptionForeground);

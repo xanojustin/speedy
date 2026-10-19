@@ -1,4 +1,5 @@
 import { useEffect, useRef, type MouseEvent, type PointerEvent } from "react";
+import { deleteThread } from "../app/actions";
 import { SessionList } from "../history/SessionList";
 import type { Project } from "../ipc/types";
 import { useAppStore } from "../store/appStore";
@@ -170,6 +171,15 @@ export function ProjectRow(props: Props) {
                         onClick={() => restoreThread(t.id)}
                       >
                         <span className="codicon codicon-discard" aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label={`Delete ${t.title}`}
+                        title="Delete"
+                        onClick={() => void deleteThread(t.id)}
+                      >
+                        <span className="codicon codicon-trash" aria-hidden />
                       </button>
                     </span>
                   </div>

@@ -1,13 +1,14 @@
 // A minimal file explorer for the selected thread's project: browse the tree, read and edit text
 // files (Markdown previews rendered), and see uncommitted git changes against HEAD.
 import { ask } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Markdown } from "../chat/markdown/Markdown";
 import { highlight } from "../chat/markdown/highlight";
 import { explorerGitDiff, explorerGitStatus, explorerList, explorerRead, explorerWrite, openInVscode } from "../ipc/commands";
 import type { DirEntry, FileDiff, GitStatus } from "../ipc/types";
 import { DiffView } from "../permissions/DiffView";
 import { useAppStore } from "../store/appStore";
+import { EMPTY_EXPLORER, useDrafts } from "../store/drafts";
 import { resolveReveal } from "./reveal";
 import "../permissions/permissions.css";
 import "./explorer.css";
@@ -60,34 +61,44 @@ function folderStatus(changes: Map<string, GitStatus>, dir: string): GitStatus |
   return found;
 }
 
-/** An open file and the line to show; `seq` re-scrolls when the same line is asked for again. */
-interface OpenFile {
-  path: string;
+/** The line to show in the open file; `seq` re-scrolls when the same line is asked for again. */
+interface Focus {
   line: number | null;
   seq: number;
 }
 
-/** `root` is a folder on `host`, the thread's host: every file and git call goes there. */
-export function Explorer({ root, name, host, onClose }: { root: string; name: string; host: string; onClose: () => void }) {
+/**
+ * `root` is a folder on `host`, the thread's host: every file and git call goes there. The open
+ * file, expanded folders and unsaved edits are kept per thread, so they survive switching threads.
+ */
+export function Explorer({ threadId, root, name, host, onClose }: { threadId: string; root: string; name: string; host: string; onClose: () => void }) {
   const { changes, refresh } = useGitChanges(host, root);
-  const [open, setOpen] = useState<OpenFile | null>(null);
-  const openPath = open?.path ?? null;
-  const setOpenPath = useCallback((path: string | null) => setOpen((prev) => (path === null ? null : { path, line: null, seq: (prev?.seq ?? 0) + 1 })), []);
+  const view = useDrafts((s) => s.explorer[threadId] ?? EMPTY_EXPLORER);
+  const updateView = useDrafts((s) => s.updateExplorer);
+  const openPath = view.openPath;
+  const [focus, setFocus] = useState<Focus>({ line: null, seq: 0 });
+  const openAt = useCallback(
+    (path: string | null, line: number | null) => {
+      updateView(threadId, (prev) => (prev.openPath === path ? {} : { openPath: path, edit: null }));
+      setFocus((prev) => ({ line, seq: prev.seq + 1 }));
+    },
+    [threadId, updateView],
+  );
+  const setOpenPath = useCallback((path: string | null) => openAt(path, null), [openAt]);
+  const onEdit = useCallback((edit: string | null) => updateView(threadId, { edit }), [threadId, updateView]);
   const [revealError, setRevealError] = useState<string | null>(null);
   const dirty = useRef(false);
   const onDirty = useCallback((d: boolean) => {
     dirty.current = d;
   }, []);
   const [treeVersion, setTreeVersion] = useState(0);
-  // Lives here so expanded folders survive opening a file and going back.
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const toggleDir = useCallback((dir: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(dir)) next.add(dir);
-      return next;
-    });
-  }, []);
+  // Lives in the thread's state so expanded folders survive opening a file and going back.
+  const expanded = useMemo<ReadonlySet<string>>(() => new Set(view.expanded), [view.expanded]);
+  const toggleDir = useCallback(
+    (dir: string) =>
+      updateView(threadId, (prev) => ({ expanded: prev.expanded.includes(dir) ? prev.expanded.filter((d) => d !== dir) : [...prev.expanded, dir] })),
+    [threadId, updateView],
+  );
 
   const reload = () => {
     refresh();
@@ -110,9 +121,9 @@ export function Explorer({ root, name, host, onClose }: { root: string; name: st
         if (!(await ask("Discard unsaved changes?", { title: "Unsaved Changes", kind: "warning" }))) return;
       }
       setRevealError(null);
-      setOpen((prev) => ({ path, line: target.line, seq: (prev?.seq ?? 0) + 1 }));
+      openAt(path, target.line);
     })();
-  }, [reveal, host, root, openPath]);
+  }, [reveal, host, root, openPath, openAt]);
 
   return (
     <div className="explorer" aria-label="Explorer">
@@ -141,18 +152,20 @@ export function Explorer({ root, name, host, onClose }: { root: string; name: st
         </span>
       </div>
       {revealError && <div className="explorer-error">{revealError}</div>}
-      {open !== null ? (
+      {openPath !== null ? (
         <FileView
-          key={open.path}
+          key={openPath}
           host={host}
           root={root}
-          path={open.path}
-          line={open.line}
-          seq={open.seq}
-          status={changes.get(open.path)}
+          path={openPath}
+          line={focus.line}
+          seq={focus.seq}
+          status={changes.get(openPath)}
+          edit={view.edit}
           onBack={() => setOpenPath(null)}
           onSaved={refresh}
           onDirty={onDirty}
+          onEdit={onEdit}
         />
       ) : (
         <div className="explorer-tree" role="tree" aria-label={`Files in ${name}`}>
@@ -261,9 +274,11 @@ function FileView({
   line,
   seq,
   status,
+  edit,
   onBack,
   onSaved,
   onDirty,
+  onEdit,
 }: {
   host: string;
   root: string;
@@ -271,11 +286,14 @@ function FileView({
   line: number | null;
   seq: number;
   status: GitStatus | undefined;
+  /** Unsaved edits kept from before the thread was last switched away from. */
+  edit: string | null;
   onBack: () => void;
   onSaved: () => void;
   onDirty: (dirty: boolean) => void;
+  onEdit: (edit: string | null) => void;
 }) {
-  const [mode, setMode] = useState<Mode>("preview");
+  const [mode, setMode] = useState<Mode>(edit !== null ? "edit" : "preview");
   const [saved, setSaved] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -284,6 +302,11 @@ function FileView({
   const name = path.split("/").pop() ?? path;
   useEffect(() => onDirty(dirty), [dirty, onDirty]);
   useEffect(() => () => onDirty(false), [onDirty]);
+  // Unsaved edits outlive this view (a thread switch unmounts it); saving or reverting drops them.
+  useEffect(() => {
+    if (saved !== null) onEdit(dirty ? draft : null);
+  }, [saved, draft, dirty, onEdit]);
+  const restored = useRef(edit);
   // A link to a line shows the source, where the line can be found.
   useEffect(() => {
     if (line !== null && !dirty) setMode("preview");
@@ -296,7 +319,7 @@ function FileView({
       .then((text) => {
         if (!live) return;
         setSaved(text);
-        setDraft(text);
+        setDraft(restored.current ?? text);
       })
       .catch((e) => live && setError(String(e)));
     return () => {

@@ -47,6 +47,6 @@ describe("updateThread", () => {
     useAppStore.getState().updateThread(threadId, { splitRatio: 0.4, terminalVisible: true });
     expect(invoke.mock.calls.filter((c) => c[0] === "thread_update")).toHaveLength(0);
     const saved = invoke.mock.calls.filter((c) => c[0] === "client_state_save").at(-1)?.[1] as { state: { threads: unknown[] } };
-    expect(saved.state.threads).toEqual([{ threadId, splitRatio: 0.4, terminalVisible: true, terminalMaximized: false }]);
+    expect(saved.state.threads).toEqual([{ threadId, splitRatio: 0.4, explorerVisible: false, terminalVisible: true, terminalMaximized: false }]);
   });
 });

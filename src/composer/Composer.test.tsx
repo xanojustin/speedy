@@ -16,6 +16,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 import { findThread, useAppStore } from "../store/appStore";
 import { __resetRuntimeForTests } from "../store/runtime";
 import { useThreadStore } from "../store/threadStore";
+import { __resetDraftsForTests, flushDrafts, useDrafts } from "../store/drafts";
 import { Composer } from "./Composer";
 import { ADD_TO_COMPOSER_EVENT } from "./focusEvent";
 import { __resetSessionControlsForTests } from "./sessionControls";
@@ -90,6 +91,7 @@ beforeEach(() => {
   });
   __resetRuntimeForTests();
   __resetSessionControlsForTests();
+  __resetDraftsForTests();
   useThreadStore.setState({ threads: {} });
   // This Mac is connected, as it is by the time a thread shows.
   useAppStore.setState({ projects: [], selectedThreadId: null, loaded: false, hosts: [{ key: "local", state: { state: "connected", host_id: "this-mac", agent_version: "test" }, update: null }] });
@@ -97,6 +99,51 @@ beforeEach(() => {
 });
 
 afterEach(() => cleanup());
+
+describe("unsent drafts", () => {
+  it("keeps each thread's unsent message across thread switches, before the first message", async () => {
+    const first = threadId;
+    const { user, input, unmount } = await renderComposer();
+    await user.type(input, "half a thought");
+    unmount();
+
+    // Another thread in the same project starts empty.
+    threadId = useAppStore.getState().createThread(findThread(useAppStore.getState(), first)!.project.id);
+    const other = await renderComposer();
+    expect(other.input.value).toBe("");
+    await other.user.type(other.input, "other thread");
+    other.unmount();
+
+    threadId = first;
+    const back = await renderComposer();
+    expect(back.input.value).toBe("half a thought");
+    expect(back.input.selectionStart).toBe("half a thought".length);
+    expect(calls("claude_send_user")).toHaveLength(0);
+  });
+
+  it("keeps attached terminal snippets, and clears the draft once sent", async () => {
+    const { user, input, unmount } = await renderComposer();
+    act(() => {
+      window.dispatchEvent(new CustomEvent(ADD_TO_COMPOSER_EVENT, { detail: { threadId, text: "npm ERR! boom", source: "Terminal 1" } }));
+    });
+    await user.type(input, "why?");
+    unmount();
+
+    const again = await renderComposer();
+    expect(again.input.value).toBe("why?");
+    expect(screen.getByText("Terminal 1", { exact: false })).toBeInTheDocument();
+    await again.user.keyboard("{Enter}");
+    await waitFor(() => expect(calls("claude_send_user")).toHaveLength(1));
+    expect(useDrafts.getState().composer[threadId]).toBeUndefined();
+  });
+
+  it("saves drafts so they survive a restart", async () => {
+    const { user, input } = await renderComposer();
+    await user.type(input, "remember me");
+    flushDrafts();
+    expect(JSON.parse(localStorage.getItem("speedy.drafts.v1")!).composer[threadId]).toEqual({ text: "remember me", snippets: [] });
+  });
+});
 
 describe("sending", () => {
   it("Enter sends and Shift+Enter inserts a newline", async () => {

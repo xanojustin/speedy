@@ -1,8 +1,9 @@
-// App settings: notifications and the attention sound. Values persist in AppState; useAttention
+// App settings: the theme, notifications and the attention sound. Values persist in AppState; useAttention
 // pushes them to the Rust attention service.
 import { useEffect, useRef } from "react";
 import { HostsSettings } from "../hosts/HostsSettings";
 import { playSound } from "../ipc/commands";
+import { THEME_PREFERENCES, type ThemePreference } from "../ipc/types";
 import { useAppStore } from "../store/appStore";
 import "./settings.css";
 
@@ -11,11 +12,14 @@ export const COMPLETION_SOUNDS = [
   "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink",
 ] as const;
 
+const THEME_LABEL: Record<ThemePreference, string> = { light: "Light", dark: "Dark", system: "System Setting" };
+
 const preview = (name: string) => void playSound(name).catch((err) => console.warn("sound preview failed", err));
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const notificationsEnabled = useAppStore((s) => s.notificationsEnabled);
   const completionSound = useAppStore((s) => s.completionSound);
+  const theme = useAppStore((s) => s.theme);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const firstRef = useRef<HTMLInputElement>(null);
 
@@ -44,13 +48,39 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </button>
         </header>
 
+        <section className="settings-section" aria-labelledby="settings-appearance">
+          <h3 id="settings-appearance" className="settings-section-title">
+            Appearance
+          </h3>
+          <div className="settings-row">
+            <span className="settings-label" id="settings-theme">
+              Theme
+              <span className="settings-description">System Setting follows macOS's light or dark appearance.</span>
+            </span>
+            <span className="settings-segmented" role="radiogroup" aria-labelledby="settings-theme">
+              {THEME_PREFERENCES.map((t) => (
+                <label key={t} className="settings-segment" data-checked={t === theme || undefined}>
+                  <input
+                    ref={t === theme ? firstRef : undefined}
+                    type="radio"
+                    name="settings-theme"
+                    value={t}
+                    checked={t === theme}
+                    onChange={() => updateSettings({ theme: t })}
+                  />
+                  {THEME_LABEL[t]}
+                </label>
+              ))}
+            </span>
+          </div>
+        </section>
+
         <section className="settings-section" aria-labelledby="settings-notifications">
           <h3 id="settings-notifications" className="settings-section-title">
             Notifications
           </h3>
           <label className="settings-row">
             <input
-              ref={firstRef}
               type="checkbox"
               checked={notificationsEnabled}
               onChange={(e) => updateSettings({ notificationsEnabled: e.target.checked })}

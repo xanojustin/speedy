@@ -26,6 +26,10 @@ pub struct ClientState {
     pub activity_panel_visible: bool,
     /// This Mac's `claude` path when it isn't on the login PATH.
     pub claude_path_override: Option<String>,
+    /// Hosts whose sidebar section is collapsed, by host key.
+    pub collapsed_hosts: Vec<String>,
+    /// "system", "light" or "dark".
+    pub theme: String,
 }
 
 impl Default for ClientState {
@@ -41,6 +45,8 @@ impl Default for ClientState {
             completion_sound: None,
             activity_panel_visible: false,
             claude_path_override: None,
+            collapsed_hosts: vec![],
+            theme: "system".into(),
         }
     }
 }
@@ -70,10 +76,17 @@ pub struct ClientThread {
     pub split_ratio: f64,
     pub terminal_visible: bool,
     pub terminal_maximized: bool,
+    pub explorer_visible: bool,
 }
 
 impl Default for ClientThread {
     fn default() -> Self {
-        ClientThread { thread_id: String::new(), split_ratio: 0.65, terminal_visible: false, terminal_maximized: false }
+        ClientThread {
+            thread_id: String::new(),
+            split_ratio: 0.65,
+            terminal_visible: false,
+            terminal_maximized: false,
+            explorer_visible: false,
+        }
     }
 }

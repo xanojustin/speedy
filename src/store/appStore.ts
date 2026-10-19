@@ -15,6 +15,7 @@ import {
   projectRemove,
   setHostLookup,
   threadCreate,
+  threadRemove,
   threadUpdate,
   type NewThread,
 } from "../ipc/commands";
@@ -34,7 +35,9 @@ import {
   type Thread,
   type ThreadPatch,
   type ThreadStatus,
+  THEME_PREFERENCES,
 } from "../ipc/types";
+import { useDrafts } from "./drafts";
 import { useThreadStore } from "./threadStore";
 
 export interface AppStore extends AppState {
@@ -45,8 +48,6 @@ export interface AppStore extends AppState {
   notice: string | null;
   /** The Settings dialog is open (not persisted). */
   settingsOpen: boolean;
-  /** The file explorer panel is open (not persisted: it starts hidden). */
-  explorerOpen: boolean;
   explorerWidth: number;
   /** A file the explorer should open, from a transcript link; the explorer takes it (not persisted). */
   explorerReveal: { path: string; line: number | null } | null;
@@ -72,17 +73,21 @@ export interface AppStore extends AppState {
   moveGroup(groupId: string, toIndex: number): void;
   setGroupCollapsed(groupId: string, collapsed: boolean): void;
   setGroupColor(groupId: string, color: GroupColor): void;
+  setHostCollapsed(hostKey: string, collapsed: boolean): void;
 
   createThread(projectId: string, init?: Partial<Pick<Thread, "title" | "sessionId" | "worktree" | "fork">>): string;
   updateThread(threadId: string, patch: Partial<Omit<Thread, "id">>): void;
   archiveThread(threadId: string): void;
   restoreThread(threadId: string): void;
+  /** Removes the thread for good; its CLI session stays on disk (Past Conversations). */
+  deleteThread(threadId: string): void;
   moveThread(threadId: string, toIndex: number): void;
   selectThread(threadId: string | null): void;
   setSidebarWidth(width: number): void;
   setClaudePathOverride(path: string | null): void;
-  updateSettings(patch: Partial<Pick<AppState, "notificationsEnabled" | "completionSound" | "activityPanelVisible">>): void;
+  updateSettings(patch: Partial<Pick<AppState, "notificationsEnabled" | "completionSound" | "activityPanelVisible" | "theme">>): void;
   setSettingsOpen(open: boolean): void;
+  /** Shows or hides the selected thread's explorer (each thread has its own). */
   setExplorerOpen(open: boolean): void;
   setExplorerWidth(width: number): void;
   /** Opens the explorer on `path` (relative to the thread's folder, or absolute) at `line`. */
@@ -104,6 +109,7 @@ export function makeThread(init?: Partial<Thread>): Thread {
     splitRatio: 0.65,
     terminalVisible: false,
     terminalMaximized: false,
+    explorerVisible: false,
     model: null,
     permissionMode: null,
     worktree: null,
@@ -123,7 +129,13 @@ const clientSnapshot = (s: AppStore): ClientState => ({
   groups: s.groups,
   projects: s.projects.map((p) => ({ hostId: p.hostKey, projectId: p.id, collapsed: p.collapsed, groupId: p.groupId ?? null })),
   threads: s.projects.flatMap((p) =>
-    p.threads.map((t) => ({ threadId: t.id, splitRatio: t.splitRatio, terminalVisible: t.terminalVisible, terminalMaximized: t.terminalMaximized })),
+    p.threads.map((t) => ({
+      threadId: t.id,
+      splitRatio: t.splitRatio,
+      terminalVisible: t.terminalVisible,
+      terminalMaximized: t.terminalMaximized,
+      explorerVisible: t.explorerVisible,
+    })),
   ),
   selectedThreadId: s.selectedThreadId,
   sidebarWidth: s.sidebarWidth,
@@ -131,10 +143,12 @@ const clientSnapshot = (s: AppStore): ClientState => ({
   completionSound: s.completionSound,
   activityPanelVisible: s.activityPanelVisible,
   claudePathOverride: s.claudePathOverride,
+  collapsedHosts: s.collapsedHosts,
+  theme: s.theme,
 });
 
 /** Layout prefs for threads the client hasn't seen yet. */
-const THREAD_LAYOUT = { splitRatio: 0.65, terminalVisible: false, terminalMaximized: false };
+const THREAD_LAYOUT = { splitRatio: 0.65, terminalVisible: false, terminalMaximized: false, explorerVisible: false };
 
 /** A host thread with this client's layout for it (or the defaults). */
 function mergeThread(host: HostThread, prev: Thread | undefined, client?: ClientState["threads"][number]): Thread {
@@ -153,6 +167,7 @@ function mergeThread(host: HostThread, prev: Thread | undefined, client?: Client
     splitRatio: layout.splitRatio,
     terminalVisible: layout.terminalVisible,
     terminalMaximized: layout.terminalMaximized,
+    explorerVisible: layout.explorerVisible ?? false,
   };
 }
 
@@ -271,6 +286,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     groups: [],
     selectedThreadId: null,
     claudePathOverride: null,
+    collapsedHosts: [],
+    theme: "system",
     sidebarWidth: 260,
     notificationsEnabled: true,
     completionSound: null,
@@ -278,7 +295,6 @@ export const useAppStore = create<AppStore>((set, get) => {
     loaded: false,
     notice: null,
     settingsOpen: false,
-    explorerOpen: false,
     explorerReveal: null,
     explorerWidth: 380,
 
@@ -294,6 +310,8 @@ export const useAppStore = create<AppStore>((set, get) => {
         completionSound: state.completionSound,
         activityPanelVisible: state.activityPanelVisible,
         claudePathOverride: state.claudePathOverride,
+        collapsedHosts: state.collapsedHosts ?? [],
+        theme: state.theme && THEME_PREFERENCES.includes(state.theme) ? state.theme : "system",
         notice,
         loaded: true,
       });
@@ -349,6 +367,7 @@ export const useAppStore = create<AppStore>((set, get) => {
           }));
           break;
         case "thread_removed":
+          useDrafts.getState().forgetThread(event.id);
           set((s) => ({ projects: s.projects.map((p) => (p.hostKey === host ? { ...p, threads: p.threads.filter((t) => t.id !== event.id) } : p)) }));
           break;
         case "thread_status":
@@ -380,6 +399,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     removeProject(projectId) {
       const removed = get().projects.find((p) => p.id === projectId);
       if (removed) void projectRemove(removed.hostKey, projectId).catch(report("removing the project"));
+      for (const t of removed?.threads ?? []) useDrafts.getState().forgetThread(t.id);
       commit((s) => {
         const project = s.projects.find((p) => p.id === projectId);
         const selectedGone = project?.threads.some((t) => t.id === s.selectedThreadId);
@@ -421,6 +441,10 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     moveGroup(groupId, toIndex) {
       commit((s) => ({ groups: move(s.groups, s.groups.findIndex((g) => g.id === groupId), toIndex) }));
+    },
+
+    setHostCollapsed(hostKey, collapsed) {
+      commit((s) => ({ collapsedHosts: collapsed ? [...new Set([...s.collapsedHosts, hostKey])] : s.collapsedHosts.filter((k) => k !== hostKey) }));
     },
 
     setGroupCollapsed(groupId, collapsed) {
@@ -475,6 +499,18 @@ export const useAppStore = create<AppStore>((set, get) => {
       });
     },
 
+    deleteThread(threadId) {
+      void threadRemove(threadId).catch(report("deleting the thread"));
+      useDrafts.getState().forgetThread(threadId);
+      commit((s) => {
+        const project = s.projects.find((p) => p.threads.some((t) => t.id === threadId));
+        const projects = s.projects.map((p) => (p === project ? { ...p, threads: p.threads.filter((t) => t.id !== threadId) } : p));
+        let selectedThreadId = s.selectedThreadId;
+        if (selectedThreadId === threadId) selectedThreadId = project?.threads.find((t) => !t.archived && t.id !== threadId)?.id ?? null;
+        return { projects, selectedThreadId };
+      });
+    },
+
     restoreThread(threadId) {
       void threadUpdate(threadId, { archived: false }).catch(report("restoring the thread"));
       commit((s) => ({ projects: mapThreads(s.projects, threadId, (t) => ({ ...t, archived: false })), selectedThreadId: threadId }));
@@ -510,7 +546,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
 
     setExplorerOpen(open) {
-      set({ explorerOpen: open });
+      const id = get().selectedThreadId;
+      if (id) get().updateThread(id, { explorerVisible: open });
     },
 
     setExplorerWidth(width) {
@@ -518,7 +555,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
 
     revealInExplorer(path, line) {
-      set({ explorerOpen: true, explorerReveal: { path, line } });
+      get().setExplorerOpen(true);
+      set({ explorerReveal: { path, line } });
     },
 
     takeExplorerReveal() {
@@ -583,8 +621,10 @@ export function hostSections(state: Pick<AppStore, "projects" | "groups" | "host
 }
 
 /** Non-archived threads in sidebar order (Cmd+1–9 targets). */
-export function visibleThreads(state: Pick<AppStore, "projects" | "groups" | "hosts">) {
-  return hostSections(state).flatMap((h) => h.sections).flatMap((sec) =>
+export function visibleThreads(state: Pick<AppStore, "projects" | "groups" | "hosts" | "collapsedHosts">) {
+  // A collapsed host only collapses when there's more than one: with one, there's no host header.
+  const hostCollapsed = (key: string) => state.hosts.length > 1 && state.collapsedHosts.includes(key);
+  return hostSections(state).filter((h) => !hostCollapsed(h.host.key)).flatMap((h) => h.sections).flatMap((sec) =>
     sec.group?.collapsed ? [] : sec.projects.flatMap((p) => (p.collapsed ? [] : p.threads.filter((t) => !t.archived))),
   );
 }

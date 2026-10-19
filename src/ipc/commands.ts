@@ -103,6 +103,7 @@ export const threadCreate = (host: string, projectId: string, thread: NewThread)
   hostCall<void>(host, "thread_create", { projectId, thread });
 export const threadUpdate = (threadId: string, patch: ThreadPatch) =>
   hostCall<void>(hostOfThread(threadId), "thread_update", { threadId, patch });
+export const threadRemove = (threadId: string) => hostCall<void>(hostOfThread(threadId), "thread_remove", { threadId });
 export const queueRemove = (threadId: string, id: string) => hostCall<void>(hostOfThread(threadId), "queue_remove", { threadId, id });
 
 // ---- setup (per host, KTD7) ----
@@ -193,6 +194,8 @@ export const attentionSetPrefs = (notifications: boolean, sound: string | null) 
   invoke<void>("attention_set_prefs", { notifications, sound });
 /** Plays a completion sound (settings preview). */
 export const playSound = (name: string) => invoke<void>("play_sound", { name });
+/** Every window's appearance (what `setTheme` in `@tauri-apps/api/app` calls); null follows macOS. */
+export const setAppTheme = (theme: "light" | "dark" | null) => invoke<void>("plugin:app|set_app_theme", { theme });
 export const onOpenThread = (cb: (threadId: string) => void): Promise<UnlistenFn> =>
   listen<{ threadId: string }>("attention-open-thread", (e) => cb(e.payload.threadId));
 export const onUnread = (cb: (unread: string[]) => void): Promise<UnlistenFn> =>

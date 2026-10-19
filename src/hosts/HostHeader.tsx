@@ -1,5 +1,6 @@
-// A host's section header in the sidebar (R3): its name, connection state in words, and
-// actions. A host that isn't connected keeps its header, so it's clear where its projects went.
+// A host's section header in the sidebar (R3): a divider with its name, connection state in
+// words, and actions. Clicking it collapses the host's section. A host that isn't connected
+// keeps its header, so it's clear where its projects went.
 import type { MouseEvent } from "react";
 import { hostReconnect, localAgentStart } from "../ipc/commands";
 import { LOCAL_HOST, type HostInfo } from "../ipc/types";
@@ -10,12 +11,14 @@ import "./hosts.css";
 
 interface Props {
   host: HostInfo;
+  collapsed: boolean;
+  onToggle: () => void;
   onAddProject: () => void;
   onNewGroup: () => void;
   openMenu: (e: MouseEvent, items: MenuItem[]) => void;
 }
 
-export function HostHeader({ host, onAddProject, onNewGroup, openMenu }: Props) {
+export function HostHeader({ host, collapsed, onToggle, onAddProject, onNewGroup, openMenu }: Props) {
   const connected = host.state.state === "connected";
   const local = host.key === LOCAL_HOST;
   const label = hostLabel(host.key);
@@ -35,12 +38,16 @@ export function HostHeader({ host, onAddProject, onNewGroup, openMenu }: Props) 
         ]),
   ];
 
-  const title = host.state.state === "reconnecting" ? host.state.error : undefined;
+  // Connected shows as a dot (its words stay for screen readers and the tooltip).
+  const title = host.state.state === "reconnecting" ? host.state.error : connected ? "Connected" : undefined;
   return (
     <div className="host-header" onContextMenu={(e) => openMenu(e, items)}>
-      <span className={`codicon codicon-${local ? "device-desktop" : "remote"}`} aria-hidden />
-      <h2 className="host-header-name">{label}</h2>
-      <span className={`host-header-state${connected ? " connected" : ""}`} title={title}>
+      <button type="button" className="host-header-toggle" aria-expanded={!collapsed} aria-label={`${collapsed ? "Expand" : "Collapse"} ${label}`} onClick={onToggle}>
+        <span className={`codicon codicon-chevron-${collapsed ? "right" : "down"} host-header-twistie`} aria-hidden />
+        <span className={`codicon codicon-${local ? "device-desktop" : "server"} host-header-icon`} aria-hidden />
+        <h2 className="host-header-name">{label}</h2>
+      </button>
+      <span className={`host-header-state ${host.state.state}`} title={title}>
         {hostStateLabel(host)}
       </span>
       {!connected && !local && (
@@ -48,7 +55,7 @@ export function HostHeader({ host, onAddProject, onNewGroup, openMenu }: Props) 
           <span className="codicon codicon-refresh" aria-hidden />
         </button>
       )}
-      <button type="button" className="icon-button" aria-label={`Add Project Folder on ${label}…`} title="Add Project Folder…" disabled={!connected} onClick={onAddProject}>
+      <button type="button" className="icon-button host-header-add" aria-label={`Add Project Folder on ${label}…`} title="Add Project Folder…" disabled={!connected} onClick={onAddProject}>
         <span className="codicon codicon-new-folder" aria-hidden />
       </button>
     </div>

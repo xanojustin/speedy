@@ -8,6 +8,7 @@ import "../hosts/hosts.css";
 import { findThread, hostLabel, hostStateLabel, threadCwd, useAppStore } from "../store/appStore";
 import { controlRequest, interruptThread, removeQueued, sendUserMessage } from "../store/runtime";
 import { getRuntime, useThreadRuntime, useThreadStore } from "../store/threadStore";
+import { EMPTY_COMPOSER, useDrafts, type Attachment, type ComposerDraft } from "../store/drafts";
 import { ADD_TO_COMPOSER_EVENT, FOCUS_COMPOSER_EVENT, type AddToComposerDetail, type FocusComposerDetail } from "./focusEvent";
 import { MentionMenu, useFileMentions } from "./Mentions";
 import {
@@ -33,15 +34,6 @@ import "./composer.css";
 /** Image types the Messages API accepts. */
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const MAX_INPUT_HEIGHT = 200;
-
-interface Attachment {
-  id: string;
-  name: string;
-  mediaType: string;
-  /** base64 without the data-URL prefix */
-  data: string;
-  dataUrl: string;
-}
 
 function readImage(file: File): Promise<Attachment> {
   return new Promise((resolve, reject) => {
@@ -85,15 +77,19 @@ export function Composer({ threadId }: { threadId: string }) {
   const acked = useSessionControls((s) => s.modes[threadId]);
   const effort = useSessionControls((s) => s.effort[threadId] ?? null);
 
-  const [text, setText] = useState("");
-  const [caret, setCaret] = useState(0);
-  const [images, setImages] = useState<Attachment[]>([]);
-  const [snippets, setSnippets] = useState<Snippet[]>([]);
+  // The unsent message is kept per thread, so switching threads (which remounts this) keeps it.
+  const { text, images, snippets } = useDrafts((s) => s.composer[threadId] ?? EMPTY_COMPOSER);
+  const updateDraft = useCallback((update: (prev: ComposerDraft) => Partial<ComposerDraft>) => useDrafts.getState().updateComposer(threadId, update), [threadId]);
+  const setText = (next: string) => updateDraft(() => ({ text: next }));
+  const setImages = (fn: (prev: Attachment[]) => Attachment[]) => updateDraft((d) => ({ images: fn(d.images) }));
+  const setSnippets = (fn: (prev: Snippet[]) => Snippet[]) => updateDraft((d) => ({ snippets: fn(d.snippets) }));
+  const [caret, setCaret] = useState(text.length);
   const [activeIndex, setActiveIndex] = useState(0);
   /** The input text at which the user dismissed the open menu with Esc. */
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const pendingCaret = useRef<number | null>(null);
+  // A restored draft opens with the caret at its end.
+  const pendingCaret = useRef<number | null>(text ? text.length : null);
 
   const busy = rt.status === "working" || rt.status === "awaiting_user";
   const live = rt.init != null && isLiveStatus(rt.status);
@@ -149,7 +145,7 @@ export function Composer({ threadId }: { threadId: string }) {
       const { detail } = e as CustomEvent<AddToComposerDetail>;
       if (detail?.threadId !== threadId) return;
       const s = makeSnippet(detail.text, detail.source);
-      if (s) setSnippets((prev) => [...prev, s]);
+      if (s) updateDraft((d) => ({ snippets: [...d.snippets, s] }));
     };
     window.addEventListener(FOCUS_COMPOSER_EVENT, onFocus);
     window.addEventListener(ADD_TO_COMPOSER_EVENT, onAdd);
@@ -157,7 +153,7 @@ export function Composer({ threadId }: { threadId: string }) {
       window.removeEventListener(FOCUS_COMPOSER_EVENT, onFocus);
       window.removeEventListener(ADD_TO_COMPOSER_EVENT, onAdd);
     };
-  }, [threadId, focusInput]);
+  }, [threadId, focusInput, updateDraft]);
 
   const selectSlash = (c: SlashCommand) => {
     const head = `/${c.name} `;
@@ -185,8 +181,7 @@ export function Composer({ threadId }: { threadId: string }) {
       ...(body ? [{ type: "text", text: body }] : []),
     ];
     applyText("", 0);
-    setImages([]);
-    setSnippets([]);
+    updateDraft(() => ({ images: [], snippets: [] }));
     void sendUserMessage(threadId, content);
   };
 

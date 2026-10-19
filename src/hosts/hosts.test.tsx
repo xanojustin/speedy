@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/plugin-dialog", async () => (await import("../app/testing/t
 import { App } from "../app/App";
 import { backend, callsTo, emitMenu, project, readySetup, stateWith } from "../app/testing/tauriMock";
 import { resetBackend } from "../app/testing/reset";
-import { useAppStore } from "../store/appStore";
+import { useAppStore, visibleThreads } from "../store/appStore";
 
 const MINI_UP = { state: "connected", host_id: "mini-1", agent_version: "0.1.0" };
 const MINI_DOWN = { state: "reconnecting", error: "ssh: connect to host mac-mini: Operation timed out" };
@@ -45,6 +45,24 @@ describe("hosts in the sidebar", () => {
 
     fireEvent.click(within(mac).getByText("app thread 1"));
     expect(useAppStore.getState().selectedThreadId).toBe("app-t1");
+  });
+
+  it("collapses a host's section, remembers it, and skips its threads for Cmd+1–9", async () => {
+    twoHosts(MINI_UP);
+    await renderApp();
+    const toggle = await waitFor(() => within(hostSection("This Mac")).getByRole("button", { name: "Collapse This Mac" }));
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggle);
+
+    expect(within(hostSection("This Mac")).queryByText("app thread 1")).toBeNull();
+    expect(within(hostSection("mac-mini")).getByText("api thread 1")).toBeInTheDocument();
+    expect(within(hostSection("This Mac")).getByRole("button", { name: "Expand This Mac" })).toHaveAttribute("aria-expanded", "false");
+    expect(visibleThreads(useAppStore.getState()).map((t) => t.id)).toEqual(["api-t1"]);
+    await waitFor(() => expect(backend.saves.at(-1)?.collapsedHosts).toEqual(["local"]));
+
+    fireEvent.click(within(hostSection("This Mac")).getByRole("button", { name: "Expand This Mac" }));
+    expect(within(hostSection("This Mac")).getByText("app thread 1")).toBeInTheDocument();
+    await waitFor(() => expect(backend.saves.at(-1)?.collapsedHosts).toEqual([]));
   });
 
   it("with only This Mac, keeps the single Projects list", async () => {

@@ -88,7 +88,7 @@ function handleMenuAction(action: MenuAction) {
       if (selected) newTerminal(selected);
       return;
     case "toggle_explorer":
-      return s.setExplorerOpen(!s.explorerOpen);
+      return s.setExplorerOpen(!findThread(s, s.selectedThreadId)?.thread.explorerVisible);
     case "focus_chat":
       if (selected) focusChat(selected);
       return;

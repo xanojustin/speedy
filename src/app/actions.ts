@@ -1,7 +1,7 @@
 // App-level flows shared by the sidebar, the empty state, and the menu shortcuts.
 import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { claudeStop, openFoldersTake, pathsExist, ptyHasForegroundChild, worktreeClean, worktreeUnused } from "../ipc/commands";
-import type { UnusedWorktree } from "../ipc/types";
+import type { Project, UnusedWorktree } from "../ipc/types";
 import { findThread, useAppStore } from "../store/appStore";
 import { forgetStarted } from "../store/runtime";
 import { getRuntime } from "../store/threadStore";
@@ -88,6 +88,69 @@ export async function closeThread(threadId: string): Promise<boolean> {
   await stopThread(threadId);
   useAppStore.getState().archiveThread(threadId);
   return true;
+}
+
+/**
+ * Deletes a thread for good, after asking (and saying so when it's still running). Its CLI session
+ * stays on disk, so Past Conversations can still resume it. Its worktree goes too, unless another
+ * thread uses it or it has uncommitted changes; its branch only when merged. Returns whether it was deleted.
+ */
+export async function deleteThread(threadId: string): Promise<boolean> {
+  const found = findThread(useAppStore.getState(), threadId);
+  if (!found) return false;
+  const { project, thread } = found;
+  const running = await isBusy(threadId);
+  const worktree = thread.worktree ? await ownWorktree(project, threadId, thread.worktree.path) : null;
+  const ok = await ask(
+    [
+      running ? "It's still running: deleting stops the agent and the terminal's running process." : "",
+      worktree ? worktreeFate(worktree) : "",
+      "The conversation stays in Past Conversations.",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+    { title: `Delete "${thread.title}"?`, kind: "warning", okLabel: "Delete Thread", cancelLabel: "Cancel" },
+  );
+  if (!ok) return false;
+  await stopThread(threadId);
+  useAppStore.getState().deleteThread(threadId);
+  if (worktree && !worktree.dirty) {
+    try {
+      const report = await worktreeClean(project.hostKey, project.path, [worktree.path]);
+      if (report.skipped.length) {
+        await message(report.skipped.map((s) => `Kept ${s.path}: ${s.reason}`).join("\n\n"), { title: "The worktree was kept", kind: "warning" });
+      }
+    } catch (err) {
+      await message(String(err), { title: "Couldn't remove the worktree", kind: "error" });
+    }
+  }
+  return true;
+}
+
+/**
+ * The Speedy worktree holding `cwd`, when no other thread (archived ones included: they can be
+ * restored) works in it. Null when it's shared or can't be looked up.
+ */
+async function ownWorktree(project: Project, threadId: string, cwd: string): Promise<UnusedWorktree | null> {
+  // Every project counts: another project can sit in the same repository.
+  const keep = useAppStore
+    .getState()
+    .projects.flatMap((p) => p.threads)
+    .flatMap((t) => (t.id !== threadId && t.worktree ? [t.worktree.path] : []));
+  try {
+    const unused = await worktreeUnused(project.hostKey, project.path, keep);
+    return unused.find((w) => cwd === w.path || cwd.startsWith(`${w.path}/`)) ?? null;
+  } catch (err) {
+    console.warn("worktree_unused failed", err);
+    return null;
+  }
+}
+
+function worktreeFate(w: UnusedWorktree): string {
+  const name = worktreeName(w);
+  if (w.dirty) return `Its worktree ${name} has uncommitted changes, so it's kept.`;
+  if (!w.branch) return `Its worktree ${name} is removed too.`;
+  return `Its worktree ${name} is removed too, ${w.merged ? "and the branch deleted (merged)." : "but the branch is kept (unmerged commits)."}`;
 }
 
 /** Removes a project from Speedy, stopping its threads first. Its CLI sessions stay on disk. */

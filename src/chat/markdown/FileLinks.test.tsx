@@ -1,6 +1,6 @@
 // File references in assistant prose link to the explorer.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async () => undefined),
@@ -9,12 +9,15 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 
-import { useAppStore } from "../../store/appStore";
+import { findThread, useAppStore } from "../../store/appStore";
+import { project, stateWith } from "../../app/testing/tauriMock";
 import { Markdown } from "./Markdown";
 
+const initial = useAppStore.getState();
+beforeEach(() => useAppStore.setState({ ...stateWith([project("app")]), explorerReveal: null }));
 afterEach(() => {
   cleanup();
-  useAppStore.setState({ explorerOpen: false, explorerReveal: null });
+  useAppStore.setState(initial, true);
 });
 
 describe("file links", () => {
@@ -24,7 +27,9 @@ describe("file links", () => {
     expect(links.map((l) => l.textContent)).toEqual(["src/a.ts:12", "lib/b.rs:3", "the plan"]);
 
     fireEvent.click(links[0]);
-    expect(useAppStore.getState()).toMatchObject({ explorerOpen: true, explorerReveal: { path: "src/a.ts", line: 12 } });
+    const s = useAppStore.getState();
+    expect(findThread(s, s.selectedThreadId)?.thread.explorerVisible).toBe(true);
+    expect(s.explorerReveal).toEqual({ path: "src/a.ts", line: 12 });
     fireEvent.click(links[2]);
     expect(useAppStore.getState().explorerReveal).toEqual({ path: "docs/plan.md", line: 7 });
   });

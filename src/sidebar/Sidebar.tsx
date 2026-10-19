@@ -1,6 +1,6 @@
 // Projects and their threads, with a live status glyph per thread (R2, R3, R5).
 import { useCallback, useEffect, useState, type MouseEvent, type PointerEvent } from "react";
-import { addProjectViaPicker, cleanUpWorktrees, closeThread, newThread, removeProject } from "../app/actions";
+import { addProjectViaPicker, cleanUpWorktrees, closeThread, deleteThread, newThread, removeProject } from "../app/actions";
 import { FolderBrowser } from "../hosts/FolderBrowser";
 import { HostHeader } from "../hosts/HostHeader";
 import { openInVscode, pathsExist } from "../ipc/commands";
@@ -26,6 +26,8 @@ export function Sidebar({ unread }: SidebarProps) {
   const moveGroup = useAppStore((s) => s.moveGroup);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const hosts = useAppStore((s) => s.hosts);
+  const collapsedHosts = useAppStore((s) => s.collapsedHosts);
+  const setHostCollapsed = useAppStore((s) => s.setHostCollapsed);
   const missing = useMissingProjects(projects, hosts);
   /** The SSH host whose folder browser is open. */
   const [browseHost, setBrowseHost] = useState<string | null>(null);
@@ -125,6 +127,7 @@ export function Sidebar({ unread }: SidebarProps) {
     openMenu(e, [
       { label: "Rename", onSelect: () => setRenamingId(threadId) },
       { label: "Archive", onSelect: () => void closeThread(threadId) },
+      { label: "Delete…", onSelect: () => void deleteThread(threadId) },
     ]);
 
   // Projects reorder within their own section; moving between groups is a context-menu action.
@@ -239,16 +242,27 @@ export function Sidebar({ unread }: SidebarProps) {
   } else {
     body = (
       <>
-        <SectionHeader icon="remote-explorer" label="Hosts">
-          {settingsButton}
-        </SectionHeader>
-        {hostSections({ projects, groups, hosts }).map(({ host, sections: [{ projects: chats }, ...folderSections] }) => (
-          <section key={host.key} className="sidebar-host" aria-label={hostLabel(host.key)}>
-            <HostHeader host={host} onAddProject={() => addProjectOn(host.key)} onNewGroup={() => startNewGroup(undefined, host.key)} openMenu={openMenu} />
-            {renderChats(chats, `${CHATS_LABEL} on ${hostLabel(host.key)}`)}
-            {renderTree(folderSections, `Projects and threads on ${hostLabel(host.key)}`)}
-          </section>
-        ))}
+        {/* The hosts scroll as one list; their own lists don't scroll on their own. */}
+        <div className="sidebar-hosts">
+          {hostSections({ projects, groups, hosts }).map(({ host, sections: [{ projects: chats }, ...folderSections] }) => (
+            <section key={host.key} className={`sidebar-host${host.key === LOCAL_HOST ? "" : " remote"}`} aria-label={hostLabel(host.key)}>
+              <HostHeader
+                host={host}
+                collapsed={collapsedHosts.includes(host.key)}
+                onToggle={() => setHostCollapsed(host.key, !collapsedHosts.includes(host.key))}
+                onAddProject={() => addProjectOn(host.key)}
+                onNewGroup={() => startNewGroup(undefined, host.key)}
+                openMenu={openMenu}
+              />
+              {!collapsedHosts.includes(host.key) && (
+                <>
+                  {renderChats(chats, `${CHATS_LABEL} on ${hostLabel(host.key)}`)}
+                  {renderTree(folderSections, `Projects and threads on ${hostLabel(host.key)}`)}
+                </>
+              )}
+            </section>
+          ))}
+        </div>
       </>
     );
   }

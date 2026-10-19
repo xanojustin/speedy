@@ -9,6 +9,7 @@ vi.mock("@tauri-apps/plugin-dialog", async () => (await import("../app/testing/t
 import { App } from "../app/App";
 import { backend, callsTo, dialog, emitMenu, project, stateWith } from "../app/testing/tauriMock";
 import { resetBackend } from "../app/testing/reset";
+import type { ClientState } from "../ipc/types";
 import { makeThread, useAppStore } from "../store/appStore";
 
 const explorer = () => screen.queryByLabelText("Explorer");
@@ -115,6 +116,7 @@ describe("Explorer", () => {
     await waitFor(() => expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([{ path: "/Users/me/app", host: "local" }]));
 
     fireEvent.click(screen.getByText("app thread 2"));
+    act(() => emitMenu("toggle_explorer"));
     fireEvent.click(within(await waitFor(() => explorer()!)).getByRole("button", { name: "Open in VS Code" }));
     await waitFor(() =>
       expect(callsTo("open_in_vscode").map((c) => c.args)).toEqual([
@@ -122,6 +124,49 @@ describe("Explorer", () => {
         { path: "/Users/me/.worktrees/app-feature", host: "local" },
       ]),
     );
+  });
+});
+
+describe("Explorer per thread", () => {
+  beforeEach(() => {
+    resetBackend(stateWith([project("app", [{}, {}])]));
+    backend.projectFiles = { "README.md": "# Hello\n" };
+  });
+
+  it("is shown or hidden per thread, and remembered in client.json", async () => {
+    await renderApp();
+    act(() => emitMenu("toggle_explorer"));
+    expect(await screen.findByRole("tree", { name: "Files in app" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("app thread 2"));
+    await waitFor(() => expect(explorer()).toBeNull());
+
+    fireEvent.click(screen.getByText("app thread 1"));
+    expect(await screen.findByRole("tree", { name: "Files in app" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect((callsTo("client_state_save").at(-1)!.args!.state as ClientState).threads.map((t) => [t.threadId, t.explorerVisible])).toEqual([
+        ["app-t1", true],
+        ["app-t2", false],
+      ]),
+    );
+  });
+
+  it("keeps each thread's open file and unsaved edits across thread switches", async () => {
+    await renderApp();
+    act(() => emitMenu("toggle_explorer"));
+    fireEvent.click(await within(await screen.findByRole("tree", { name: "Files in app" })).findByText("README.md"));
+    fireEvent.click(await within(explorer()!).findByRole("tab", { name: "Edit" }));
+    fireEvent.change(await within(explorer()!).findByRole("textbox"), { target: { value: "half done" } });
+
+    fireEvent.click(screen.getByText("app thread 2"));
+    act(() => emitMenu("toggle_explorer"));
+    // The other thread has its own explorer, showing the tree.
+    expect(await screen.findByRole("tree", { name: "Files in app" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("app thread 1"));
+    expect(await within(await waitFor(() => explorer()!)).findByRole("textbox")).toHaveValue("half done");
+    expect(within(explorer()!).getByLabelText("Unsaved")).toBeInTheDocument();
+    expect(backend.projectFiles["README.md"]).toBe("# Hello\n");
   });
 });
 

@@ -34,6 +34,32 @@ describe("settings", () => {
     await waitFor(() => expect(callsTo("attention_set_prefs").at(-1)?.args).toEqual({ notifications: false, sound: "Glass" }));
   });
 
+  it("picks Light, Dark or System Setting, applying it to the app and saving it", async () => {
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const group = await screen.findByRole("radiogroup", { name: /Theme/ });
+    expect(screen.getAllByRole("radio").map((r) => r.parentElement!.textContent)).toEqual(["Light", "Dark", "System Setting"]);
+    expect(screen.getByRole("radio", { name: "System Setting" })).toBeChecked();
+    expect(group).toBeInTheDocument();
+    await waitFor(() => expect(callsTo("plugin:app|set_app_theme").at(-1)?.args).toEqual({ theme: null }));
+
+    fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
+    expect(screen.getByRole("radio", { name: "Dark" })).toBeChecked();
+    await waitFor(() => expect(callsTo("plugin:app|set_app_theme").at(-1)?.args).toEqual({ theme: "dark" }));
+    expect(lastSaved()!.theme).toBe("dark");
+
+    fireEvent.click(screen.getByRole("radio", { name: "System Setting" }));
+    await waitFor(() => expect(callsTo("plugin:app|set_app_theme").at(-1)?.args).toEqual({ theme: null }));
+    expect(lastSaved()!.theme).toBe("system");
+  });
+
+  it("applies the saved theme at startup", async () => {
+    resetBackend({ ...emptyState(), theme: "light" });
+    await renderApp();
+    await waitFor(() => expect(callsTo("plugin:app|set_app_theme").at(-1)?.args).toEqual({ theme: "light" }));
+    expect(localStorage.getItem("speedy.theme")).toBe("light");
+  });
+
   it("toggles notifications and picks an attention sound", async () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));

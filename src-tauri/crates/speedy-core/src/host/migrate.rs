@@ -37,6 +37,7 @@ pub fn split_legacy(legacy: AppState, host_id: &str) -> (HostState, ClientState)
                     split_ratio: t.split_ratio,
                     terminal_visible: t.terminal_visible,
                     terminal_maximized: t.terminal_maximized,
+                    explorer_visible: false,
                 });
                 HostThread {
                     id: t.id,

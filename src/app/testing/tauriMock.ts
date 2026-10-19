@@ -109,6 +109,8 @@ function clientOf(state: AppState): ClientState {
     completionSound: state.completionSound,
     activityPanelVisible: state.activityPanelVisible,
     claudePathOverride: state.claudePathOverride,
+    collapsedHosts: state.collapsedHosts,
+    theme: state.theme,
   };
 }
 
@@ -136,6 +138,8 @@ function applyClientSave(c: ClientState) {
     completionSound: c.completionSound,
     activityPanelVisible: c.activityPanelVisible,
     claudePathOverride: c.claudePathOverride,
+    collapsedHosts: c.collapsedHosts ?? [],
+    theme: c.theme ?? "system",
   };
   backend.saves.push(structuredClone(backend.state));
 }
@@ -166,6 +170,7 @@ function hostRpc(method: string, a: Record<string, unknown>, host = "local"): un
         splitRatio: 0.65,
         terminalVisible: false,
         terminalMaximized: false,
+        explorerVisible: false,
         model: t.model ?? null,
         permissionMode: t.permissionMode ?? null,
         worktree: t.worktree ?? null,
@@ -175,6 +180,9 @@ function hostRpc(method: string, a: Record<string, unknown>, host = "local"): un
       st.projects = st.projects.map((p) => (p.id === a.projectId && !p.threads.some((x) => x.id === t.id) ? { ...p, threads: [...p.threads, thread] } : p));
       break;
     }
+    case "thread_remove":
+      st.projects = st.projects.map((p) => ({ ...p, threads: p.threads.filter((t) => t.id !== a.threadId) }));
+      break;
     case "thread_update": {
       const patch = a.patch as ThreadPatch;
       edit(a.threadId as string, (t) => ({
@@ -220,6 +228,8 @@ export function emptyState(): AppState {
     groups: [],
     selectedThreadId: null,
     claudePathOverride: null,
+    collapsedHosts: [],
+    theme: "system",
     sidebarWidth: 260,
     notificationsEnabled: true,
     completionSound: null,
@@ -268,6 +278,7 @@ export const invoke = vi.fn(async (outer: string, outerArgs?: Record<string, unk
     case "project_remove":
     case "thread_create":
     case "thread_update":
+    case "thread_remove":
       return hostRpc(cmd, args!, host);
     case "claude_start":
       return "idle";
@@ -409,6 +420,7 @@ export function project(name: string, threads: Partial<Thread>[] = [{}], extra: 
       splitRatio: 0.65,
       terminalVisible: true,
       terminalMaximized: false,
+      explorerVisible: false,
       model: null,
       permissionMode: null,
       ...t,

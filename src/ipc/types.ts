@@ -230,14 +230,21 @@ export interface ClientState {
   /** Per-project prefs, in display order. */
   projects: { hostId: string; projectId: string; collapsed: boolean; groupId: string | null }[];
   /** Per-thread layout, in display order within each project. */
-  threads: { threadId: string; splitRatio: number; terminalVisible: boolean; terminalMaximized: boolean }[];
+  threads: { threadId: string; splitRatio: number; terminalVisible: boolean; terminalMaximized: boolean; explorerVisible?: boolean }[];
   selectedThreadId: string | null;
   sidebarWidth: number;
   notificationsEnabled: boolean;
   completionSound: string | null;
   activityPanelVisible: boolean;
   claudePathOverride: string | null;
+  /** Hosts whose sidebar section is collapsed, by host key. */
+  collapsedHosts?: string[];
+  theme?: ThemePreference;
 }
+
+/** The app's appearance: follow macOS, or force light or dark. */
+export type ThemePreference = "system" | "light" | "dark";
+export const THEME_PREFERENCES: readonly ThemePreference[] = ["light", "dark", "system"];
 
 // ---- App state: the webview's merged view of hosts and client prefs ----
 
@@ -255,6 +262,9 @@ export interface AppState {
   completionSound: string | null;
   /** Show the activity panel (the agent's todos and subagents) above the composer. */
   activityPanelVisible: boolean;
+  /** Hosts whose sidebar section is collapsed, by host key. */
+  collapsedHosts: string[];
+  theme: ThemePreference;
 }
 
 export interface Project {
@@ -294,6 +304,8 @@ export interface Thread {
   splitRatio: number;
   terminalVisible: boolean;
   terminalMaximized: boolean;
+  /** The file explorer is docked beside this thread. */
+  explorerVisible: boolean;
   model: string | null;
   permissionMode: PermissionMode | null;
   /** Set when the thread runs in its own git worktree instead of the project folder. */

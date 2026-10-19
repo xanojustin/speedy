@@ -24,7 +24,6 @@ export function Layout() {
   const setSidebarWidth = useAppStore((s) => s.setSidebarWidth);
   const settingsOpen = useAppStore((s) => s.settingsOpen);
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
-  const explorerOpen = useAppStore((s) => s.explorerOpen);
   const setExplorerOpen = useAppStore((s) => s.setExplorerOpen);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const dropActive = useFolderDrop();
@@ -73,9 +72,10 @@ export function Layout() {
       <main className="main-area">
         {selected ? <ThreadView key={selected.thread.id} project={selected.project} thread={selected.thread} /> : <EmptyState />}
       </main>
-      {explorerOpen && selected && (
+      {selected?.thread.explorerVisible && (
         <ExplorerPanel
-          key={threadCwd(selected.project, selected.thread)}
+          key={`${selected.thread.id}:${threadCwd(selected.project, selected.thread)}`}
+          threadId={selected.thread.id}
           root={threadCwd(selected.project, selected.thread)}
           name={selected.project.name}
           host={selected.project.hostKey}
@@ -88,7 +88,7 @@ export function Layout() {
 }
 
 /** The explorer docked on the right, resizable from its left edge. */
-function ExplorerPanel({ root, name, host, onClose }: { root: string; name: string; host: string; onClose: () => void }) {
+function ExplorerPanel({ threadId, root, name, host, onClose }: { threadId: string; root: string; name: string; host: string; onClose: () => void }) {
   const storedWidth = useAppStore((s) => s.explorerWidth);
   const setExplorerWidth = useAppStore((s) => s.setExplorerWidth);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
@@ -127,7 +127,7 @@ function ExplorerPanel({ root, name, host, onClose }: { root: string; name: stri
         style={{ left: -2 }}
         onPointerDown={onSashPointerDown}
       />
-      <Explorer root={root} name={name} host={host} onClose={onClose} />
+      <Explorer threadId={threadId} root={root} name={name} host={host} onClose={onClose} />
     </aside>
   );
 }

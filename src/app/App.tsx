@@ -6,6 +6,7 @@ import { getSetupState, onQuitRequested, recheckSetup } from "../ipc/commands";
 import type { SetupState } from "../ipc/types";
 import { LOCAL_HOST } from "../ipc/types";
 import { useAppStore, waitForHost } from "../store/appStore";
+import { useAppTheme } from "../theme/appTheme";
 import { Layout } from "./Layout";
 import { SetupScreen } from "./SetupScreen";
 import "./app.css";
@@ -18,6 +19,7 @@ export function App() {
   const [mismatchDismissed, setMismatchDismissed] = useState(false);
   const notice = useAppStore((s) => s.notice);
   const dismissNotice = useAppStore((s) => s.dismissNotice);
+  useAppTheme();
 
   // Quitting while This Mac's threads work says they keep running (R17).
   useEffect(() => {

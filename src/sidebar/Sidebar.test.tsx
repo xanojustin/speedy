@@ -228,6 +228,76 @@ describe("Sidebar", () => {
     expect(within(sidebar()).queryByText("app thread 2")).toBeNull();
   });
 
+  it("deletes a thread from the context menu after asking, selecting a sibling", async () => {
+    resetBackend(stateWith([project("app", [{}, {}])], "app-t2"));
+    await renderApp();
+    vi.mocked(dialog.ask).mockResolvedValueOnce(false);
+    fireEvent.contextMenu(threadRow("app thread 2"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
+    await waitFor(() => expect(dialog.ask).toHaveBeenCalledTimes(1));
+    expect(within(sidebar()).getByText("app thread 2")).toBeInTheDocument();
+
+    vi.mocked(dialog.ask).mockResolvedValueOnce(true);
+    fireEvent.contextMenu(threadRow("app thread 2"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
+    await waitFor(() => expect(within(sidebar()).queryByText("app thread 2")).toBeNull());
+    const [text, opts] = vi.mocked(dialog.ask).mock.calls[1] as unknown as [string, { title: string }];
+    expect(opts.title).toBe('Delete "app thread 2"?');
+    expect(text).toContain("Past Conversations");
+    expect(useAppStore.getState().selectedThreadId).toBe("app-t1");
+    // Gone from the host, not just archived.
+    await waitFor(() => expect(backend.state.projects[0].threads.map((t) => t.id)).toEqual(["app-t1"]));
+    expect(lastSaved()!.projects[0].threads.map((t) => t.id)).toEqual(["app-t1"]);
+  });
+
+  describe("deleting a thread with a worktree", () => {
+    const wt = (name: string) => ({ path: `/data/worktrees/app/${name}`, branch: `speedy/${name}` });
+    const del = async () => {
+      await renderApp();
+      vi.mocked(dialog.ask).mockResolvedValueOnce(true);
+      fireEvent.contextMenu(threadRow("app thread 2"));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
+      await waitFor(() => expect(within(sidebar()).queryByText("app thread 2")).toBeNull());
+      return (vi.mocked(dialog.ask).mock.calls[0] as unknown as [string])[0];
+    };
+
+    it("removes the thread's worktree, keeping other threads' and saying what happens to the branch", async () => {
+      resetBackend(stateWith([project("app", [{ worktree: wt("other") }, { worktree: { ...wt("mine"), path: "/data/worktrees/app/mine/sub" } }])]));
+      backend.worktreeUnused = [{ ...wt("mine"), dirty: false, merged: false }];
+      backend.worktreeClean = { removed: ["/data/worktrees/app/mine"], skipped: [], deletedBranches: [] };
+      const text = await del();
+      expect(text).toContain("Its worktree speedy/mine is removed too, but the branch is kept (unmerged commits).");
+      expect(callsTo("worktree_unused").map((c) => c.args)).toEqual([{ root: "/Users/me/app", keep: ["/data/worktrees/app/other"] }]);
+      await waitFor(() => expect(callsTo("worktree_clean").map((c) => c.args)).toEqual([{ root: "/Users/me/app", paths: ["/data/worktrees/app/mine"] }]));
+      expect(dialog.message).not.toHaveBeenCalled();
+    });
+
+    it("keeps a worktree with uncommitted changes", async () => {
+      resetBackend(stateWith([project("app", [{}, { worktree: wt("mine") }])]));
+      backend.worktreeUnused = [{ ...wt("mine"), dirty: true, merged: true }];
+      expect(await del()).toContain("Its worktree speedy/mine has uncommitted changes, so it's kept.");
+      expect(callsTo("worktree_clean")).toHaveLength(0);
+    });
+
+    it("leaves a worktree another thread still uses", async () => {
+      resetBackend(stateWith([project("app", [{ worktree: wt("shared") }, { worktree: wt("shared") }])]));
+      backend.worktreeUnused = [];
+      expect(await del()).not.toContain("worktree");
+      expect(callsTo("worktree_clean")).toHaveLength(0);
+    });
+  });
+
+  it("deletes an archived thread from the Archived list", async () => {
+    resetBackend(stateWith([project("app", [{}, { archived: true }])]));
+    await renderApp();
+    fireEvent.contextMenu(projectHeader("app"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show Archived (1)" }));
+    vi.mocked(dialog.ask).mockResolvedValueOnce(true);
+    fireEvent.click(within(sidebar()).getByRole("button", { name: "Delete app thread 2" }));
+    await waitFor(() => expect(backend.state.projects[0].threads.map((t) => t.id)).toEqual(["app-t1"]));
+    expect(within(sidebar()).queryByRole("button", { name: /Archived/ })).toBeNull();
+  });
+
   it("shows a placeholder under a project with no live threads, which starts a new one", async () => {
     resetBackend(stateWith([project("app", [{ archived: true }])], null));
     await renderApp();
