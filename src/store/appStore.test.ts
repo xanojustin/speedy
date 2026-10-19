@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const invoke = vi.fn(async (..._args: unknown[]) => undefined);
+const invoke = vi.fn(async (..._args: unknown[]): Promise<unknown> => undefined);
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args: unknown) =>
     // Host RPCs reach this fake by their method name.
@@ -48,5 +48,27 @@ describe("updateThread", () => {
     expect(invoke.mock.calls.filter((c) => c[0] === "thread_update")).toHaveLength(0);
     const saved = invoke.mock.calls.filter((c) => c[0] === "client_state_save").at(-1)?.[1] as { state: { threads: unknown[] } };
     expect(saved.state.threads).toEqual([{ threadId, splitRatio: 0.4, explorerVisible: false, terminalVisible: true, terminalMaximized: false }]);
+  });
+});
+
+describe("load", () => {
+  it("puts a group saved without its host back under the host of its projects", async () => {
+    const projects = [
+      { hostId: "mini", projectId: "p1", collapsed: false, groupId: "g-remote" },
+      { hostId: "local", projectId: "p2", collapsed: false, groupId: "g-local" },
+    ];
+    const groups = [
+      { id: "g-remote", name: "Remote", collapsed: false, color: "blue" },
+      { id: "g-local", name: "Local", collapsed: false, color: "green" },
+      { id: "g-empty", name: "Empty", collapsed: false, color: "red" },
+    ];
+    invoke.mockImplementation(async (cmd: unknown) => (cmd === "client_state_load" ? { state: { groups, projects, threads: [] }, notice: null } : undefined));
+    await useAppStore.getState().load();
+    invoke.mockImplementation(async () => undefined);
+    expect(useAppStore.getState().groups.map((g) => [g.id, g.hostKey])).toEqual([
+      ["g-remote", "mini"],
+      ["g-local", undefined],
+      ["g-empty", undefined],
+    ]);
   });
 });

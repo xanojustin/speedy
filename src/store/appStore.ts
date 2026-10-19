@@ -255,6 +255,15 @@ function withColors(groups: Group[]): Group[] {
   );
 }
 
+/** Restores the host of groups saved without one, from the projects filed under them. */
+function withHosts(groups: Group[], projects: ClientState["projects"]): Group[] {
+  return groups.map((g) => {
+    if (g.hostKey) return g;
+    const hostKey = projects.find((p) => p.groupId === g.id && p.hostId !== LOCAL_HOST)?.hostId;
+    return hostKey ? { ...g, hostKey } : g;
+  });
+}
+
 function move<T>(list: T[], from: number, to: number): T[] {
   if (from < 0 || from === to) return list;
   const next = list.slice();
@@ -303,7 +312,7 @@ export const useAppStore = create<AppStore>((set, get) => {
       client = state;
       setHostLookup(({ threadId }) => findThread(get(), threadId)?.project.hostKey);
       set({
-        groups: withColors(state.groups ?? []),
+        groups: withColors(withHosts(state.groups ?? [], state.projects ?? [])),
         selectedThreadId: state.selectedThreadId,
         sidebarWidth: state.sidebarWidth,
         notificationsEnabled: state.notificationsEnabled,

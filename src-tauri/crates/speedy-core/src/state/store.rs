@@ -65,6 +65,8 @@ pub struct Project {
 #[serde(rename_all = "camelCase", default)]
 pub struct Group {
     pub id: String,
+    /// The host whose projects this group holds; None = This Mac.
+    pub host_key: Option<String>,
     pub name: String,
     pub collapsed: bool,
     /// A theme chart color name (blue, green, …); None is filled in by the webview.

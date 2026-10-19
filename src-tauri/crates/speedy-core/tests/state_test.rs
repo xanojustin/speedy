@@ -7,6 +7,7 @@ use speedy_core::state::session_index::{
     encode_project_dir, list_sessions, load_session, load_session_capped, rename_session_offline,
     TRUNCATED_MARKER_TYPE,
 };
+use speedy_core::state::client::ClientState;
 use speedy_core::state::store::STATE_VERSION;
 use speedy_core::state::{ensure_chats_project, paths_exist, AppState, Group, Project, StateStore, Thread};
 
@@ -31,7 +32,7 @@ fn sample_state() -> AppState {
                 .collect(),
         })
         .collect();
-    let groups = vec![Group { id: "g1".into(), name: "Work".into(), collapsed: false, color: Some("blue".into()) }];
+    let groups = vec![Group { id: "g1".into(), host_key: None, name: "Work".into(), collapsed: false, color: Some("blue".into()) }];
     AppState { projects, groups, selected_thread_id: Some("p1t2".into()), ..AppState::default() }
 }
 
@@ -48,6 +49,15 @@ fn saved_tree_reloads_with_same_order() {
     assert_eq!(loaded.state, sample_state());
     let ids: Vec<_> = loaded.state.projects.iter().flat_map(|p| p.threads.iter().map(|t| t.id.clone())).collect();
     assert_eq!(ids, ["p0t0", "p0t1", "p0t2", "p1t0", "p1t1", "p1t2"]);
+}
+
+#[test]
+fn a_group_keeps_its_host_through_client_json() {
+    let json = r#"{"groups":[{"id":"g1","hostKey":"mac-mini","name":"Work","collapsed":false,"color":"blue"}]}"#;
+    let client: ClientState = serde_json::from_str(json).unwrap();
+    assert_eq!(client.groups[0].host_key.as_deref(), Some("mac-mini"));
+    let saved = serde_json::to_value(&client).unwrap();
+    assert_eq!(saved["groups"][0]["hostKey"], "mac-mini");
 }
 
 #[test]
