@@ -71,6 +71,7 @@ impl Ssh {
         if self.check().await {
             return Ok(());
         }
+        self.remove_dead_socket().await;
         let mut cmd = Command::new(SSH);
         cmd.args([
             "-N",
@@ -86,8 +87,6 @@ impl Ssh {
             "ServerAliveCountMax=3",
             "-o",
             "ConnectTimeout=15",
-            "--",
-            &self.alias,
         ]);
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true);
         match self.askpass.lock().clone() {
@@ -98,6 +97,8 @@ impl Ssh {
                 cmd.args(["-o", "BatchMode=yes"]);
             }
         }
+        // Options go before the destination; anything after it is the remote command.
+        cmd.args(["--", &self.alias]);
         let mut child = cmd.spawn().map_err(|e| format!("starting ssh: {e}"))?;
         let deadline = tokio::time::Instant::now() + MASTER_TIMEOUT;
         // Quick at first, then slower while the user answers a prompt.
@@ -127,6 +128,21 @@ impl Ssh {
         let mut cmd = self.base(SSH);
         cmd.args(["-O", "check", "--", &self.alias]).stdout(Stdio::null()).stderr(Stdio::null());
         cmd.status().await.is_ok_and(|s| s.success())
+    }
+
+    /// Deletes a socket left by a master that died without cleaning up (crash, force-quit,
+    /// sleep). While it exists, a new master can't bind the path and runs unshared, so
+    /// `check` never passes and every connect times out. Only a socket nobody listens on is
+    /// removed, so a live master is never cut off.
+    async fn remove_dead_socket(&self) {
+        let mut cmd = Command::new(SSH);
+        cmd.args(["-G", "-o", &format!("ControlPath={}", self.control_path), "--", &self.alias]);
+        cmd.stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
+        let Ok(out) = cmd.output().await else { return };
+        let Some(path) = control_path_from_config(&String::from_utf8_lossy(&out.stdout)) else { return };
+        if is_dead_socket(Path::new(&path)) {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 
     /// Ends the master (wake from sleep, remove host). The next connect starts a fresh one.
@@ -190,6 +206,20 @@ fn ssh_error(stderr: &str, code: Option<i32>) -> String {
     if stderr.is_empty() { format!("ssh exited with {code:?}") } else { stderr.to_owned() }
 }
 
+/// The expanded `controlpath` line from `ssh -G` output.
+fn control_path_from_config(config: &str) -> Option<String> {
+    config.lines().find_map(|line| line.strip_prefix("controlpath ")).map(str::to_owned).filter(|p| p != "none")
+}
+
+/// Whether `path` is a socket that refuses connections: no master is behind it.
+fn is_dead_socket(path: &Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    let is_socket = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_socket());
+    is_socket
+        && std::os::unix::net::UnixStream::connect(path)
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused)
+}
+
 /// `ssh … proxy`'s stdout and stdin as one stream; the child dies with it.
 pub struct ProxyStream {
     _child: Child,
@@ -220,7 +250,32 @@ pub const REMOTE_AGENT: &str = ".speedy/agent/bin/current/speedy-agent";
 
 #[cfg(test)]
 mod tests {
-    use super::ssh_error;
+    use super::{control_path_from_config, is_dead_socket, ssh_error};
+
+    #[test]
+    fn the_control_path_comes_from_ssh_config_output() {
+        let config = "user justin\ncontrolpath /Users/justin/.speedy/cm/39e4\nport 22\n";
+        assert_eq!(control_path_from_config(config).as_deref(), Some("/Users/justin/.speedy/cm/39e4"));
+        assert_eq!(control_path_from_config("controlpath none\n"), None);
+        assert_eq!(control_path_from_config("user justin\n"), None);
+    }
+
+    #[test]
+    fn only_a_socket_nobody_listens_on_is_dead() {
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir.path().join("live");
+        let _listener = std::os::unix::net::UnixListener::bind(&live).unwrap();
+        assert!(!is_dead_socket(&live), "a master is listening");
+
+        let dead = dir.path().join("dead");
+        drop(std::os::unix::net::UnixListener::bind(&dead).unwrap());
+        assert!(is_dead_socket(&dead), "the listener is gone but the file stayed");
+
+        let file = dir.path().join("file");
+        std::fs::write(&file, "").unwrap();
+        assert!(!is_dead_socket(&file), "not a socket");
+        assert!(!is_dead_socket(&dir.path().join("missing")));
+    }
 
     #[test]
     fn ssh_errors_explain_the_common_failures() {
