@@ -68,6 +68,7 @@ impl Ssh {
 
     /// Starts the master if none is up, waiting until it accepts sessions.
     pub async fn ensure_master(&self) -> Result<(), String> {
+        self.kill_orphans().await;
         if self.check().await {
             return Ok(());
         }
@@ -145,6 +146,42 @@ impl Ssh {
         }
     }
 
+    /// Kills this host's masters left by an earlier run of the app that crashed or quit.
+    /// launchd adopts them, so they're the ones whose parent is pid 1; the masters of a
+    /// Speedy still running (a dev build beside the installed app) are left alone. A
+    /// leftover master either holds a connection nothing uses or keeps the socket for the
+    /// session it died with.
+    async fn kill_orphans(&self) {
+        let mut cmd = Command::new("/bin/ps");
+        cmd.args(["-axo", "pid=,ppid=,command="]).stdin(Stdio::null()).stderr(Stdio::null());
+        let Ok(out) = cmd.output().await else { return };
+        let orphans = orphan_masters(&String::from_utf8_lossy(&out.stdout), &self.alias, &self.control_path);
+        for pid in &orphans {
+            // SAFETY: kill(2) only sends a signal.
+            unsafe { libc::kill(*pid, libc::SIGTERM) };
+        }
+        if !orphans.is_empty() {
+            // A master removes its socket as it exits; give it a moment so `check` sees that.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    /// Ends the master now, without waiting: for app exit, which skips `Drop`. SIGTERM, not
+    /// SIGKILL, so ssh removes its socket on the way out.
+    pub fn kill_master(&self) {
+        if let Some(mut child) = self.master.lock().take() {
+            match child.id() {
+                // SAFETY: kill(2) only sends a signal.
+                Some(pid) => unsafe {
+                    libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                },
+                None => {
+                    let _ = child.start_kill();
+                }
+            }
+        }
+    }
+
     /// Ends the master (wake from sleep, remove host). The next connect starts a fresh one.
     pub async fn drop_master(&self) {
         let mut cmd = self.base(SSH);
@@ -189,10 +226,28 @@ impl Ssh {
 
 impl Drop for Ssh {
     fn drop(&mut self) {
-        if let Some(mut child) = self.master.lock().take() {
-            let _ = child.start_kill();
-        }
+        self.kill_master();
     }
+}
+
+/// From `ps -axo pid=,ppid=,command=`: the pids of masters for `alias` on `control_path`
+/// whose parent is launchd, i.e. whose app is gone.
+fn orphan_masters(ps: &str, alias: &str, control_path: &str) -> Vec<libc::pid_t> {
+    let path_opt = format!("ControlPath={control_path}");
+    ps.lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid: libc::pid_t = fields.next()?.parse().ok()?;
+            let ppid: libc::pid_t = fields.next()?.parse().ok()?;
+            let args: Vec<&str> = fields.collect();
+            let is_master = args.first() == Some(&SSH)
+                && args.contains(&"-N")
+                && args.contains(&"ControlMaster=yes")
+                && line.contains(&path_opt);
+            let destination = args.iter().position(|a| *a == "--").and_then(|i| args.get(i + 1));
+            (ppid == 1 && is_master && destination == Some(&alias)).then_some(pid)
+        })
+        .collect()
 }
 
 /// ssh's own message, or a clearer one for the cases people hit most.
@@ -250,7 +305,28 @@ pub const REMOTE_AGENT: &str = ".speedy/agent/bin/current/speedy-agent";
 
 #[cfg(test)]
 mod tests {
-    use super::{control_path_from_config, is_dead_socket, ssh_error};
+    use super::{control_path_from_config, is_dead_socket, orphan_masters, ssh_error};
+
+    #[test]
+    fn only_this_hosts_masters_without_an_app_are_orphans() {
+        let cp = "/Users/justin/.speedy/cm/%C";
+        let master = |alias: &str| {
+            format!("/usr/bin/ssh -N -o ControlMaster=yes -o ControlPersist=no -o ControlPath={cp} -o ConnectTimeout=15 -o BatchMode=yes -- {alias}")
+        };
+        let ps = [
+            format!("45098     1 {}", master("mac-mini")),
+            // An older build put BatchMode after the destination.
+            format!("  301     1 {} -o BatchMode=yes", master("mac-mini")),
+            format!("46749 45556 {}", master("mac-mini")),
+            format!("  500     1 {}", master("mac-mini-2")),
+            format!("  501     1 {}", master("mac-mini").replace(cp, "/tmp/other/%C")),
+            format!("  502     1 /usr/bin/ssh -o ControlMaster=no -o ControlPath={cp} -T -- mac-mini /bin/sh -s"),
+            "  503     1 /usr/bin/ssh -N mac-mini".to_owned(),
+            "garbage".to_owned(),
+        ]
+        .join("\n");
+        assert_eq!(orphan_masters(&ps, "mac-mini", cp), vec![45098, 301]);
+    }
 
     #[test]
     fn the_control_path_comes_from_ssh_config_output() {

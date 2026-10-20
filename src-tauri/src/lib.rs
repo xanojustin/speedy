@@ -122,6 +122,11 @@ pub fn run() {
                     ctx.client.flush();
                 }
             }
+            if let RunEvent::Exit = &event
+                && let Some(registry) = app.try_state::<Arc<hosts::HostRegistry>>()
+            {
+                registry.kill_masters();
+            }
         });
 }
 

@@ -203,6 +203,14 @@ impl HostRegistry {
         Ok(())
     }
 
+    /// The app is exiting: ends every master, since exit skips the `Drop` that would. Their
+    /// agents keep running.
+    pub fn kill_masters(&self) {
+        for ssh in self.ssh.lock().values() {
+            ssh.kill_master();
+        }
+    }
+
     /// The Mac woke: masters that survived sleep may hang, so every host starts over.
     pub async fn woke(&self) {
         let ssh: Vec<Arc<Ssh>> = self.ssh.lock().values().cloned().collect();
