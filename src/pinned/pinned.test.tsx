@@ -69,7 +69,7 @@ describe("pinned commands in Settings", () => {
     fireEvent.click(within(editor).getByRole("radio", { name: "Terminal Command" }));
     // A terminal command has no send option.
     expect(within(editor).queryByRole("checkbox", { name: /Send immediately/ })).toBeNull();
-    fireEvent.change(within(editor).getByLabelText("Command"), { target: { value: "  npm run build " } });
+    fireEvent.change(within(editor).getByLabelText("Command"), { target: { value: " npm run build\n" } });
     fireEvent.click(within(editor).getByRole("button", { name: "Add" }));
 
     expect(screen.queryByRole("dialog", { name: "Add Command" })).toBeNull();
@@ -78,7 +78,8 @@ describe("pinned commands in Settings", () => {
     expect(row).toHaveTextContent("npm run build");
     expect(row).toHaveTextContent("All hosts");
     expect(lastSaved()!.pinnedCommands).toEqual([
-      { id: expect.any(String), name: "Build", kind: "terminal", command: "npm run build", autoSubmit: false, hosts: [], enabled: true },
+      // Kept as typed: a leading space keeps it out of the shell's history.
+      { id: expect.any(String), name: "Build", kind: "terminal", command: " npm run build\n", autoSubmit: false, hosts: [], enabled: true },
     ]);
   });
 
@@ -193,13 +194,13 @@ describe("the Commands menu", () => {
   it("runs a terminal command in a new tab, in the thread's worktree", async () => {
     resetBackend({
       ...stateWith([project("app", [{ terminalVisible: false, worktree: { path: "/Users/me/.speedy/wt/app-1", branch: "speedy/app-1" } }])]),
-      pinnedCommands: [cmd({ name: "Build", kind: "terminal", command: "npm run build", autoSubmit: false })],
+      pinnedCommands: [cmd({ name: "Build", kind: "terminal", command: " npm run build\n", autoSubmit: false })],
     });
     await renderApp();
 
     runFromMenu("Build");
     expect(document.querySelector(".terminal-region")).toBeVisible();
-    await waitFor(() => expect(callsTo("pty_write").map((c) => c.args)).toEqual([{ terminalId: "app-t1:2", data: "npm run build\r" }]));
+    await waitFor(() => expect(callsTo("pty_write").map((c) => c.args)).toEqual([{ terminalId: "app-t1:2", data: " npm run build\r" }]));
     expect(callsTo("host_pty_attach").find((c) => c.args?.terminalId === "app-t1:2")?.args?.cwd).toBe("/Users/me/.speedy/wt/app-1");
     expect(within(screen.getByRole("tablist", { name: "Terminals" })).getByRole("tab", { name: "Build" })).toHaveAttribute("aria-selected", "true");
   });

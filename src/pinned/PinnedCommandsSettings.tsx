@@ -193,7 +193,8 @@ function PinnedCommandEditor({
       id: initial?.id ?? newId(),
       name: name.trim(),
       kind,
-      command: command.trim(),
+      // As typed: a leading space keeps a shell command out of history.
+      command: kind === "terminal" ? command : command.trim(),
       autoSubmit: kind === "prompt" && autoSubmit,
       hosts: allHosts ? [] : hostKeys.filter((k) => picked.includes(k)),
       enabled: initial?.enabled ?? true,

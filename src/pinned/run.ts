@@ -15,7 +15,9 @@ export function runPinnedCommand(threadId: string, cmd: PinnedCommand): void {
     const id = newTerminal(threadId);
     // Named after the command until the shell sets its own title.
     useTerminalTabs.getState().setTitle(id, cmd.name);
-    queueTerminalInput(id, `${text}\r`);
+    // As written, since a leading space keeps a command out of the shell's history. Enter is
+    // pressed here, so a trailing line break would run an empty line after it.
+    queueTerminalInput(id, `${cmd.command.replace(/[\r\n]+$/, "")}\r`);
     return;
   }
   if (cmd.autoSubmit) {
