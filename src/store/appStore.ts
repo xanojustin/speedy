@@ -31,6 +31,7 @@ import {
   type HostInfo,
   type HostProject,
   type HostThread,
+  type PinnedCommand,
   type Project,
   type Thread,
   type ThreadPatch,
@@ -48,6 +49,8 @@ export interface AppStore extends AppState {
   notice: string | null;
   /** The Settings dialog is open (not persisted). */
   settingsOpen: boolean;
+  /** The tab Settings opens on. */
+  settingsTab: SettingsTab;
   explorerWidth: number;
   /** A file the explorer should open, from a transcript link; the explorer takes it (not persisted). */
   explorerReveal: { path: string; line: number | null } | null;
@@ -85,8 +88,9 @@ export interface AppStore extends AppState {
   selectThread(threadId: string | null): void;
   setSidebarWidth(width: number): void;
   setClaudePathOverride(path: string | null): void;
-  updateSettings(patch: Partial<Pick<AppState, "notificationsEnabled" | "completionSound" | "activityPanelVisible" | "theme">>): void;
-  setSettingsOpen(open: boolean): void;
+  updateSettings(patch: Partial<Pick<AppState, "notificationsEnabled" | "completionSound" | "activityPanelVisible" | "theme" | "pinnedCommands">>): void;
+  /** Opens Settings on `tab` (the first one by default), or closes it. */
+  setSettingsOpen(open: boolean, tab?: SettingsTab): void;
   /** Shows or hides the selected thread's explorer (each thread has its own). */
   setExplorerOpen(open: boolean): void;
   setExplorerWidth(width: number): void;
@@ -96,6 +100,8 @@ export interface AppStore extends AppState {
   takeExplorerReveal(): { path: string; line: number | null } | null;
   dismissNotice(): void;
 }
+
+export type SettingsTab = "general" | "hosts" | "pinned";
 
 export const newId = () => crypto.randomUUID();
 
@@ -145,6 +151,7 @@ const clientSnapshot = (s: AppStore): ClientState => ({
   claudePathOverride: s.claudePathOverride,
   collapsedHosts: s.collapsedHosts,
   theme: s.theme,
+  pinnedCommands: s.pinnedCommands,
 });
 
 /** Layout prefs for threads the client hasn't seen yet. */
@@ -297,6 +304,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     claudePathOverride: null,
     collapsedHosts: [],
     theme: "system",
+    pinnedCommands: [],
     sidebarWidth: 260,
     notificationsEnabled: true,
     completionSound: null,
@@ -304,6 +312,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     loaded: false,
     notice: null,
     settingsOpen: false,
+    settingsTab: "general",
     explorerReveal: null,
     explorerWidth: 380,
 
@@ -321,6 +330,8 @@ export const useAppStore = create<AppStore>((set, get) => {
         claudePathOverride: state.claudePathOverride,
         collapsedHosts: state.collapsedHosts ?? [],
         theme: state.theme && THEME_PREFERENCES.includes(state.theme) ? state.theme : "system",
+        // Commands saved before the enabled flag existed are enabled.
+        pinnedCommands: (state.pinnedCommands ?? []).map((c) => ({ ...c, enabled: c.enabled !== false })),
         notice,
         loaded: true,
       });
@@ -550,8 +561,8 @@ export const useAppStore = create<AppStore>((set, get) => {
       commit(() => patch);
     },
 
-    setSettingsOpen(open) {
-      set({ settingsOpen: open });
+    setSettingsOpen(open, tab = "general") {
+      set(open ? { settingsOpen: true, settingsTab: tab } : { settingsOpen: false });
     },
 
     setExplorerOpen(open) {
@@ -656,6 +667,10 @@ export function waitForHost(key: string, ms: number): Promise<void> {
     });
   });
 }
+
+/** The enabled pinned commands that show on `hostKey`'s threads. */
+export const pinnedCommandsFor = (commands: PinnedCommand[], hostKey: string) =>
+  commands.filter((c) => c.enabled && (c.hosts.length === 0 || c.hosts.includes(hostKey)));
 
 /** A host's display name. */
 export const hostLabel = (key: string) => (key === LOCAL_HOST ? "This Mac" : key);

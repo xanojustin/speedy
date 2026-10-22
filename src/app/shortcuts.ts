@@ -26,11 +26,12 @@ export function toggleMaximizeTerminal(threadId: string) {
   useAppStore.getState().updateThread(threadId, { terminalVisible: true, terminalMaximized: maximize });
 }
 
-/** Adds a terminal tab to the thread, shows the panel, and focuses the new shell. */
-export function newTerminal(threadId: string) {
+/** Adds a terminal tab to the thread, shows the panel, and focuses the new shell. Returns its id. */
+export function newTerminal(threadId: string): string {
   const id = useTerminalTabs.getState().add(threadId);
   useAppStore.getState().updateThread(threadId, { terminalVisible: true });
   requestAnimationFrame(() => focusTerminal(id));
+  return id;
 }
 
 /**

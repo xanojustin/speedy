@@ -30,6 +30,8 @@ interface Entry {
 }
 
 const entries = new Map<string, Entry>();
+/** Input for a terminal's shell once it starts (a pinned command run in a new tab). */
+const pendingInput = new Map<string, string>();
 
 // ---- theme (VS Code Dark Modern fallbacks when a token is unset) ----
 
@@ -103,7 +105,12 @@ function onExit(e: PtyExit) {
 function startPty(entry: Entry) {
   const { terminalId, cwd, term } = entry;
   entry.exited = false;
-  ptyOpen(terminalId, cwd, term.cols, term.rows, (bytes) => term.write(bytes), onExit).catch((err) => {
+  ptyOpen(terminalId, cwd, term.cols, term.rows, (bytes) => term.write(bytes), onExit).then(() => {
+    const input = pendingInput.get(terminalId);
+    if (input === undefined || entries.get(terminalId) !== entry) return;
+    pendingInput.delete(terminalId);
+    void ptyWrite(terminalId, input).catch(() => {});
+  }, (err) => {
     if (entries.get(terminalId) !== entry) return;
     entry.exited = true;
     term.write(`\r\n\x1b[31m[Failed to start shell: ${String(err)}]\x1b[0m — press Enter to retry\r\n`);
@@ -287,6 +294,11 @@ export function attachTerminal(
   };
 }
 
+/** Types `data` into a terminal that hasn't started yet, as soon as its shell does. */
+export function queueTerminalInput(terminalId: string, data: string): void {
+  pendingInput.set(terminalId, data);
+}
+
 /** Focuses the terminal if it's open on screen. */
 export function focusTerminal(terminalId: string): void {
   const entry = entries.get(terminalId);
@@ -296,6 +308,7 @@ export function focusTerminal(terminalId: string): void {
 /** Disposes the terminal's xterm and closes its shell (terminal killed or thread archived). */
 export function disposeTerminal(terminalId: string): void {
   const entry = entries.get(terminalId);
+  pendingInput.delete(terminalId);
   if (!entry) return;
   entries.delete(terminalId);
   entry.releaseWebgl?.();

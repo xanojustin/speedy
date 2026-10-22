@@ -30,6 +30,8 @@ pub struct ClientState {
     pub collapsed_hosts: Vec<String>,
     /// "system", "light" or "dark".
     pub theme: String,
+    /// Commands in every thread's Commands menu, in menu order.
+    pub pinned_commands: Vec<PinnedCommand>,
 }
 
 impl Default for ClientState {
@@ -47,6 +49,7 @@ impl Default for ClientState {
             claude_path_override: None,
             collapsed_hosts: vec![],
             theme: "system".into(),
+            pinned_commands: vec![],
         }
     }
 }
@@ -55,6 +58,38 @@ impl StoredState for ClientState {
     const FILE: &'static str = "client.json";
     fn stamp_version(&mut self) {
         self.version = CLIENT_STATE_VERSION;
+    }
+}
+
+/// A command pinned to the chat: a prompt for the thread's Claude, or a shell command run in a new
+/// terminal tab. Either runs in the thread's folder (its worktree when it has one).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PinnedCommand {
+    pub id: String,
+    pub name: String,
+    /// "prompt" or "terminal".
+    pub kind: String,
+    pub command: String,
+    /// Prompts only: send at once rather than fill the composer.
+    pub auto_submit: bool,
+    /// Host keys it shows on; empty = every host.
+    pub hosts: Vec<String>,
+    /// Listed in the composer's Commands menu; a disabled command stays in Settings only.
+    pub enabled: bool,
+}
+
+impl Default for PinnedCommand {
+    fn default() -> Self {
+        PinnedCommand {
+            id: String::new(),
+            name: String::new(),
+            kind: "prompt".into(),
+            command: String::new(),
+            auto_submit: false,
+            hosts: vec![],
+            enabled: true,
+        }
     }
 }
 

@@ -111,6 +111,7 @@ function clientOf(state: AppState): ClientState {
     claudePathOverride: state.claudePathOverride,
     collapsedHosts: state.collapsedHosts,
     theme: state.theme,
+    pinnedCommands: state.pinnedCommands,
   };
 }
 
@@ -140,6 +141,7 @@ function applyClientSave(c: ClientState) {
     claudePathOverride: c.claudePathOverride,
     collapsedHosts: c.collapsedHosts ?? [],
     theme: c.theme ?? "system",
+    pinnedCommands: c.pinnedCommands ?? [],
   };
   backend.saves.push(structuredClone(backend.state));
 }
@@ -234,6 +236,7 @@ export function emptyState(): AppState {
     notificationsEnabled: true,
     completionSound: null,
     activityPanelVisible: false,
+    pinnedCommands: [],
   };
 }
 

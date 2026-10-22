@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", async () => (await import("../app/testing/tauriMock")).coreMock);
@@ -26,6 +26,29 @@ describe("settings", () => {
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
+  });
+
+  it("splits into Settings, Hosts and Pinned Commands tabs", async () => {
+    await renderApp();
+    act(() => emitMenu("open_settings"));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    const tabs = within(dialog).getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["Settings", "Hosts", "Pinned Commands"]);
+    expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+    expect(within(dialog).getByRole("tabpanel", { name: "Settings" })).toContainElement(within(dialog).getByRole("radiogroup", { name: /Theme/ }));
+    expect(within(dialog).queryByRole("list", { name: "Hosts" })).toBeNull();
+
+    fireEvent.click(tabs[1]);
+    expect(within(dialog).getByRole("tabpanel", { name: "Hosts" })).toContainElement(within(dialog).getByRole("list", { name: "Hosts" }));
+    expect(within(dialog).queryByRole("radiogroup", { name: /Theme/ })).toBeNull();
+
+    // Arrow keys move along the strip, wrapping at the ends.
+    fireEvent.keyDown(tabs[1], { key: "ArrowRight" });
+    expect(within(dialog).getByRole("tab", { name: "Pinned Commands" })).toHaveAttribute("aria-selected", "true");
+    expect(within(dialog).getByRole("tab", { name: "Pinned Commands" })).toHaveFocus();
+    expect(within(dialog).getByRole("table", { name: "Pinned commands" })).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+    expect(within(dialog).getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("pushes saved prefs to the attention service at startup", async () => {

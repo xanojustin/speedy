@@ -111,6 +111,7 @@ describe("hosts in Settings", () => {
     backend.setupByHost["mac-mini"] = { ...readySetup, status: "not_logged_in", message: "Run claude /login", launchDomain: "background", tokenPresent: false };
     await renderApp();
     useAppStore.getState().setSettingsOpen(true);
+    fireEvent.click(await screen.findByRole("tab", { name: "Hosts" }));
     const hosts = await screen.findByRole("list", { name: "Hosts" });
     const token = await within(hosts).findByLabelText("Claude token for mac-mini");
     fireEvent.change(token, { target: { value: "sk-ant-oat-123" } });

@@ -9,8 +9,16 @@ import { findThread, hostLabel, hostStateLabel, threadCwd, useAppStore } from ".
 import { controlRequest, interruptThread, removeQueued, sendUserMessage } from "../store/runtime";
 import { getRuntime, useThreadRuntime, useThreadStore } from "../store/threadStore";
 import { EMPTY_COMPOSER, useDrafts, type Attachment, type ComposerDraft } from "../store/drafts";
-import { ADD_TO_COMPOSER_EVENT, FOCUS_COMPOSER_EVENT, type AddToComposerDetail, type FocusComposerDetail } from "./focusEvent";
+import {
+  ADD_TO_COMPOSER_EVENT,
+  FOCUS_COMPOSER_EVENT,
+  PREFILL_COMPOSER_EVENT,
+  type AddToComposerDetail,
+  type FocusComposerDetail,
+  type PrefillComposerDetail,
+} from "./focusEvent";
 import { MentionMenu, useFileMentions } from "./Mentions";
+import { PinnedMenu } from "../pinned/PinnedMenu";
 import {
   ContextUsage,
   EFFORT_LABEL,
@@ -147,11 +155,24 @@ export function Composer({ threadId }: { threadId: string }) {
       const s = makeSnippet(detail.text, detail.source);
       if (s) updateDraft((d) => ({ snippets: [...d.snippets, s] }));
     };
+    // A pinned prompt goes after whatever is already typed, with the caret at its end.
+    const onPrefill = (e: Event) => {
+      const { detail } = e as CustomEvent<PrefillComposerDetail>;
+      if (detail?.threadId !== threadId) return;
+      const prev = useDrafts.getState().composer[threadId]?.text ?? "";
+      const next = prev.trim() ? `${prev.trimEnd()}\n${detail.text}` : detail.text;
+      pendingCaret.current = next.length;
+      setCaret(next.length);
+      updateDraft(() => ({ text: next }));
+      focusInput();
+    };
     window.addEventListener(FOCUS_COMPOSER_EVENT, onFocus);
     window.addEventListener(ADD_TO_COMPOSER_EVENT, onAdd);
+    window.addEventListener(PREFILL_COMPOSER_EVENT, onPrefill);
     return () => {
       window.removeEventListener(FOCUS_COMPOSER_EVENT, onFocus);
       window.removeEventListener(ADD_TO_COMPOSER_EVENT, onAdd);
+      window.removeEventListener(PREFILL_COMPOSER_EVENT, onPrefill);
     };
   }, [threadId, focusInput, updateDraft]);
 
@@ -440,6 +461,7 @@ export function Composer({ threadId }: { threadId: string }) {
                 Worktree
               </button>
             )}
+            {hostKey && <PinnedMenu threadId={threadId} hostKey={hostKey} hostAway={hostAway} />}
             <div className="composer-spacer" />
             <ModeMenu mode={mode} modes={modes} onSelect={(m) => void setMode(m)} effort={effortControl} />
             <button

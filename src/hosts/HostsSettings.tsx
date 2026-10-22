@@ -1,4 +1,4 @@
-// The Hosts section of Settings (R1, R3, R5): add a host from ~/.ssh/config, see each host's
+// The Hosts tab of Settings (R1, R3, R5): add a host from ~/.ssh/config, see each host's
 // connection and setup, reconnect or remove it, and give a host that can't reach its login
 // Keychain a `claude setup-token` token.
 import { useEffect, useState } from "react";
@@ -37,10 +37,7 @@ export function HostsSettings() {
   };
 
   return (
-    <section className="settings-section" aria-labelledby="settings-hosts">
-      <h3 id="settings-hosts" className="settings-section-title">
-        Hosts
-      </h3>
+    <div className="settings-section">
       <ul className="hosts-list" aria-label="Hosts">
         {hosts.map((h) => (
           <HostItem key={h.key} host={h} />
@@ -69,7 +66,7 @@ export function HostsSettings() {
           {addError}
         </p>
       )}
-    </section>
+    </div>
   );
 }
 

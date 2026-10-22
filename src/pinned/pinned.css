@@ -1,0 +1,309 @@
+/* Pinned commands: the composer's Commands menu, the Settings table and its editor (--vscode-* tokens). */
+
+/* ---- composer footer pill and menu ---- */
+.pinned-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-height: 18px;
+  margin-left: 6px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 9999px;
+  background: none;
+  color: var(--composer-fg-secondary);
+  font: inherit;
+  font-size: 0.85em;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pinned-pill:hover,
+.pinned-pill[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--composer-fg) 10%, transparent);
+  color: var(--composer-fg);
+}
+.pinned-pill .codicon {
+  font-size: 12px;
+}
+.pinned-pill-count {
+  min-width: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--composer-fg) 14%, transparent);
+  font-size: 0.9em;
+  line-height: 14px;
+  text-align: center;
+}
+.pinned-menu {
+  width: 320px;
+}
+.pinned-menu .composer-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.pinned-menu .composer-menu-item:disabled:hover {
+  background: transparent;
+}
+.pinned-menu-command {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pinned-menu-command code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-size: 0.95em;
+}
+
+/* ---- settings table ---- */
+.pinned-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 10px;
+}
+.pinned-settings-head p {
+  margin: 0;
+}
+.pinned-add {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.pinned-table-wrap {
+  border: 1px solid var(--vscode-widget-border, #454545);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.pinned-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+.pinned-table th {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-widget-border, #454545);
+  background: var(--vscode-keybindingTable-headerBackground, rgba(128, 128, 128, 0.08));
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-weight: normal;
+  text-align: left;
+}
+.pinned-table th:nth-child(1) { width: 14px; padding-right: 0; }
+.pinned-table th:nth-child(2) { width: 30px; }
+.pinned-table th:nth-child(3) { width: 20%; }
+.pinned-table th:nth-child(4) { width: 20%; }
+.pinned-table th:nth-child(6) { width: 16%; }
+.pinned-table th:nth-child(7) { width: 52px; }
+.pinned-table td {
+  padding: 5px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.pinned-table tbody tr + tr td {
+  border-top: 1px solid var(--vscode-widget-border, rgba(69, 69, 69, 0.5));
+}
+.pinned-table tbody tr:hover td {
+  background: var(--vscode-list-hoverBackground, rgba(90, 93, 94, 0.2));
+}
+.pinned-cell-name {
+  font-weight: 600;
+}
+
+/* Drag to reorder (src/sidebar/dragReorder.ts marks the rows). */
+.pinned-table tbody tr[data-drag-id] {
+  cursor: grab;
+  user-select: none;
+}
+.pinned-table tbody tr.dragging {
+  opacity: 0.5;
+}
+/* The sidebar draws its drop line with pseudo-elements, which a table row can't position. */
+.pinned-table tbody tr::before,
+.pinned-table tbody tr::after {
+  content: none !important;
+}
+.pinned-table tbody tr.drop-before td {
+  box-shadow: inset 0 2px 0 var(--vscode-focusBorder, #0078d4);
+}
+.pinned-table tbody tr.drop-after td {
+  box-shadow: inset 0 -2px 0 var(--vscode-focusBorder, #0078d4);
+}
+.pinned-cell-grip {
+  padding-right: 0 !important;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  opacity: 0;
+}
+.pinned-table tbody tr:hover .pinned-cell-grip {
+  opacity: 1;
+}
+.pinned-cell-grip .codicon {
+  font-size: 12px;
+}
+
+/* A disabled command dims everything but its switch. */
+.pinned-table tbody tr[data-disabled] td:not(.pinned-cell-switch):not(.pinned-cell-actions) {
+  opacity: 0.45;
+}
+
+/* On/off switch: a checkbox drawn as a toggle. */
+.pinned-switch {
+  appearance: none;
+  position: relative;
+  display: block;
+  width: 26px;
+  height: 14px;
+  margin: 0;
+  border-radius: 7px;
+  background: var(--vscode-input-border, var(--vscode-widget-border, #555555));
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.pinned-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--vscode-foreground, #cccccc);
+  transition: transform 120ms ease;
+}
+.pinned-switch:checked {
+  background: var(--vscode-button-background, #0078d4);
+}
+.pinned-switch:checked::after {
+  background: var(--vscode-button-foreground, #ffffff);
+  transform: translateX(12px);
+}
+.pinned-switch:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #0078d4);
+  outline-offset: 2px;
+}
+.pinned-cell-command code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-size: 11px;
+  color: var(--vscode-textPreformat-foreground, inherit);
+}
+.pinned-cell-hosts {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+.pinned-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: var(--vscode-badge-background, #616161);
+  color: var(--vscode-badge-foreground, #f8f8f8);
+  font-size: 11px;
+}
+.pinned-kind[data-kind="terminal"] {
+  background: var(--vscode-terminal-ansiBlue, #2472c8);
+  color: #fff;
+}
+.pinned-kind .codicon {
+  font-size: 11px;
+}
+.pinned-cell-actions {
+  text-align: right;
+}
+.pinned-cell-actions .icon-button {
+  opacity: 0;
+}
+.pinned-table tr:hover .pinned-cell-actions .icon-button,
+.pinned-cell-actions .icon-button:focus-visible {
+  opacity: 1;
+}
+.pinned-empty {
+  padding: 16px 8px !important;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  text-align: center;
+}
+
+/* ---- editor: its own dialog over Settings ---- */
+.pinned-editor-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 16vh;
+  background: rgba(0, 0, 0, 0.25);
+}
+.pinned-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(440px, calc(100vw - 48px));
+  max-height: 76vh;
+  overflow-y: auto;
+  padding: 4px 16px 16px;
+  box-sizing: border-box;
+  border: 1px solid var(--vscode-widget-border, #454545);
+  border-radius: 8px;
+  background: var(--vscode-editorWidget-background, #202020);
+  color: var(--vscode-foreground, #cccccc);
+  box-shadow: 0 12px 32px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.5));
+  font-size: 13px;
+}
+.pinned-editor .settings-header {
+  margin-bottom: -4px;
+}
+.pinned-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+.pinned-field > label,
+.pinned-field > span:first-child,
+.pinned-field > legend {
+  padding: 0;
+  font-size: 12px;
+  color: var(--vscode-foreground, #cccccc);
+}
+.pinned-field .settings-segmented {
+  align-self: flex-start;
+}
+.pinned-command-input {
+  height: auto;
+  min-height: 44px;
+  resize: vertical;
+  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.pinned-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+.pinned-check input[type="checkbox"] {
+  margin: 2px 0 0;
+  accent-color: var(--vscode-checkbox-selectBackground, var(--vscode-focusBorder, #0078d4));
+}
+.pinned-host-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 20px;
+}
+.pinned-editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}

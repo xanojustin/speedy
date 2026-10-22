@@ -240,7 +240,26 @@ export interface ClientState {
   /** Hosts whose sidebar section is collapsed, by host key. */
   collapsedHosts?: string[];
   theme?: ThemePreference;
+  pinnedCommands?: PinnedCommand[];
 }
+
+/**
+ * A command pinned to the chat: a prompt for the thread's Claude, or a shell command run in a new
+ * terminal tab. Either runs in the thread's folder (its worktree when it has one).
+ */
+export interface PinnedCommand {
+  id: string;
+  name: string;
+  kind: PinnedCommandKind;
+  command: string;
+  /** Prompts only: send at once rather than fill the composer. */
+  autoSubmit: boolean;
+  /** Host keys it shows on; empty = every host. */
+  hosts: string[];
+  /** Listed in the composer's Commands menu; a disabled command stays in Settings only. */
+  enabled: boolean;
+}
+export type PinnedCommandKind = "prompt" | "terminal";
 
 /** The app's appearance: follow macOS, or force light or dark. */
 export type ThemePreference = "system" | "light" | "dark";
@@ -265,6 +284,8 @@ export interface AppState {
   /** Hosts whose sidebar section is collapsed, by host key. */
   collapsedHosts: string[];
   theme: ThemePreference;
+  /** Commands in every thread's Commands menu, in menu order. */
+  pinnedCommands: PinnedCommand[];
 }
 
 export interface Project {

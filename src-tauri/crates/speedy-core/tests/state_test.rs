@@ -61,6 +61,20 @@ fn a_group_keeps_its_host_through_client_json() {
 }
 
 #[test]
+fn pinned_commands_survive_client_json() {
+    let json = r#"{"pinnedCommands":[{"id":"c1","name":"Build","kind":"terminal","command":"npm run build","autoSubmit":false,"hosts":["mac-mini"],"enabled":false}]}"#;
+    let client: ClientState = serde_json::from_str(json).unwrap();
+    assert_eq!(client.pinned_commands[0].command, "npm run build");
+    let saved = serde_json::to_value(&client).unwrap();
+    assert_eq!(saved["pinnedCommands"], serde_json::from_str::<serde_json::Value>(json).unwrap()["pinnedCommands"]);
+    // Commands saved before the flag existed are enabled.
+    let old = r#"{"pinnedCommands":[{"id":"c1","name":"Build","kind":"terminal","command":"make"}]}"#;
+    assert!(serde_json::from_str::<ClientState>(old).unwrap().pinned_commands[0].enabled);
+    // Older files have none.
+    assert!(serde_json::from_str::<ClientState>("{}").unwrap().pinned_commands.is_empty());
+}
+
+#[test]
 fn debounced_save_lands_without_flush() {
     let dir = tempfile::tempdir().unwrap();
     let store = StateStore::new(dir.path().to_path_buf());

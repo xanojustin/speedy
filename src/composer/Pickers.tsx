@@ -84,7 +84,7 @@ export function prettyModelId(id: string): string {
 // ---------- shared popup behavior ----------
 
 /** Closes on a mousedown outside the anchor/popup or on Escape, like the extension's footer menus. */
-function useDismiss(open: boolean, close: () => void, refs: RefObject<HTMLElement | null>[]) {
+export function useDismiss(open: boolean, close: () => void, refs: RefObject<HTMLElement | null>[]) {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {

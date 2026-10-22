@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/webview", async () => (await import("./testing/tauriMoc
 vi.mock("@tauri-apps/plugin-dialog", async () => (await import("./testing/tauriMock")).dialogMock);
 
 import { App } from "./App";
-import { backend, callsTo, lastSaved, readySetup } from "./testing/tauriMock";
+import { backend, callsTo, emptyState, lastSaved, readySetup } from "./testing/tauriMock";
 import { resetBackend } from "./testing/reset";
 
 beforeEach(() => resetBackend());
@@ -45,7 +45,7 @@ describe("Setup gating", () => {
   });
 
   it("applies a saved override path at launch", async () => {
-    resetBackend({ version: 1, projects: [], groups: [], selectedThreadId: null, claudePathOverride: "/custom/claude", sidebarWidth: 260, notificationsEnabled: true, completionSound: null, activityPanelVisible: false, collapsedHosts: [], theme: "system" });
+    resetBackend({ ...emptyState(), claudePathOverride: "/custom/claude" });
     backend.setup = { ...readySetup, status: "cli_not_found" };
     const real = backend.setup;
     render(<App />);

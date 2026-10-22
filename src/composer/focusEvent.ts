@@ -12,3 +12,10 @@ export interface AddToComposerDetail {
   /** Where it came from, shown on the chip ("Terminal 2"). */
   source: string;
 }
+
+/** DOM event that puts text in the thread's composer (a pinned prompt that doesn't auto-send). */
+export const PREFILL_COMPOSER_EVENT = "speedy:prefill-composer";
+export interface PrefillComposerDetail {
+  threadId: string;
+  text: string;
+}

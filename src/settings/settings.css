@@ -12,8 +12,12 @@
 }
 
 .settings-dialog {
-  width: min(480px, calc(100vw - 48px));
-  padding: 4px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  width: min(600px, calc(100vw - 48px));
+  /* One height for every tab, so switching tabs doesn't make the dialog jump. */
+  height: min(520px, 80vh);
+  padding: 4px 0 0;
   box-sizing: border-box;
   border: 1px solid var(--vscode-widget-border, #454545);
   border-radius: 8px;
@@ -25,8 +29,50 @@
 
 .settings-header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   height: 40px;
+}
+.settings-dialog > .settings-header {
+  padding: 0 16px;
+}
+
+/* Tabs: VS Code's panel tab strip (an underlined active tab). */
+.settings-tabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 16px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--vscode-widget-border, #454545);
+}
+.settings-tab {
+  margin-bottom: -1px;
+  padding: 6px 0 7px;
+  border: none;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--vscode-panelTitle-inactiveForeground, var(--vscode-descriptionForeground, #9d9d9d));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-tab:hover {
+  color: var(--vscode-panelTitle-activeForeground, var(--vscode-foreground, #cccccc));
+}
+.settings-tab[aria-selected="true"] {
+  border-bottom-color: var(--vscode-panelTitle-activeBorder, var(--vscode-focusBorder, #0078d4));
+  color: var(--vscode-panelTitle-activeForeground, var(--vscode-foreground, #cccccc));
+}
+.settings-tab:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #0078d4);
+  outline-offset: 2px;
+}
+
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 16px 16px;
 }
 
 .settings-title {
