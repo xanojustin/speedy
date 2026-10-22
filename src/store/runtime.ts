@@ -20,8 +20,11 @@ import { initialRuntime } from "./reducer";
 import { __resetThreadEventsForTests, getRuntime, queueThreadEvent, useThreadStore, type ThreadAction } from "./threadStore";
 
 const started = new Map<string, Promise<void>>();
-/** Threads with a live subscription; each thread is subscribed once per run. */
-const subscribed = new Set<string>();
+/**
+ * Each subscribed thread's subscription, settled once the host has opened it (or refused it).
+ * A thread is subscribed once per run.
+ */
+const subscribed = new Map<string, Promise<void>>();
 /** Threads that got their first snapshot; a later one means the client fell out of the replay window. */
 const caughtUp = new Set<string>();
 
@@ -62,14 +65,19 @@ async function applySnapshot(threadId: string, snap: ThreadSnapshot) {
   dispatch(threadId, { kind: "queue_changed", seq: snap.seq, queue: snap.queue });
 }
 
-/** Follows the thread's events (once per run). */
-function subscribe(threadId: string) {
-  if (subscribed.has(threadId)) return;
-  subscribed.add(threadId);
-  void threadSubscribe(threadId, (ev) => handleEvent(threadId, ev)).catch((err: unknown) => {
-    subscribed.delete(threadId);
-    dispatch(threadId, { kind: "local_notice", variant: "warning", text: `Couldn't follow this thread: ${String(err)}` });
-  });
+/** Follows the thread's events (once per run); settles once the host has opened the subscription. */
+function subscribe(threadId: string): Promise<void> {
+  const existing = subscribed.get(threadId);
+  if (existing) return existing;
+  const p = threadSubscribe(threadId, (ev) => handleEvent(threadId, ev)).then(
+    () => {},
+    (err: unknown) => {
+      subscribed.delete(threadId);
+      dispatch(threadId, { kind: "local_notice", variant: "warning", text: `Couldn't follow this thread: ${String(err)}` });
+    },
+  );
+  subscribed.set(threadId, p);
+  return p;
 }
 
 /**
@@ -106,7 +114,9 @@ export function ensureStarted(threadId: string): Promise<void> {
 
 /** Sends now when idle; otherwise the host queues it and sends it after the current turn. */
 export async function sendUserMessage(threadId: string, content: unknown[]): Promise<void> {
-  subscribe(threadId);
+  // The host echoes the message as `user_sent` only to the subscribers it has when it goes out,
+  // and a later snapshot doesn't carry it: the first send of a run waits for the subscription.
+  await subscribe(threadId);
   try {
     await claudeSendUser(threadId, content);
   } catch (err) {

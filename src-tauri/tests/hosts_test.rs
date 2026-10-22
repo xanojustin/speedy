@@ -134,9 +134,9 @@ async fn rpcs_and_thread_events_flow_through_the_connection() {
     let conn = HostConn::start(fx.connector());
     connected(&conn).await;
     let (a, b) = (Seen::default(), Seen::default());
-    conn.subscribe_thread("t1", a.sink());
-    conn.subscribe_thread("t1", b.sink());
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Subscribing returns once the agent has the subscriber, so the echo of a send can't beat it.
+    conn.subscribe_thread("t1", a.sink()).await;
+    conn.subscribe_thread("t1", b.sink()).await;
     conn.call("claude_send_user", json!({"threadId": "t1", "content": text("hi")})).await.unwrap();
     for seen in [&a, &b] {
         seen.until("the reply", has_result).await;
@@ -154,8 +154,7 @@ async fn a_dropped_connection_resumes_with_each_event_delivered_once_in_order() 
     let conn = HostConn::start(fx.connector());
     connected(&conn).await;
     let seen = Seen::default();
-    conn.subscribe_thread("t1", seen.sink());
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    conn.subscribe_thread("t1", seen.sink()).await;
     conn.call("claude_send_user", json!({"threadId": "t1", "content": text("hi")})).await.unwrap();
     seen.until("user_sent", |e| e.iter().any(|e| e["kind"] == "user_sent")).await;
 
@@ -427,7 +426,7 @@ async fn frames_around_the_subscribe_reply_reach_the_sink_in_order() {
         let conn = HostConn::start(connector.clone());
         connected(&conn).await;
         let seen = Seen::default();
-        conn.subscribe_thread("t1", seen.sink());
+        conn.subscribe_thread("t1", seen.sink()).await;
         seen.until("every event", |e| e.len() as u64 >= LAST).await;
         tokio::time::sleep(Duration::from_millis(20)).await;
         let seqs: Vec<u64> = seen.0.lock().iter().filter_map(|e| e["seq"].as_u64()).collect();

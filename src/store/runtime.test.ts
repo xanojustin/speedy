@@ -67,6 +67,35 @@ describe("runtime bridge", () => {
     expect(calls("queue_remove").at(-1)?.[1]).toEqual({ threadId, id: "q1" });
   });
 
+  it("sends a thread's first message only once its subscription is open, so its echo isn't missed", async () => {
+    // The host echoes `user_sent` only to the subscribers it has when the message goes out.
+    let opened!: () => void;
+    invoke.mockImplementation((cmd: string) =>
+      cmd === "host_thread_subscribe" ? new Promise<number>((r) => (opened = () => r(1))) : Promise.resolve(cmd === "claude_start" ? "starting" : undefined),
+    );
+    const sent = sendUserMessage(threadId, text("first after a relaunch"));
+    await flush();
+    expect(calls("host_thread_subscribe")).toHaveLength(1);
+    expect(calls("claude_send_user")).toHaveLength(0);
+
+    opened();
+    await sent;
+    expect(calls("claude_send_user").map((c) => c[1].content)).toEqual([text("first after a relaunch")]);
+    // Later sends reuse the open subscription.
+    await sendUserMessage(threadId, text("second"));
+    expect(calls("host_thread_subscribe")).toHaveLength(1);
+  });
+
+  it("still sends when the subscription fails, and shows why it can't follow the thread", async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === "host_thread_subscribe" ? Promise.reject(new Error("agent gone")) : Promise.resolve(cmd === "claude_start" ? "starting" : undefined),
+    );
+    await sendUserMessage(threadId, text("hi"));
+    expect(calls("claude_send_user")).toHaveLength(1);
+    flushThreadEvents();
+    expect(rt(threadId).blocks.map((b) => (b.kind === "notice" ? b.text : b.kind))).toContain("Couldn't follow this thread: Error: agent gone");
+  });
+
   it("shows a message another client sent, and a failed send as a notice", async () => {
     await ensureStarted(threadId);
     emit(status("idle", 1));

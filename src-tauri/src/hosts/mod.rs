@@ -470,9 +470,12 @@ pub async fn host_subscribe(hosts: Hosts<'_>, host: String, on_event: Channel<Va
 /// A thread's events, continuous across reconnects (a `snapshot` event when the agent can't replay).
 #[tauri::command]
 pub async fn host_thread_subscribe(hosts: Hosts<'_>, host: String, thread_id: String, on_event: Channel<Value>) -> Result<u64, String> {
-    Ok(hosts.get(&host)?.subscribe_thread(&thread_id, Arc::new(move |e| {
-        let _ = on_event.send(e);
-    })))
+    let conn = hosts.get(&host)?;
+    Ok(conn
+        .subscribe_thread(&thread_id, Arc::new(move |e| {
+            let _ = on_event.send(e);
+        }))
+        .await)
 }
 
 /// Attaches to a terminal (starting its shell if absent): raw output on `on_data`, `pty_exit` on `on_exit`.

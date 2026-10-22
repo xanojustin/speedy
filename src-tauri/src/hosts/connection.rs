@@ -224,8 +224,18 @@ impl HostConn {
 
     /// A thread's events. After a reconnect the sink sees only events it missed; when the agent
     /// can't replay them it gets `{"kind":"snapshot", "snapshot": …}` to reseed from instead.
-    pub fn subscribe_thread(&self, thread_id: &str, sink: JsonSink) -> u64 {
-        self.add(Sub { kind: Kind::Thread { thread_id: thread_id.into(), cursor: None }, json: Some(sink), bytes: None, stream_id: None })
+    ///
+    /// Returns once the agent has opened the stream (when connected): the agent echoes a sent
+    /// message only to the subscribers it has by then, and a snapshot doesn't carry messages, so a
+    /// send that follows this can't be echoed before the subscriber exists.
+    pub async fn subscribe_thread(&self, thread_id: &str, sink: JsonSink) -> u64 {
+        let id = self.insert(Sub { kind: Kind::Thread { thread_id: thread_id.into(), cursor: None }, json: Some(sink), bytes: None, stream_id: None });
+        // Not held across the await.
+        let live = self.live.lock().clone();
+        if let (Some(live), Some(conn)) = (live, self.me.upgrade()) {
+            conn.open(&live, id).await;
+        }
+        id
     }
 
     /// A terminal's output (and `{"kind":"pty_exit"}` on `exit`), opening its shell if absent.
@@ -258,9 +268,16 @@ impl HostConn {
         }
     }
 
-    fn add(&self, sub: Sub) -> u64 {
+    /// Registers `sub`; a connection opens it on the agent each time it connects.
+    fn insert(&self, sub: Sub) -> u64 {
         let id = self.next_sub.fetch_add(1, Ordering::SeqCst);
         self.subs.lock().insert(id, sub);
+        id
+    }
+
+    /// Registers `sub` and opens it in the background when connected.
+    fn add(&self, sub: Sub) -> u64 {
+        let id = self.insert(sub);
         if let (Some(live), Some(conn)) = (self.live.lock().clone(), self.me.upgrade()) {
             tokio::spawn(async move { conn.open(&live, id).await });
         }
