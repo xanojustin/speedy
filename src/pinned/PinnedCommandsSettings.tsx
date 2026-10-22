@@ -2,6 +2,7 @@
 // in menu order (drag a row to reorder), each switchable on and off, with Add/Edit
 // in a dialog of its own over Settings.
 import { useEffect, useRef, useState } from "react";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import type { PinnedCommand, PinnedCommandKind } from "../ipc/types";
 import { hostLabel, newId, useAppStore } from "../store/appStore";
@@ -10,6 +11,19 @@ import { beginDragReorder } from "../sidebar/dragReorder";
 import "./pinned.css";
 
 const save = (pinnedCommands: PinnedCommand[]) => useAppStore.getState().updateSettings({ pinnedCommands });
+
+/** Asks first, then deletes; resolves whether it did. */
+async function confirmDelete(cmd: PinnedCommand): Promise<boolean> {
+  const ok = await ask(`"${cmd.name}" will be removed from every thread's Commands menu.`, {
+    title: "Delete command?",
+    kind: "warning",
+    okLabel: "Delete",
+    cancelLabel: "Cancel",
+  });
+  // Read after the prompt: the list may have changed while it was open.
+  if (ok) save(useAppStore.getState().pinnedCommands.filter((c) => c.id !== cmd.id));
+  return ok;
+}
 
 const hostsLabel = (hosts: string[]) => (hosts.length === 0 ? "All hosts" : hosts.map(hostLabel).join(", "));
 
@@ -121,7 +135,7 @@ export function PinnedCommandsSettings() {
                     className="icon-button"
                     aria-label={`Delete ${c.name}`}
                     title="Delete"
-                    onClick={() => save(commands.filter((x) => x.id !== c.id))}
+                    onClick={() => void confirmDelete(c)}
                   >
                     <span className="codicon codicon-trash" aria-hidden />
                   </button>
@@ -135,9 +149,8 @@ export function PinnedCommandsSettings() {
         <PinnedCommandEditor
           initial={editing === "new" ? null : editing}
           onSave={upsert}
-          onDelete={(id) => {
-            save(commands.filter((c) => c.id !== id));
-            setEditing(null);
+          onDelete={async (cmd) => {
+            if (await confirmDelete(cmd)) setEditing(null);
           }}
           onClose={() => setEditing(null)}
         />
@@ -156,7 +169,7 @@ function PinnedCommandEditor({
 }: {
   initial: PinnedCommand | null;
   onSave: (cmd: PinnedCommand) => void;
-  onDelete: (id: string) => void;
+  onDelete: (cmd: PinnedCommand) => void;
   onClose: () => void;
 }) {
   const hosts = useAppStore((s) => s.hosts);
@@ -296,7 +309,7 @@ function PinnedCommandEditor({
 
         <footer className="pinned-editor-footer">
           {initial && (
-            <button type="button" className="secondary-button pinned-editor-delete" onClick={() => onDelete(initial.id)}>
+            <button type="button" className="secondary-button pinned-editor-delete" onClick={() => onDelete(initial)}>
               <span className="codicon codicon-trash" aria-hidden />
               Delete
             </button>

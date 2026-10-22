@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/webview", async () => (await import("../app/testing/tau
 vi.mock("@tauri-apps/plugin-dialog", async () => (await import("../app/testing/tauriMock")).dialogMock);
 
 import { App } from "../app/App";
-import { backend, callsTo, emitMenu, lastSaved, project, stateWith } from "../app/testing/tauriMock";
+import { backend, callsTo, dialog, emitMenu, lastSaved, project, stateWith } from "../app/testing/tauriMock";
 import { resetBackend } from "../app/testing/reset";
 import type { PinnedCommand } from "../ipc/types";
 
@@ -102,13 +102,23 @@ describe("pinned commands in Settings", () => {
     fireEvent.click(within(again).getByRole("button", { name: "Save" }));
     expect(lastSaved()!.pinnedCommands![0]).toMatchObject({ name: "Review", autoSubmit: false, hosts: ["local"] });
 
+    // Deleting asks first; Cancel keeps the command.
+    dialog.ask.mockResolvedValueOnce(false);
     fireEvent.click(screen.getByRole("button", { name: "Delete Ship" }));
-    expect(lastSaved()!.pinnedCommands!.map((c) => c.name)).toEqual(["Review"]);
+    await waitFor(() => expect(dialog.ask).toHaveBeenCalledTimes(1));
+    expect(dialog.ask).toHaveBeenCalledWith(expect.stringContaining('"Ship"'), expect.objectContaining({ title: "Delete command?", okLabel: "Delete" }));
+    expect(lastSaved()!.pinnedCommands!.map((c) => c.name)).toEqual(["Review", "Ship"]);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Ship" }));
+    await waitFor(() => expect(lastSaved()!.pinnedCommands!.map((c) => c.name)).toEqual(["Review"]));
 
-    // The Edit dialog deletes too; adding has nothing to delete.
+    // The Edit dialog deletes too, and stays open when cancelled; adding has nothing to delete.
     fireEvent.click(screen.getByRole("button", { name: "Edit Review" }));
+    dialog.ask.mockResolvedValueOnce(false);
     fireEvent.click(within(screen.getByRole("dialog", { name: "Edit Command" })).getByRole("button", { name: "Delete" }));
-    expect(screen.queryByRole("dialog", { name: "Edit Command" })).toBeNull();
+    await waitFor(() => expect(dialog.ask).toHaveBeenCalledTimes(3));
+    expect(screen.getByRole("dialog", { name: "Edit Command" })).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Edit Command" })).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit Command" })).toBeNull());
     expect(lastSaved()!.pinnedCommands).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Add Command" }));
     expect(within(screen.getByRole("dialog", { name: "Add Command" })).queryByRole("button", { name: "Delete" })).toBeNull();
