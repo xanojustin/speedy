@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
-import type { PinnedCommand, PinnedCommandKind } from "../ipc/types";
+import { PINNED_PLACEMENTS, type PinnedCommand, type PinnedCommandKind, type PinnedPlacement } from "../ipc/types";
 import { hostLabel, newId, useAppStore } from "../store/appStore";
 import { pinnedActionLabel, pinnedIcon } from "./run";
 import { beginDragReorder } from "../sidebar/dragReorder";
@@ -161,6 +161,13 @@ export function PinnedCommandsSettings() {
 
 const KIND_LABEL: Record<PinnedCommandKind, string> = { prompt: "Claude Prompt", terminal: "Terminal Command" };
 
+const PLACEMENT_LABEL: Record<PinnedPlacement, string> = { before: "Insert before", after: "Insert after", replace: "Replace" };
+const PLACEMENT_DESCRIPTION: Record<PinnedPlacement, string> = {
+  before: "The prompt goes in front of what you've typed. Joined as written: end it with a space to separate them.",
+  after: "The prompt goes after what you've typed. Joined as written: start it with a space to separate them.",
+  replace: "The prompt replaces whatever you've typed.",
+};
+
 function PinnedCommandEditor({
   initial,
   onSave,
@@ -177,6 +184,7 @@ function PinnedCommandEditor({
   const [kind, setKind] = useState<PinnedCommandKind>(initial?.kind ?? "prompt");
   const [command, setCommand] = useState(initial?.command ?? "");
   const [autoSubmit, setAutoSubmit] = useState(initial?.autoSubmit ?? true);
+  const [placement, setPlacement] = useState<PinnedPlacement>(initial?.placement ?? "after");
   const [allHosts, setAllHosts] = useState((initial?.hosts.length ?? 0) === 0);
   const [picked, setPicked] = useState<string[]>(initial?.hosts ?? []);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -193,9 +201,10 @@ function PinnedCommandEditor({
       id: initial?.id ?? newId(),
       name: name.trim(),
       kind,
-      // As typed: a leading space keeps a shell command out of history.
-      command: kind === "terminal" ? command : command.trim(),
+      // As typed: a leading space is meaningful (a shell keeps such a command out of history).
+      command,
       autoSubmit: kind === "prompt" && autoSubmit,
+      placement,
       hosts: allHosts ? [] : hostKeys.filter((k) => picked.includes(k)),
       enabled: initial?.enabled ?? true,
     });
@@ -284,6 +293,21 @@ function PinnedCommandEditor({
               <span className="settings-description">Otherwise it fills the composer, to edit before sending.</span>
             </span>
           </label>
+        )}
+
+        {kind === "prompt" && !autoSubmit && (
+          <div className="pinned-field">
+            <span id="pinned-placement">Text already in the composer</span>
+            <span className="settings-segmented" role="radiogroup" aria-labelledby="pinned-placement">
+              {PINNED_PLACEMENTS.map((p) => (
+                <label key={p} className="settings-segment" data-checked={p === placement || undefined}>
+                  <input type="radio" name="pinned-placement" value={p} checked={p === placement} onChange={() => setPlacement(p)} />
+                  {PLACEMENT_LABEL[p]}
+                </label>
+              ))}
+            </span>
+            <span className="settings-description">{PLACEMENT_DESCRIPTION[placement]}</span>
+          </div>
         )}
 
         <fieldset className="pinned-field pinned-hosts">

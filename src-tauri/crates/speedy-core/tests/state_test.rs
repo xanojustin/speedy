@@ -62,14 +62,17 @@ fn a_group_keeps_its_host_through_client_json() {
 
 #[test]
 fn pinned_commands_survive_client_json() {
-    let json = r#"{"pinnedCommands":[{"id":"c1","name":"Build","kind":"terminal","command":"npm run build","autoSubmit":false,"hosts":["mac-mini"],"enabled":false}]}"#;
+    let json = r#"{"pinnedCommands":[{"id":"c1","name":"Build","kind":"terminal","command":"npm run build","autoSubmit":false,"placement":"before","hosts":["mac-mini"],"enabled":false}]}"#;
     let client: ClientState = serde_json::from_str(json).unwrap();
     assert_eq!(client.pinned_commands[0].command, "npm run build");
     let saved = serde_json::to_value(&client).unwrap();
     assert_eq!(saved["pinnedCommands"], serde_json::from_str::<serde_json::Value>(json).unwrap()["pinnedCommands"]);
     // Commands saved before the flag existed are enabled.
     let old = r#"{"pinnedCommands":[{"id":"c1","name":"Build","kind":"terminal","command":"make"}]}"#;
-    assert!(serde_json::from_str::<ClientState>(old).unwrap().pinned_commands[0].enabled);
+    let old = serde_json::from_str::<ClientState>(old).unwrap();
+    assert!(old.pinned_commands[0].enabled);
+    // ...and fill after the composer's text.
+    assert_eq!(old.pinned_commands[0].placement, "after");
     // Older files have none.
     assert!(serde_json::from_str::<ClientState>("{}").unwrap().pinned_commands.is_empty());
 }

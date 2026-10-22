@@ -32,6 +32,7 @@ import {
   type HostProject,
   type HostThread,
   type PinnedCommand,
+  PINNED_PLACEMENTS,
   type Project,
   type Thread,
   type ThreadPatch,
@@ -330,8 +331,12 @@ export const useAppStore = create<AppStore>((set, get) => {
         claudePathOverride: state.claudePathOverride,
         collapsedHosts: state.collapsedHosts ?? [],
         theme: state.theme && THEME_PREFERENCES.includes(state.theme) ? state.theme : "system",
-        // Commands saved before the enabled flag existed are enabled.
-        pinnedCommands: (state.pinnedCommands ?? []).map((c) => ({ ...c, enabled: c.enabled !== false })),
+        // Commands saved before a field existed get its default: enabled, filling after the text.
+        pinnedCommands: (state.pinnedCommands ?? []).map((c) => ({
+          ...c,
+          enabled: c.enabled !== false,
+          placement: PINNED_PLACEMENTS.includes(c.placement) ? c.placement : "after",
+        })),
         notice,
         loaded: true,
       });

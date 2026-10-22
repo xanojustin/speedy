@@ -73,6 +73,8 @@ pub struct PinnedCommand {
     pub command: String,
     /// Prompts only: send at once rather than fill the composer.
     pub auto_submit: bool,
+    /// A prompt that fills the composer: "before", "after" or "replace" what's already typed.
+    pub placement: String,
     /// Host keys it shows on; empty = every host.
     pub hosts: Vec<String>,
     /// Listed in the composer's Commands menu; a disabled command stays in Settings only.
@@ -87,6 +89,7 @@ impl Default for PinnedCommand {
             kind: "prompt".into(),
             command: String::new(),
             auto_submit: false,
+            placement: "after".into(),
             hosts: vec![],
             enabled: true,
         }

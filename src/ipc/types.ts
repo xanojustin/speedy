@@ -254,12 +254,17 @@ export interface PinnedCommand {
   command: string;
   /** Prompts only: send at once rather than fill the composer. */
   autoSubmit: boolean;
+  /** A prompt that fills the composer: where it goes against what's already typed. */
+  placement: PinnedPlacement;
   /** Host keys it shows on; empty = every host. */
   hosts: string[];
   /** Listed in the composer's Commands menu; a disabled command stays in Settings only. */
   enabled: boolean;
 }
 export type PinnedCommandKind = "prompt" | "terminal";
+/** Before the composer's text, after it, or in place of it; joined as written, nothing added. */
+export type PinnedPlacement = "before" | "after" | "replace";
+export const PINNED_PLACEMENTS: readonly PinnedPlacement[] = ["before", "after", "replace"];
 
 /** The app's appearance: follow macOS, or force light or dark. */
 export type ThemePreference = "system" | "light" | "dark";

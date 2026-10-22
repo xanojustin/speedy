@@ -17,6 +17,7 @@ const cmd = (c: Partial<PinnedCommand>): PinnedCommand => ({
   kind: "prompt",
   command: "do it",
   autoSubmit: true,
+  placement: "after",
   hosts: [],
   enabled: true,
   ...c,
@@ -79,7 +80,7 @@ describe("pinned commands in Settings", () => {
     expect(row).toHaveTextContent("All hosts");
     expect(lastSaved()!.pinnedCommands).toEqual([
       // Kept as typed: a leading space keeps it out of the shell's history.
-      { id: expect.any(String), name: "Build", kind: "terminal", command: " npm run build\n", autoSubmit: false, hosts: [], enabled: true },
+      { id: expect.any(String), name: "Build", kind: "terminal", command: " npm run build\n", autoSubmit: false, placement: "after", hosts: [], enabled: true },
     ]);
   });
 
@@ -163,30 +164,73 @@ describe("pinned commands in Settings", () => {
     expect(menuNames()).toEqual(["Review", "Build"]);
   });
 
-  it("treats commands saved before the enabled flag as enabled", async () => {
-    const { enabled: _, ...old } = cmd({ name: "Old" });
+  it("treats commands saved before the enabled and placement settings as enabled, inserting after", async () => {
+    const { enabled: _e, placement: _p, ...old } = cmd({ name: "Old", command: " old", autoSubmit: false });
     resetBackend({ ...stateWith([project("app")]), pinnedCommands: [old as PinnedCommand] });
     await renderApp();
     expect(menuNames()).toEqual(["Old"]);
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "typed" } });
+    runFromMenu("Old");
+    expect(screen.getByLabelText<HTMLTextAreaElement>("Message input").value).toBe("typed old");
+  });
+
+  it("chooses where a filled prompt goes: before, after, or in place of what's typed", async () => {
+    await renderApp();
+    act(() => emitMenu("open_settings"));
+    const settings = await screen.findByRole("dialog", { name: "Settings" });
+    fireEvent.click(within(settings).getByRole("tab", { name: "Pinned Commands" }));
+    fireEvent.click(within(settings).getByRole("button", { name: "Add Command" }));
+    const editor = screen.getByRole("dialog", { name: "Add Command" });
+    // Only a prompt that fills the composer has a placement.
+    expect(within(editor).queryByRole("radiogroup", { name: "Text already in the composer" })).toBeNull();
+    fireEvent.click(within(editor).getByRole("checkbox", { name: /Send immediately/ }));
+    const where = within(editor).getByRole("radiogroup", { name: "Text already in the composer" });
+    expect(within(where).getAllByRole("radio").map((r) => r.parentElement!.textContent)).toEqual(["Insert before", "Insert after", "Replace"]);
+    expect(within(where).getByRole("radio", { name: "Insert after" })).toBeChecked();
+    fireEvent.click(within(where).getByRole("radio", { name: "Insert before" }));
+    fireEvent.change(within(editor).getByLabelText("Name"), { target: { value: "Review" } });
+    fireEvent.change(within(editor).getByLabelText("Prompt"), { target: { value: "/review " } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Add" }));
+    expect(lastSaved()!.pinnedCommands![0]).toMatchObject({ command: "/review ", autoSubmit: false, placement: "before" });
+    expect(within(screen.getByRole("table", { name: "Pinned commands" })).getByText("Insert before")).toBeInTheDocument();
+  });
+
+  it("puts a filled prompt before what's typed, or replaces it", async () => {
+    resetBackend({
+      ...stateWith([project("app")]),
+      pinnedCommands: [
+        cmd({ name: "Review", command: "/review ", autoSubmit: false, placement: "before" }),
+        cmd({ name: "Fresh", command: "start over", autoSubmit: false, placement: "replace" }),
+      ],
+    });
+    await renderApp();
+    const input = screen.getByLabelText<HTMLTextAreaElement>("Message input");
+    fireEvent.change(input, { target: { value: "the auth module" } });
+    runFromMenu("Review");
+    expect(input.value).toBe("/review the auth module");
+    expect(input.selectionStart).toBe(input.value.length);
+    runFromMenu("Fresh");
+    expect(input.value).toBe("start over");
   });
 });
 
 describe("the Commands menu", () => {
-  it("sends a prompt at once, or fills the composer with it", async () => {
+  it("sends a prompt at once, or fills the composer with it, as written", async () => {
     resetBackend({
       ...stateWith([project("app")]),
-      pinnedCommands: [cmd({ name: "Review", command: "review the diff" }), cmd({ name: "Plan", command: "plan this:", autoSubmit: false })],
+      pinnedCommands: [cmd({ name: "Review", command: " review the diff" }), cmd({ name: "Plan", command: " plan this:", autoSubmit: false })],
     });
     await renderApp();
 
     runFromMenu("Review");
     await waitFor(() => expect(callsTo("claude_send_user")).toHaveLength(1));
-    expect(callsTo("claude_send_user")[0].args).toEqual({ threadId: "app-t1", content: [{ type: "text", text: "review the diff" }] });
+    expect(callsTo("claude_send_user")[0].args).toEqual({ threadId: "app-t1", content: [{ type: "text", text: " review the diff" }] });
 
     const input = screen.getByLabelText<HTMLTextAreaElement>("Message input");
     fireEvent.change(input, { target: { value: "context" } });
     runFromMenu("Plan");
-    expect(input.value).toBe("context\nplan this:");
+    // After what's typed, joined as written: the prompt's own leading space separates them.
+    expect(input.value).toBe("context plan this:");
     expect(input).toHaveFocus();
     expect(callsTo("claude_send_user")).toHaveLength(1);
   });

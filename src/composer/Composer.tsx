@@ -155,12 +155,13 @@ export function Composer({ threadId }: { threadId: string }) {
       const s = makeSnippet(detail.text, detail.source);
       if (s) updateDraft((d) => ({ snippets: [...d.snippets, s] }));
     };
-    // A pinned prompt goes after whatever is already typed, with the caret at its end.
+    // A pinned prompt goes before, after or in place of what's typed, joined exactly as written
+    // (its own spaces and line breaks do the joining), with the caret at the end.
     const onPrefill = (e: Event) => {
       const { detail } = e as CustomEvent<PrefillComposerDetail>;
       if (detail?.threadId !== threadId) return;
       const prev = useDrafts.getState().composer[threadId]?.text ?? "";
-      const next = prev.trim() ? `${prev.trimEnd()}\n${detail.text}` : detail.text;
+      const next = detail.placement === "replace" ? detail.text : detail.placement === "before" ? detail.text + prev : prev + detail.text;
       pendingCaret.current = next.length;
       setCaret(next.length);
       updateDraft(() => ({ text: next }));

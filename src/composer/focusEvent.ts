@@ -1,3 +1,5 @@
+import type { PinnedPlacement } from "../ipc/types";
+
 /** DOM event the composer listens for to take focus. */
 export const FOCUS_COMPOSER_EVENT = "speedy:focus-composer";
 export interface FocusComposerDetail {
@@ -18,4 +20,6 @@ export const PREFILL_COMPOSER_EVENT = "speedy:prefill-composer";
 export interface PrefillComposerDetail {
   threadId: string;
   text: string;
+  /** Before the composer's text, after it, or in place of it. */
+  placement: PinnedPlacement;
 }

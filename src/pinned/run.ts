@@ -3,35 +3,41 @@
 // it has one): Claude already works there, and a thread's terminals open there.
 import { newTerminal } from "../app/shortcuts";
 import { PREFILL_COMPOSER_EVENT, type PrefillComposerDetail } from "../composer/focusEvent";
-import type { PinnedCommand } from "../ipc/types";
+import type { PinnedCommand, PinnedPlacement } from "../ipc/types";
 import { sendUserMessage } from "../store/runtime";
 import { queueTerminalInput } from "../terminal/registry";
 import { useTerminalTabs } from "../terminal/tabs";
 
+// Commands run exactly as written: a leading space is meaningful (a shell keeps such a command out
+// of its history). Only a blank command is skipped.
 export function runPinnedCommand(threadId: string, cmd: PinnedCommand): void {
-  const text = cmd.command.trim();
-  if (!text) return;
+  const text = cmd.command;
+  if (!text.trim()) return;
   if (cmd.kind === "terminal") {
     const id = newTerminal(threadId);
     // Named after the command until the shell sets its own title.
     useTerminalTabs.getState().setTitle(id, cmd.name);
-    // As written, since a leading space keeps a command out of the shell's history. Enter is
-    // pressed here, so a trailing line break would run an empty line after it.
-    queueTerminalInput(id, `${cmd.command.replace(/[\r\n]+$/, "")}\r`);
+    // Enter is pressed here, so a trailing line break would run an empty line after it.
+    queueTerminalInput(id, `${text.replace(/[\r\n]+$/, "")}\r`);
     return;
   }
   if (cmd.autoSubmit) {
     void sendUserMessage(threadId, [{ type: "text", text }]);
     return;
   }
-  window.dispatchEvent(new CustomEvent<PrefillComposerDetail>(PREFILL_COMPOSER_EVENT, { detail: { threadId, text } }));
+  window.dispatchEvent(
+    new CustomEvent<PrefillComposerDetail>(PREFILL_COMPOSER_EVENT, { detail: { threadId, text, placement: cmd.placement } }),
+  );
 }
 
 /** How the command runs, for the settings table and the button's tooltip. */
-export function pinnedActionLabel(cmd: Pick<PinnedCommand, "kind" | "autoSubmit">): string {
+export function pinnedActionLabel(cmd: Pick<PinnedCommand, "kind" | "autoSubmit" | "placement">): string {
   if (cmd.kind === "terminal") return "Terminal";
-  return cmd.autoSubmit ? "Send prompt" : "Fill prompt";
+  if (cmd.autoSubmit) return "Send prompt";
+  return PLACEMENT_ACTION[cmd.placement] ?? "Fill prompt";
 }
+
+const PLACEMENT_ACTION: Record<PinnedPlacement, string> = { before: "Insert before", after: "Insert after", replace: "Replace text" };
 
 export const pinnedIcon = (cmd: Pick<PinnedCommand, "kind" | "autoSubmit">) =>
   cmd.kind === "terminal" ? "terminal" : cmd.autoSubmit ? "send" : "edit";
