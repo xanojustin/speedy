@@ -121,6 +121,34 @@ describe("thread event batching", () => {
     }
   });
 
+  it("flushes when the window comes back if sleep lost the scheduled flush", () => {
+    // Neither the frame nor the timer ever fires (lid closed).
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame"] });
+    try {
+      queueThreadEvent("t1", { kind: "session_bound", seq: 1, session_id: "s" });
+      expect(useThreadStore.getState().threads.t1).toBeUndefined();
+      window.dispatchEvent(new Event("focus"));
+      expect(useThreadStore.getState().threads.t1.sessionId).toBe("s");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reschedules when a scheduled flush is long overdue", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame"] });
+    const now = vi.spyOn(performance, "now").mockReturnValue(0);
+    try {
+      queueThreadEvent("t1", { kind: "session_bound", seq: 1, session_id: "s" });
+      vi.clearAllTimers(); // the frame and timer were lost
+      now.mockReturnValue(5000);
+      queueThreadEvent("t1", { kind: "queue_changed", seq: 2, queue: [] });
+      vi.advanceTimersByTime(100);
+      expect(useThreadStore.getState().threads.t1.sessionId).toBe("s");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("applies events immediately when batching is off", () => {
     setThreadEventBatching(false);
     queueThreadEvent("t1", { kind: "session_bound", seq: 1, session_id: "s" });

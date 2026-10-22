@@ -83,10 +83,17 @@ export const useThreadStore = create<ThreadStoreState>((set) => ({
 let batching = import.meta.env?.MODE !== "test";
 let rafId: number | null = null;
 let timerId: ReturnType<typeof setTimeout> | null = null;
+/** When the pending flush was scheduled (performance.now(); Date.now() stamps arrivals). */
+let scheduledAt = 0;
 
 /** Backstop for a frame that never comes (window hidden after the frame was requested). */
 const FALLBACK_MS = 16;
 const BACKSTOP_MS = 100;
+/**
+ * A scheduled flush this late was lost: WebKit can drop both the frame and the timer while the
+ * machine sleeps, and the stale ids would otherwise block every later schedule.
+ */
+const STALE_MS = 1000;
 
 function cancelScheduled() {
   if (rafId !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(rafId);
@@ -96,7 +103,11 @@ function cancelScheduled() {
 }
 
 function schedule() {
-  if (rafId !== null || timerId !== null) return;
+  if (rafId !== null || timerId !== null) {
+    if (performance.now() - scheduledAt < STALE_MS) return;
+    cancelScheduled();
+  }
+  scheduledAt = performance.now();
   const visible = typeof document === "undefined" || !document.hidden;
   if (typeof requestAnimationFrame === "function" && visible) {
     rafId = requestAnimationFrame(() => flushThreadEvents());
@@ -129,6 +140,17 @@ export function queueThreadEvent(threadId: string, action: ThreadAction): void {
   if (list) list.push({ action, now });
   else pending.set(threadId, [{ action, now }]);
   schedule();
+}
+
+// Waking from sleep (lid closed) may have lost the scheduled flush; apply whatever is buffered as
+// soon as the window is back, rather than when the next event or local action happens to come.
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  const wake = () => {
+    if (pending.size > 0 && !document.hidden) flushThreadEvents();
+  };
+  document.addEventListener("visibilitychange", wake);
+  window.addEventListener("focus", wake);
+  window.addEventListener("pageshow", wake);
 }
 
 /** Turns per-frame batching on or off (tests). Turning it off applies anything buffered. */
