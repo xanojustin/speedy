@@ -104,6 +104,14 @@ describe("pinned commands in Settings", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Delete Ship" }));
     expect(lastSaved()!.pinnedCommands!.map((c) => c.name)).toEqual(["Review"]);
+
+    // The Edit dialog deletes too; adding has nothing to delete.
+    fireEvent.click(screen.getByRole("button", { name: "Edit Review" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Edit Command" })).getByRole("button", { name: "Delete" }));
+    expect(screen.queryByRole("dialog", { name: "Edit Command" })).toBeNull();
+    expect(lastSaved()!.pinnedCommands).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Add Command" }));
+    expect(within(screen.getByRole("dialog", { name: "Add Command" })).queryByRole("button", { name: "Delete" })).toBeNull();
   });
 
   it("drag-reorders rows, which reorders the Commands menu", async () => {

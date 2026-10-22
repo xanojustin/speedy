@@ -97,7 +97,8 @@
 .pinned-table th:nth-child(3) { width: 20%; }
 .pinned-table th:nth-child(4) { width: 20%; }
 .pinned-table th:nth-child(6) { width: 16%; }
-.pinned-table th:nth-child(7) { width: 52px; }
+/* Room for Edit and Delete (2 × 22px) inside the cell's padding; a narrower cell clips Delete. */
+.pinned-table th:nth-child(7) { width: 64px; }
 .pinned-table td {
   padding: 5px 8px;
   overflow: hidden;
@@ -211,11 +212,15 @@
 .pinned-kind .codicon {
   font-size: 11px;
 }
-.pinned-cell-actions {
+.pinned-table td.pinned-cell-actions {
+  padding-left: 0;
+  padding-right: 6px;
+  overflow: visible;
   text-align: right;
 }
+/* Dimmed until the row is hovered, but always there to find. */
 .pinned-cell-actions .icon-button {
-  opacity: 0;
+  opacity: 0.55;
 }
 .pinned-table tr:hover .pinned-cell-actions .icon-button,
 .pinned-cell-actions .icon-button:focus-visible {
@@ -306,4 +311,8 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+}
+.pinned-editor-delete {
+  margin-right: auto;
+  color: var(--vscode-errorForeground, #f85149);
 }

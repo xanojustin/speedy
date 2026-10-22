@@ -131,7 +131,17 @@ export function PinnedCommandsSettings() {
           </tbody>
         </table>
       </div>
-      {editing && <PinnedCommandEditor initial={editing === "new" ? null : editing} onSave={upsert} onClose={() => setEditing(null)} />}
+      {editing && (
+        <PinnedCommandEditor
+          initial={editing === "new" ? null : editing}
+          onSave={upsert}
+          onDelete={(id) => {
+            save(commands.filter((c) => c.id !== id));
+            setEditing(null);
+          }}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 }
@@ -141,10 +151,12 @@ const KIND_LABEL: Record<PinnedCommandKind, string> = { prompt: "Claude Prompt",
 function PinnedCommandEditor({
   initial,
   onSave,
+  onDelete,
   onClose,
 }: {
   initial: PinnedCommand | null;
   onSave: (cmd: PinnedCommand) => void;
+  onDelete: (id: string) => void;
   onClose: () => void;
 }) {
   const hosts = useAppStore((s) => s.hosts);
@@ -283,6 +295,12 @@ function PinnedCommandEditor({
         </fieldset>
 
         <footer className="pinned-editor-footer">
+          {initial && (
+            <button type="button" className="secondary-button pinned-editor-delete" onClick={() => onDelete(initial.id)}>
+              <span className="codicon codicon-trash" aria-hidden />
+              Delete
+            </button>
+          )}
           <button type="button" className="secondary-button" onClick={onClose}>
             Cancel
           </button>
