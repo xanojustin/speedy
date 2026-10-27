@@ -16,7 +16,7 @@ use tokio::sync::watch;
 
 /// The latest CLI version the protocol drift test passed against (KTD7 skew warning).
 /// Fixtures were recorded against 2.1.296.
-pub const FIXTURE_CLI_VERSION: &str = "2.1.301 (Claude Code)";
+pub const FIXTURE_CLI_VERSION: &str = "2.1.309 (Claude Code)";
 
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 /// `claude --version` / `claude auth status` should answer quickly; a wedged CLI
