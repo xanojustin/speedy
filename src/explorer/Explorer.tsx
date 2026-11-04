@@ -28,7 +28,12 @@ const STATUS_LABEL: Record<GitStatus, string> = {
 };
 
 const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
-const extOf = (path: string) => /\.([^./]+)$/.exec(path)?.[1]?.toLowerCase();
+/** Files known by name rather than extension. */
+const LANG_BY_NAME: Record<string, string> = { dockerfile: "dockerfile", makefile: "makefile", gnumakefile: "makefile", justfile: "just" };
+const langOf = (path: string) => {
+  const base = (path.split("/").pop() ?? path).toLowerCase();
+  return LANG_BY_NAME[base] ?? /\.([^./]+)$/.exec(base)?.[1];
+};
 
 function useGitChanges(host: string, root: string) {
   const [changes, setChanges] = useState<Map<string, GitStatus>>(new Map());
@@ -398,7 +403,7 @@ function FileView({
           <Markdown text={draft} />
         </div>
       ) : (
-        <CodePreview text={draft} lang={extOf(path)} line={line} seq={seq} />
+        <CodePreview text={draft} lang={langOf(path)} line={line} seq={seq} />
       )}
     </div>
   );

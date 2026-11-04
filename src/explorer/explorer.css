@@ -181,6 +181,9 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* the app body turns selection off; file contents should be copyable */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .explorer-preview {
@@ -220,6 +223,17 @@
   font-size: var(--chat-mono-size);
   line-height: 1.5;
   tab-size: 2;
+}
+
+/* Shiki dual themes: colors arrive as --shiki-light / --shiki-dark. */
+.explorer-code .shiki span {
+  color: var(--shiki-light);
+}
+
+@media (prefers-color-scheme: dark) {
+  .explorer-code .shiki span {
+    color: var(--shiki-dark);
+  }
 }
 
 /* the line a transcript link pointed at */
