@@ -77,6 +77,7 @@ fn launch_from(env: Arc<EnvService>, paths: AgentPaths) -> LaunchFn {
 
 /// `speedy-agent run`: serve until a client asks to stop or a signal arrives.
 pub async fn run(paths: AgentPaths) -> io::Result<()> {
+    raise_fd_limit();
     ensure_state_dir(&paths)?;
     let Some(_lock) = try_lock(&paths)? else {
         log::info!("another agent is running; exiting");
@@ -252,4 +253,29 @@ async fn wait_for_exit(paths: &AgentPaths, timeout: Duration) -> io::Result<()> 
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     Ok(())
+}
+
+/// launchd starts the agent with a soft limit of 256 open files. Each shell holds three (its PTY
+/// master, reader and writer) and each `claude` three pipes, so a few dozen of them were enough
+/// for every new spawn to fail with EMFILE. Raised to macOS's `OPEN_MAX` (or the hard limit).
+fn raise_fd_limit() {
+    const WANT: libc::rlim_t = 10_240;
+    let mut lim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    // SAFETY: getrlimit/setrlimit only read and write the struct passed to them.
+    unsafe {
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) != 0 {
+            return;
+        }
+        let target = WANT.min(lim.rlim_max);
+        if lim.rlim_cur >= target {
+            return;
+        }
+        let was = lim.rlim_cur;
+        lim.rlim_cur = target;
+        if libc::setrlimit(libc::RLIMIT_NOFILE, &lim) == 0 {
+            log::info!("raised the open-file limit from {was} to {target}");
+        } else {
+            log::warn!("couldn't raise the open-file limit from {was}: {}", io::Error::last_os_error());
+        }
+    }
 }

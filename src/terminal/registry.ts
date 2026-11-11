@@ -1,6 +1,7 @@
 // U7: one xterm per terminal (a thread can have several, see ./tabs.ts), alive until the
 // terminal is killed or its thread archived, and independent of React mounting (KTD2, KTD3).
-// The PTY opens with the xterm, so a hidden terminal's shell output keeps landing in its buffer.
+// The shell starts the first time the terminal is shown, so selecting a thread with its panel
+// closed costs no shell; once started, a hidden terminal's output keeps landing in its buffer.
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -22,8 +23,17 @@ interface Entry {
   search: SearchAddon;
   container: HTMLDivElement;
   opened: boolean;
+  /** The shell has been started at least once (it starts on first show). */
+  started: boolean;
   /** The shell exited (or failed to start); Enter restarts it. */
   exited: boolean;
+  /**
+   * Drops the current subscription. Null before `ptyOpen` resolves, and after detaching. A
+   * subscription that resolves once its open is no longer `opening` detaches itself.
+   */
+  detach: (() => void) | null;
+  /** Identifies the latest open, so a stale one's subscription is dropped when it resolves. */
+  opening: object | null;
   releaseWebgl: (() => void) | null;
   onFind: (() => void) | null;
   onAddToChat: ((text: string) => void) | null;
@@ -94,24 +104,44 @@ function listenOnce() {
 
 // ---- PTY ----
 
+/** Drops the terminal's subscription, so a reconnect doesn't start its shell again. */
+function detachPty(entry: Entry) {
+  entry.opening = null;
+  entry.detach?.();
+  entry.detach = null;
+}
+
 function onExit(e: PtyExit) {
   const entry = entries.get(e.terminalId);
   if (!entry) return;
   entry.exited = true;
+  detachPty(entry);
   const status = e.code == null ? "[Process exited]" : `[Process exited with code ${e.code}]`;
   entry.term.write(`\r\n${status} — press Enter to restart\r\n`);
 }
 
 function startPty(entry: Entry) {
   const { terminalId, cwd, term } = entry;
+  detachPty(entry); // a restart replaces the exited shell's subscription
+  const opening = {};
+  entry.opening = opening;
+  entry.started = true;
   entry.exited = false;
-  ptyOpen(terminalId, cwd, term.cols, term.rows, (bytes) => term.write(bytes), onExit).then(() => {
+  ptyOpen(terminalId, cwd, term.cols, term.rows, (bytes) => term.write(bytes), onExit).then((detach) => {
+    if (entry.opening !== opening) {
+      // Disposed, exited or restarted while opening.
+      detach?.();
+      return;
+    }
+    entry.opening = null;
+    entry.detach = detach ?? null;
     const input = pendingInput.get(terminalId);
     if (input === undefined || entries.get(terminalId) !== entry) return;
     pendingInput.delete(terminalId);
     void ptyWrite(terminalId, input).catch(() => {});
   }, (err) => {
-    if (entries.get(terminalId) !== entry) return;
+    if (entry.opening !== opening) return;
+    entry.opening = null;
     entry.exited = true;
     term.write(`\r\n\x1b[31m[Failed to start shell: ${String(err)}]\x1b[0m — press Enter to retry\r\n`);
   });
@@ -146,7 +176,10 @@ function create(terminalId: string, cwd: string): Entry {
     search,
     container,
     opened: false,
+    started: false,
     exited: false,
+    detach: null,
+    opening: null,
     releaseWebgl: null,
     onFind: null,
     onAddToChat: null,
@@ -232,8 +265,7 @@ export function attachTerminal(
   onFind: () => void,
   onAddToChat: (text: string) => void,
 ): AttachedTerminal {
-  const existing = entries.get(terminalId);
-  const entry = existing ?? create(terminalId, cwd);
+  const entry = entries.get(terminalId) ?? create(terminalId, cwd);
   host.appendChild(entry.container);
   entry.onFind = onFind;
   entry.onAddToChat = onAddToChat;
@@ -263,10 +295,10 @@ export function attachTerminal(
     }
     fitNow(entry);
     entry.releaseWebgl ??= attachWebgl(entry.term);
+    // Started on first show, after the fit, so the shell starts at its real size.
+    if (!entry.started) startPty(entry);
   };
   setVisible(initiallyVisible);
-  // Started after the first fit, so a visible shell starts at its real size.
-  if (!existing) startPty(entry);
 
   return {
     setVisible,
@@ -305,15 +337,21 @@ export function focusTerminal(terminalId: string): void {
   if (entry?.opened) entry.term.focus();
 }
 
-/** Disposes the terminal's xterm and closes its shell (terminal killed or thread archived). */
+/**
+ * Disposes the terminal's xterm and closes its shell (terminal killed or thread archived). Closes
+ * the shell even when this window has no xterm for it: the host outlives the app, so a shell
+ * started before the app last launched has no entry here.
+ */
 export function disposeTerminal(terminalId: string): void {
   const entry = entries.get(terminalId);
   pendingInput.delete(terminalId);
-  if (!entry) return;
-  entries.delete(terminalId);
-  entry.releaseWebgl?.();
-  entry.container.remove();
-  entry.term.dispose();
+  if (entry) {
+    entries.delete(terminalId);
+    detachPty(entry);
+    entry.releaseWebgl?.();
+    entry.container.remove();
+    entry.term.dispose();
+  }
   void ptyClose(terminalId).catch(() => {});
 }
 

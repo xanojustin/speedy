@@ -246,16 +246,38 @@ impl Agent {
                 Ok(Value::Null)
             }
             "project_add" => ok(host.add_project(args::<NewProject>(params)?)?),
-            "project_remove" => ok(host.remove_project(&args::<IdArg>(params)?.id)?),
+            "project_remove" => {
+                let id = args::<IdArg>(params)?.id;
+                let threads: Vec<String> = host
+                    .snapshot()
+                    .projects
+                    .into_iter()
+                    .filter(|p| p.id == id)
+                    .flat_map(|p| p.threads.into_iter().map(|t| t.id))
+                    .collect();
+                host.remove_project(&id)?;
+                self.close_thread_terminals(&threads);
+                Ok(Value::Null)
+            }
             "thread_create" => {
                 let a: CreateThread = args(params)?;
                 ok(host.create_thread(&a.project_id, a.thread)?)
             }
             "thread_update" => {
                 let a: UpdateThread = args(params)?;
-                ok(host.update_thread(&a.thread_id, a.patch)?)
+                let archiving = a.patch.archived == Some(true);
+                host.update_thread(&a.thread_id, a.patch)?;
+                if archiving {
+                    self.close_thread_terminals(std::slice::from_ref(&a.thread_id));
+                }
+                Ok(Value::Null)
             }
-            "thread_remove" => ok(host.remove_thread(&args::<ThreadArg>(params)?.thread_id)?),
+            "thread_remove" => {
+                let id = args::<ThreadArg>(params)?.thread_id;
+                host.remove_thread(&id)?;
+                self.close_thread_terminals(std::slice::from_ref(&id));
+                Ok(Value::Null)
+            }
             "queue_remove" => {
                 let a: QueueRemove = args(params)?;
                 ok(host.remove_queued(&a.thread_id, &a.id)?)
@@ -414,6 +436,24 @@ impl Agent {
 
     fn stream_id(conn: &Conn) -> u32 {
         conn.next_stream.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Closes every shell of these threads: the thread's own terminal (id = thread id) and its
+    /// extra tabs (`<threadId>:<n>`). The agent does this itself rather than trusting the app,
+    /// which only knows the terminals it opened since it last launched, so an archived or removed
+    /// thread never leaves shells behind.
+    fn close_thread_terminals(&self, thread_ids: &[String]) {
+        if thread_ids.is_empty() {
+            return;
+        }
+        let owned = |terminal: &str| {
+            let thread = terminal.split_once(':').map_or(terminal, |(t, _)| t);
+            thread_ids.iter().any(|t| t == thread)
+        };
+        let doomed: Vec<String> = self.terminals.lock().keys().filter(|id| owned(id)).cloned().collect();
+        for id in doomed {
+            self.ptys.host.close(&id, CLOSE_GRACE);
+        }
     }
 
     fn unsubscribe(&self, conn: &Conn, stream_id: u32) {

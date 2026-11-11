@@ -134,19 +134,28 @@ export const claudeRetry = (threadId: string) => hostCall<ThreadStatus>(hostOfTh
 
 // ---- pty ----
 /** Attaches to the terminal (starting its shell if absent). Output on `onData`, the shell's exit on `onExit`. */
-export function ptyOpen(
+/**
+ * Attaches to a terminal, starting its shell if the host has none. Resolves to a function that
+ * drops the subscription: the connection re-sends `pty_open` for every subscription after a
+ * reconnect, which starts the shell again if it's gone, so a closed or exited terminal must detach
+ * or it comes back after the next reconnect. The host is captured now, since a deleted thread may
+ * be gone from the store by the time its terminal detaches.
+ */
+export async function ptyOpen(
   terminalId: string,
   cwd: string,
   cols: number,
   rows: number,
   onData: (bytes: Uint8Array) => void,
   onExit: (e: PtyExit) => void,
-) {
+): Promise<() => void> {
+  const host = hostOfTerminal(terminalId);
   const data = new Channel<ArrayBuffer>();
   data.onmessage = (buf) => onData(new Uint8Array(buf));
   const exit = new Channel<{ code: number | null }>();
   exit.onmessage = (e) => onExit({ terminalId, code: e.code });
-  return invoke<number>("host_pty_attach", { host: hostOfTerminal(terminalId), terminalId, cwd, cols, rows, onData: data, onExit: exit });
+  const subId = await invoke<number>("host_pty_attach", { host, terminalId, cwd, cols, rows, onData: data, onExit: exit });
+  return () => void invoke<void>("host_unsubscribe", { host, subId }).catch(() => {});
 }
 export const ptyWrite = (terminalId: string, data: string) => hostCall<void>(hostOfTerminal(terminalId), "pty_write", { terminalId, data });
 export const ptyResize = (terminalId: string, cols: number, rows: number) =>
