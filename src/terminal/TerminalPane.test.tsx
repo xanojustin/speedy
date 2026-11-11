@@ -10,6 +10,8 @@ const ipc = vi.hoisted(() => ({
   ptyClose: vi.fn(),
   openPath: vi.fn(),
 }));
+/** What each resolved `ptyOpen` hands back: drops that terminal's subscription. */
+const detach = vi.hoisted(() => vi.fn());
 vi.mock("../ipc/commands", () => ipc);
 
 const webgl = vi.hoisted(() => {
@@ -78,7 +80,7 @@ beforeEach(() => {
   ipc.ptyClose.mockResolvedValue(undefined);
   ipc.ptyOpen.mockImplementation(async (_id: string, _cwd: string, _c: number, _r: number, _data: unknown, onExit: (e: PtyExit) => void) => {
     exitListener = onExit;
-    return 1;
+    return detach;
   });
 });
 
@@ -195,16 +197,26 @@ describe("TerminalPane", () => {
     expect(webgl.live()).toHaveLength(1);
   });
 
-  it("a pane first mounted hidden starts the shell, buffers output, and opens xterm once shown", async () => {
+  it("a pane first mounted hidden starts its shell only once shown", async () => {
     const r = render(pane("h1", false));
-    expect(ipc.ptyOpen).toHaveBeenCalledTimes(1);
+    expect(ipc.ptyOpen).not.toHaveBeenCalled();
     expect(document.querySelector(".xterm")).toBeNull();
     expect(webgl.live()).toHaveLength(0);
-    output("h1")("buffered-early\r\n");
     r.rerender(pane("h1", true));
+    expect(ipc.ptyOpen).toHaveBeenCalledTimes(1);
     expect(document.querySelector(".xterm")).not.toBeNull();
     expect(webgl.live()).toHaveLength(1);
-    await vi.waitFor(() => expect(screenText()).toContain("buffered-early"));
+    output("h1")("first-output\r\n");
+    await vi.waitFor(() => expect(screenText()).toContain("first-output"));
+  });
+
+  it("a started shell keeps buffering output while hidden", async () => {
+    const r = render(pane("h2", true));
+    r.rerender(pane("h2", false));
+    output("h2")("while-hidden\r\n");
+    r.rerender(pane("h2", true));
+    expect(ipc.ptyOpen).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(screenText()).toContain("while-hidden"));
   });
 
   it("falls back to the DOM renderer after a WebGL context loss", async () => {
@@ -220,8 +232,12 @@ describe("TerminalPane", () => {
   it("reports a shell exit and restarts the PTY on Enter", async () => {
     render(pane("x1"));
     // The shell's exit arrives on the callback the registry passed to ptyOpen.
+    await vi.waitFor(() => expect(ipc.ptyOpen).toHaveReturned());
+    await Promise.resolve();
     act(() => exitListener({ terminalId: "x1", code: 0 }));
     await vi.waitFor(() => expect(screenText()).toContain("[Process exited with code 0]"));
+    // An exited shell drops its subscription, so a reconnect doesn't start it again.
+    expect(detach).toHaveBeenCalledTimes(1);
     press({ key: "a", code: "KeyA", keyCode: 65 });
     expect(ipc.ptyWrite).not.toHaveBeenCalled();
     expect(ipc.ptyOpen).toHaveBeenCalledTimes(1);
@@ -231,13 +247,33 @@ describe("TerminalPane", () => {
     expect(ipc.ptyWrite).not.toHaveBeenCalled();
   });
 
-  it("disposeTerminal closes the PTY and drops the instance", () => {
+  it("disposeTerminal detaches, closes the PTY and drops the instance", async () => {
     const r = render(pane("d1"));
+    await vi.waitFor(() => expect(ipc.ptyOpen).toHaveReturned());
+    await Promise.resolve();
     r.unmount();
     disposeTerminal("d1");
+    expect(detach).toHaveBeenCalledTimes(1);
     expect(ipc.ptyClose).toHaveBeenCalledWith("d1");
     render(pane("d1"));
     expect(ipc.ptyOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it("a terminal disposed while its PTY is opening detaches once the open resolves", async () => {
+    let resolve!: (d: () => void) => void;
+    ipc.ptyOpen.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    const r = render(pane("d2"));
+    r.unmount();
+    disposeTerminal("d2");
+    expect(detach).not.toHaveBeenCalled();
+    resolve(detach);
+    await vi.waitFor(() => expect(detach).toHaveBeenCalledTimes(1));
+  });
+
+  it("disposeTerminal closes a shell this window never opened", () => {
+    // The host outlives the app: a shell from before the last launch has no xterm here.
+    disposeTerminal("from-last-launch");
+    expect(ipc.ptyClose).toHaveBeenCalledWith("from-last-launch");
   });
   it("focuses the terminal when it is shown, not when another terminal mounts", () => {
     const { rerender } = render(pane("t9", false));

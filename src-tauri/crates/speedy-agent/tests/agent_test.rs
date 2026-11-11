@@ -502,3 +502,42 @@ async fn a_thread_still_starting_counts_as_busy() {
     assert_eq!(a.call("restart_if_idle", json!({})).await.unwrap(), false);
     assert!(tokio::time::timeout(Duration::from_millis(100), agent.shutdown_requested()).await.is_err());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archiving_or_removing_a_thread_closes_its_shells_whoever_opened_them() {
+    let fx = Fixture::new(&format!("{INIT}\nidle"));
+    let agent = fx.agent();
+    let mut a = Client::connect(&agent, 1 << 20).await;
+    let cwd = fx.project.to_string_lossy().into_owned();
+    let other = fx.dir.path().join("home").to_string_lossy().into_owned();
+    a.call("thread_create", json!({"projectId": "p1", "thread": {"id": "t2"}})).await.unwrap();
+    // `t10` shares a prefix with `t1` but is another thread's terminal.
+    a.call("thread_create", json!({"projectId": "p1", "thread": {"id": "t10"}})).await.unwrap();
+    a.call("project_add", json!({"id": "p2", "path": other, "name": "other"})).await.unwrap();
+    a.call("thread_create", json!({"projectId": "p2", "thread": {"id": "t3"}})).await.unwrap();
+    for id in ["t1", "t1:2", "t10", "t2", "t3"] {
+        a.call("pty_open", json!({"terminalId": id, "cwd": cwd, "cols": 80, "rows": 24})).await.unwrap();
+    }
+    // A client that never opened them (an app relaunched since) archives and removes.
+    let mut b = Client::connect(&agent, 1 << 20).await;
+
+    b.call("thread_update", json!({"threadId": "t1", "patch": {"archived": true}})).await.unwrap();
+    assert!(!alive(&mut b, "t1").await);
+    assert!(!alive(&mut b, "t1:2").await);
+    assert!(alive(&mut b, "t10").await);
+    assert!(alive(&mut b, "t2").await);
+
+    b.call("thread_remove", json!({"threadId": "t2"})).await.unwrap();
+    assert!(!alive(&mut b, "t2").await);
+    assert!(alive(&mut b, "t3").await);
+
+    b.call("project_remove", json!({"id": "p2"})).await.unwrap();
+    assert!(!alive(&mut b, "t3").await);
+    assert!(alive(&mut b, "t10").await);
+    agent.shut_down();
+}
+
+/// Whether the agent still has a shell for `id` (writing to a closed one fails).
+async fn alive(client: &mut Client, id: &str) -> bool {
+    client.call("pty_write", json!({"terminalId": id, "data": ""})).await.is_ok()
+}

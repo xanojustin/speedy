@@ -1,6 +1,6 @@
-// Terminal tabs per thread, like VS Code's terminal list. Not persisted: shells don't survive a
-// restart, so a thread always reopens with one terminal. A thread's first terminal uses the
-// thread id as its terminal id; later ones are `<threadId>:<n>`.
+// Terminal tabs per thread, like VS Code's terminal list. Not persisted, so a thread reopens with
+// one terminal after a restart (the host keeps its shells; closing the thread closes them all).
+// A thread's first terminal uses the thread id as its terminal id; later ones are `<threadId>:<n>`.
 import { create } from "zustand";
 
 export interface ThreadTerminals {
