@@ -191,6 +191,8 @@ export function Composer({ threadId }: { threadId: string }) {
 
   // ---------- sending ----------
   const canSend = !hostAway && (text.trim() !== "" || images.length > 0 || snippets.length > 0);
+  // The CLI's predicted next message shows as ghost text in an empty composer; Tab fills it in.
+  const suggestion = !busy && !hostAway && text === "" && images.length === 0 && snippets.length === 0 ? rt.suggestion : null;
 
   const submit = () => {
     if (hostAway) return;
@@ -317,6 +319,11 @@ export function Composer({ threadId }: { threadId: string }) {
       setDismissedAt(text);
       return;
     }
+    if (suggestion && e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      applyText(suggestion, suggestion.length);
+      return;
+    }
     if (e.key === "Tab" && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       void setMode(nextMode(mode, modes));
@@ -421,7 +428,7 @@ export function Composer({ threadId }: { threadId: string }) {
             disabled={hostAway}
             rows={1}
             value={text}
-            placeholder={busy ? "Queue another message…" : "Ask Claude to edit…"}
+            placeholder={suggestion ?? (busy ? "Queue another message…" : "Ask Claude to edit…")}
             spellCheck={false}
             onChange={(e) => {
               setText(e.target.value);
@@ -431,6 +438,11 @@ export function Composer({ threadId }: { threadId: string }) {
             onKeyDown={onKeyDown}
             onPaste={onPaste}
           />
+          {suggestion && (
+            <kbd className="composer-suggestion-hint" title="Press Tab to use the suggested reply">
+              Tab
+            </kbd>
+          )}
           <div className="composer-footer">
             <button
               type="button"

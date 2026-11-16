@@ -130,6 +130,8 @@ export interface ThreadRuntime {
   permissionMode: PermissionMode | null;
   contextUsage: unknown | null;
   lastResult: Record<string, unknown> | null;
+  /** The CLI's guess at the user's next message (`prompt_suggestion`), until the next turn starts. */
+  suggestion: string | null;
   lastSeq: number;
   /** "loading" while a session JSONL is being seeded, "failed" if that failed. */
   seed: "none" | "loading" | "done" | "failed";
@@ -163,6 +165,7 @@ export function initialRuntime(): ThreadRuntime {
     permissionMode: null,
     contextUsage: null,
     lastResult: null,
+    suggestion: null,
     lastSeq: 0,
     seed: "none",
     streams: {},
@@ -200,7 +203,6 @@ const SILENT_TYPES = new Set([
   "keep_alive",
   "auth_status",
   "tool_use_summary",
-  "prompt_suggestion",
   "control_request",
   "control_response",
   "control_cancel_request",
@@ -720,6 +722,12 @@ function onMessage(s: ThreadRuntime, raw: RawMessage, now: number, seeding = fal
       return onSystem(s, raw, now, seeding);
     case "tool_progress":
       return onToolProgress(s, raw);
+    case "prompt_suggestion": {
+      // Arrives after the turn's result. Never while seeding: history has no "next" message.
+      const suggestion = typeof raw.suggestion === "string" ? raw.suggestion.trim() : "";
+      if (seeding || !suggestion || suggestion === s.suggestion) return s;
+      return { ...s, suggestion };
+    }
     default:
       if (!SILENT_TYPES.has(raw.type)) logUnknown(String(raw.type), raw);
       return s;
@@ -757,6 +765,8 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
           stderrTail: a.stderr_tail ?? s.stderrTail,
           reconnecting: a.reconnecting,
           retrying: done ? false : s.retrying,
+          // A suggestion answers the turn that just ended; a new turn (or a dead process) makes it stale.
+          suggestion: a.status === "idle" || a.status === "awaiting_user" ? s.suggestion : null,
           // A turn that ended by crash/stop leaves nothing streaming.
           streams: done ? {} : s.streams,
           backgroundTasks: resetsBackground(a.status) ? [] : s.backgroundTasks,
@@ -804,6 +814,7 @@ export function reduce(s: ThreadRuntime, a: ThreadAction, now: number): ThreadRu
           ...s,
           blocks: [...s.blocks, { kind: "user", id: a.id, uuid: null, text, images, ts: now }],
           status: s.status === "idle" ? "working" : s.status,
+          suggestion: null,
         },
         a.seq,
       );

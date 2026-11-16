@@ -611,3 +611,34 @@ describe("terminal output", () => {
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   });
 });
+
+describe("Composer: suggested reply", () => {
+  const suggest = (suggestion: string) => msg({ type: "prompt_suggestion", suggestion, uuid: "u", session_id: "s" });
+
+  it("shows the suggestion in an empty composer and Tab fills it in", async () => {
+    const { user, input } = await renderComposer();
+    goLive();
+    dispatch(suggest("commit and push"));
+    expect(input.placeholder).toBe("commit and push");
+    expect(screen.getByText("Tab")).toBeInTheDocument();
+    input.focus();
+    await user.keyboard("{Tab}");
+    expect(input.value).toBe("commit and push");
+    expect(input).toHaveFocus();
+    expect(screen.queryByText("Tab")).toBeNull();
+  });
+
+  it("hides the suggestion while typing or working, and Tab is left alone", async () => {
+    const { user, input } = await renderComposer();
+    goLive();
+    dispatch(suggest("commit and push"));
+    await user.type(input, "x");
+    expect(screen.queryByText("Tab")).toBeNull();
+    await user.keyboard("{Tab}");
+    expect(input.value).toBe("x");
+    await user.clear(input);
+    expect(input.placeholder).toBe("commit and push");
+    dispatch(status("working"));
+    expect(input.placeholder).toBe("Queue another message…");
+  });
+});
