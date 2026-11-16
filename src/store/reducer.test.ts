@@ -435,3 +435,22 @@ describe("reducer: referential stability and no-ops", () => {
     expect(reduce(s, { kind: "message", seq: 999, raw: { type: "system", subtype: "init", model: "x" } }, 0).lastSeq).toBe(999);
   });
 });
+
+describe("reducer: prompt suggestions", () => {
+  const status = (s: ThreadRuntime["status"]): ClaudeEvent => ({ kind: "status", seq: ++seq, status: s, detail: null, stderr_tail: null, reconnecting: false });
+  const suggest = (suggestion: unknown): ClaudeEvent => m({ type: "prompt_suggestion", suggestion, uuid: "u", session_id: "s" });
+
+  it("keeps the suggestion that follows a result until the next message goes out", () => {
+    let s = run([status("working"), result(), status("idle"), suggest("  run the tests  ")]);
+    expect(s.suggestion).toBe("run the tests");
+    s = run([{ kind: "user_sent", seq: ++seq, id: "u2", content: [{ type: "text", text: "go" }] }], s);
+    expect(s.suggestion).toBeNull();
+  });
+
+  it("drops a suggestion when a turn starts or the process dies, and ignores empty ones", () => {
+    expect(run([suggest("a"), status("working")]).suggestion).toBeNull();
+    expect(run([suggest("a"), status("crashed")]).suggestion).toBeNull();
+    expect(run([suggest("a"), status("idle")]).suggestion).toBe("a");
+    expect(run([suggest("a"), suggest("   ")]).suggestion).toBe("a");
+  });
+});

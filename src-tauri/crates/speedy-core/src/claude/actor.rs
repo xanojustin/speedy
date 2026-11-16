@@ -460,7 +460,9 @@ impl Inner {
     }
 
     async fn initialize(&self, generation: u64) {
-        let result = self.control(json!({"subtype": "initialize"}), DEFAULT_CONTROL_TIMEOUT).await;
+        // promptSuggestions: after each turn the CLI predicts the user's next message (`prompt_suggestion`).
+        // It still honours `promptSuggestionEnabled: false` in settings and CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION.
+        let result = self.control(json!({"subtype": "initialize", "promptSuggestions": true}), DEFAULT_CONTROL_TIMEOUT).await;
         let mut st = self.state.lock();
         if st.generation != generation {
             return;

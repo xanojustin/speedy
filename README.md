@@ -16,7 +16,7 @@ The VS Code extension is a good place to talk to Claude, but running five agents
 
 - **Parallel threads.** Group projects in the sidebar and run a thread per task. Threads that finish or ask for permission while hidden are flagged in the sidebar and on the Dock badge, and post a notification.
 - **Familiar chat.** Same colors, fonts, tool cards, thinking rows, todo list, and permission cards as the VS Code extension, in light and dark.
-- **Composer.** `/` command menu (plugin commands match by short name, so `/ce-plan` finds `/compound-engineering:ce-plan`), `@` file mentions, pasted images, queued messages, Esc to interrupt, Shift+Tab to cycle permission modes, plus model and effort pickers. The footer shows how much of the context window is used; click it for a breakdown and to compact.
+- **Composer.** `/` command menu (plugin commands match by short name, so `/ce-plan` finds `/compound-engineering:ce-plan`), `@` file mentions, pasted images, queued messages, suggested replies (Tab fills in Claude's guess at your next message), Esc to interrupt, Shift+Tab to cycle permission modes, plus model and effort pickers. The footer shows how much of the context window is used; click it for a breakdown and to compact.
 - **Permissions.** Inline cards for edits (with diffs), Bash, plan approval, and questions. "Always allow" names the settings file the rule is saved to.
 - **Terminals.** A real PTY per thread with multiple tabs, WebGL rendering, search, and links. Select output and press Cmd+L to attach it to your next message. Shells are killed when you quit.
 - **History.** Browse and resume sessions started in VS Code or the CLI, rename them, and fork a conversation with its code rewound to an earlier turn.
