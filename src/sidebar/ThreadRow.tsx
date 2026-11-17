@@ -39,7 +39,11 @@ export function ThreadRow({ thread, selected, unread, renaming, onRenameDone, on
         }
       }}
     >
-      <StatusGlyph status={status} unread={unread} background={background} />
+      {thread.terminal ? (
+        <span role="img" aria-label="Terminal" title="Terminal" className="status-glyph codicon codicon-terminal" />
+      ) : (
+        <StatusGlyph status={status} unread={unread} background={background} />
+      )}
       {renaming ? (
         <RenameInput
           initial={thread.title}

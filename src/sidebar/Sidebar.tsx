@@ -1,11 +1,11 @@
 // Projects and their threads, with a live status glyph per thread (R2, R3, R5).
 import { useCallback, useEffect, useState, type MouseEvent, type PointerEvent } from "react";
-import { addProjectViaPicker, cleanUpWorktrees, closeThread, deleteThread, newThread, removeProject } from "../app/actions";
+import { addProjectViaPicker, cleanUpWorktrees, closeThread, deleteThread, newTerminalThread, newThread, removeProject } from "../app/actions";
 import { FolderBrowser } from "../hosts/FolderBrowser";
 import { HostHeader } from "../hosts/HostHeader";
 import { openInVscode, pathsExist } from "../ipc/commands";
 import { GROUP_COLORS, LOCAL_HOST, type Group, type HostInfo, type Project } from "../ipc/types";
-import { hostLabel, hostSections, sidebarSections, useAppStore, type SidebarSection } from "../store/appStore";
+import { findThread, hostLabel, hostSections, sidebarSections, useAppStore, type SidebarSection } from "../store/appStore";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { beginDragReorder } from "./dragReorder";
 import { GroupSection, groupColorVar } from "./GroupSection";
@@ -80,7 +80,9 @@ export function Sidebar({ unread }: SidebarProps) {
     // Chats has no folder of its own to open, group, or remove.
     if (project.scratch) return openMenu(e, threadItems);
     openMenu(e, [
-      ...threadItems,
+      threadItems[0],
+      { label: "New Terminal", onSelect: () => newTerminalThread(project.id) },
+      ...threadItems.slice(1),
       "separator",
       {
         label: "Open in VS Code",
@@ -124,11 +126,20 @@ export function Sidebar({ unread }: SidebarProps) {
     ]);
 
   const onThreadMenu = (e: MouseEvent, threadId: string) =>
-    openMenu(e, [
-      { label: "Rename", onSelect: () => setRenamingId(threadId) },
-      { label: "Archive", onSelect: () => void closeThread(threadId) },
-      { label: "Delete…", onSelect: () => void deleteThread(threadId) },
-    ]);
+    openMenu(
+      e,
+      // A terminal thread has no conversation to archive: closing it is the only way out.
+      findThread(useAppStore.getState(), threadId)?.thread.terminal
+        ? [
+            { label: "Rename", onSelect: () => setRenamingId(threadId) },
+            { label: "Close Terminal", onSelect: () => void closeThread(threadId) },
+          ]
+        : [
+            { label: "Rename", onSelect: () => setRenamingId(threadId) },
+            { label: "Archive", onSelect: () => void closeThread(threadId) },
+            { label: "Delete…", onSelect: () => void deleteThread(threadId) },
+          ],
+    );
 
   // Projects reorder within their own section; moving between groups is a context-menu action.
   const onProjectPointerDown = (e: PointerEvent, projectId: string) => {
@@ -181,6 +192,7 @@ export function Sidebar({ unread }: SidebarProps) {
       onThreadMenu={onThreadMenu}
       onProjectPointerDown={onProjectPointerDown}
       onNewThread={newThread}
+      onNewTerminal={newTerminalThread}
     />
   );
 

@@ -18,7 +18,7 @@ The VS Code extension is a good place to talk to Claude, but running five agents
 - **Familiar chat.** Same colors, fonts, tool cards, thinking rows, todo list, and permission cards as the VS Code extension, in light and dark.
 - **Composer.** `/` command menu (plugin commands match by short name, so `/ce-plan` finds `/compound-engineering:ce-plan`), `@` file mentions, pasted images, queued messages, suggested replies (Tab fills in Claude's guess at your next message), Esc to interrupt, Shift+Tab to cycle permission modes, plus model and effort pickers. The footer shows how much of the context window is used; click it for a breakdown and to compact.
 - **Permissions.** Inline cards for edits (with diffs), Bash, plan approval, and questions. "Always allow" names the settings file the rule is saved to.
-- **Terminals.** A real PTY per thread with multiple tabs, WebGL rendering, search, and links. Select output and press Cmd+L to attach it to your next message. Shells are killed when you quit.
+- **Terminals.** A real PTY per thread with multiple tabs, WebGL rendering, search, and links. Select output and press Cmd+L to attach it to your next message. Shells are killed when you quit. For a shell without a conversation, a **terminal thread** (the terminal button on a project, or Cmd+Shift+T) opens one in the project folder, listed in the sidebar like any thread.
 - **History.** Browse and resume sessions started in VS Code or the CLI, rename them, and fork a conversation with its code rewound to an earlier turn.
 - **Worktrees.** Optionally start a thread on its own branch in a separate git worktree, so parallel agents don't step on each other's files.
 - **File explorer** and a `speedy .` shell command, like VS Code's `code .`. File references in Claude's replies (`src/app.ts:42`) open in the explorer at that line.
@@ -60,6 +60,7 @@ Choose **Speedy > Install 'speedy' Command in PATH…** once. After that, `speed
 | Shortcut | Action |
 |---|---|
 | Cmd+N | New thread |
+| Cmd+Shift+T | New terminal thread (just a shell in the project folder) |
 | Cmd+W | Close thread (archives it; asks first if it's working) |
 | Cmd+O | Add project folder |
 | Cmd+1 … Cmd+9 | Switch to thread 1–9 |

@@ -1,6 +1,6 @@
 //! U6: native menu with app-level accelerators (KTD10).
 //! Each custom item emits the app event `menu` with its id as payload:
-//! `new_thread`, `close_thread`, `toggle_terminal`, `maximize_terminal`, `new_terminal`,
+//! `new_thread`, `new_terminal_thread`, `close_thread`, `toggle_terminal`, `maximize_terminal`, `new_terminal`,
 //! `toggle_explorer`, `focus_chat`, `switch_thread_1` … `switch_thread_9`, `add_project`, `open_settings`,
 //! `stop_local_agent`. They go to the focused window only, so a second window doesn't act too.
 //! Accelerators live on native menu items so WKWebView can't swallow them.
@@ -17,6 +17,7 @@ pub const MENU_EVENT: &str = "menu";
 /// Custom "Thread" menu items: (id, label, accelerator). Ids mirror `MenuAction` in src/ipc/types.ts.
 const THREAD_ITEMS: &[(&str, &str, &str)] = &[
     ("new_thread", "New Thread", "CmdOrCtrl+N"),
+    ("new_terminal_thread", "New Terminal Thread", "CmdOrCtrl+Shift+T"),
     ("close_thread", "Close Thread", "CmdOrCtrl+W"),
     ("add_project", "Add Project Folder…", "CmdOrCtrl+O"),
     ("toggle_terminal", "Toggle Terminal", "CmdOrCtrl+J"),
@@ -156,6 +157,7 @@ mod tests {
     fn only_custom_items_are_forwarded_to_the_webview() {
         for id in [
             "new_thread",
+            "new_terminal_thread",
             "close_thread",
             "add_project",
             "toggle_terminal",

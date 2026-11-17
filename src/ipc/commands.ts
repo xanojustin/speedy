@@ -98,6 +98,7 @@ export interface NewThread {
   sessionId?: string | null;
   worktree?: ThreadWorktree | null;
   fork?: ForkFrom | null;
+  terminal?: boolean;
 }
 export const threadCreate = (host: string, projectId: string, thread: NewThread) =>
   hostCall<void>(host, "thread_create", { projectId, thread });

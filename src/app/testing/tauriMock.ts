@@ -91,6 +91,7 @@ function hostProjects(state: AppState, host: string): HostProject[] {
       worktreeRequested: t.worktreeRequested ?? false,
       fork: t.fork ?? null,
       queue: [],
+      terminal: t.terminal ?? false,
     })),
   }));
 }
@@ -178,6 +179,7 @@ function hostRpc(method: string, a: Record<string, unknown>, host = "local"): un
         worktree: t.worktree ?? null,
         worktreeRequested: t.worktreeRequested ?? false,
         fork: t.fork ?? null,
+        terminal: t.terminal ?? false,
       };
       st.projects = st.projects.map((p) => (p.id === a.projectId && !p.threads.some((x) => x.id === t.id) ? { ...p, threads: [...p.threads, thread] } : p));
       break;

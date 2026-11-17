@@ -6,6 +6,7 @@ import { findThread, useAppStore } from "../store/appStore";
 import { forgetStarted } from "../store/runtime";
 import { getRuntime } from "../store/threadStore";
 import { disposeThreadTerminals } from "../terminal/TerminalPane";
+import { focusTerminal } from "../terminal/registry";
 import { terminalsOf, useTerminalTabs } from "../terminal/tabs";
 
 /** Opens the folder picker and adds the chosen folder (R2). */
@@ -40,6 +41,20 @@ export function newThread(projectId?: string): void {
   else void addProjectViaPicker();
 }
 
+/**
+ * A terminal-only thread in the project: a shell in its folder, listed in the sidebar like a
+ * thread, with no conversation. Defaults like `newThread`.
+ */
+export function newTerminalThread(projectId?: string): void {
+  const s = useAppStore.getState();
+  // Chats has no folder to open a shell in.
+  const current = findThread(s, s.selectedThreadId)?.project;
+  const target = projectId ?? (current && !current.scratch ? current.id : s.projects.find((p) => !p.scratch)?.id);
+  if (!target) return void addProjectViaPicker();
+  const id = s.createThread(target, { title: "Terminal", terminal: true });
+  requestAnimationFrame(() => focusTerminal(id));
+}
+
 /** True when the terminal's shell runs a foreground job (e.g. `npm run dev`). */
 export async function terminalBusy(terminalId: string): Promise<boolean> {
   try {
@@ -58,8 +73,9 @@ async function isBusy(threadId: string): Promise<boolean> {
 
 /** Stops a thread's agent and shell. Sessions stay on disk. */
 async function stopThread(threadId: string): Promise<void> {
+  const terminalOnly = findThread(useAppStore.getState(), threadId)?.thread.terminal;
   try {
-    await claudeStop(threadId);
+    if (!terminalOnly) await claudeStop(threadId);
   } catch (err) {
     console.warn(`claude_stop(${threadId}) failed`, err);
   }
@@ -72,21 +88,31 @@ async function stopThread(threadId: string): Promise<void> {
   }
 }
 
-/** Close = archive (R3). Asks first when the thread is busy. Returns whether it was archived. */
+/**
+ * Close = archive (R3). A terminal thread has nothing to keep, so closing it removes it. Asks first
+ * when the thread is busy. Returns whether it was closed.
+ */
 export async function closeThread(threadId: string): Promise<boolean> {
   const found = findThread(useAppStore.getState(), threadId);
   if (!found || found.thread.archived) return false;
+  const terminalOnly = found.thread.terminal;
   if (await isBusy(threadId)) {
-    const ok = await ask(`"${found.thread.title}" is still running. Closing it stops the agent and the terminal's running process.`, {
-      title: "Close thread?",
-      kind: "warning",
-      okLabel: "Close Thread",
-      cancelLabel: "Cancel",
-    });
+    const ok = await ask(
+      terminalOnly
+        ? `"${found.thread.title}" is still running a process. Closing it stops that process.`
+        : `"${found.thread.title}" is still running. Closing it stops the agent and the terminal's running process.`,
+      {
+        title: terminalOnly ? "Close terminal?" : "Close thread?",
+        kind: "warning",
+        okLabel: terminalOnly ? "Close Terminal" : "Close Thread",
+        cancelLabel: "Cancel",
+      },
+    );
     if (!ok) return false;
   }
   await stopThread(threadId);
-  useAppStore.getState().archiveThread(threadId);
+  if (terminalOnly) useAppStore.getState().deleteThread(threadId);
+  else useAppStore.getState().archiveThread(threadId);
   return true;
 }
 
@@ -105,7 +131,7 @@ export async function deleteThread(threadId: string): Promise<boolean> {
     [
       running ? "It's still running: deleting stops the agent and the terminal's running process." : "",
       worktree ? worktreeFate(worktree) : "",
-      "The conversation stays in Past Conversations.",
+      thread.terminal ? "" : "The conversation stays in Past Conversations.",
     ]
       .filter(Boolean)
       .join("\n\n"),

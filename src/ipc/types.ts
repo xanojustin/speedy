@@ -156,6 +156,8 @@ export interface HostThread {
   worktreeRequested: boolean;
   fork: ForkFrom | null;
   queue: QueueItem[];
+  /** A terminal-only thread: shells in the folder, no conversation. Absent from older agents. */
+  terminal?: boolean;
 }
 
 export interface HostProject {
@@ -340,6 +342,8 @@ export interface Thread {
   worktreeRequested?: boolean;
   /** A rewind fork's starting point, until its own session binds. */
   fork?: ForkFrom | null;
+  /** A terminal-only thread: shells in the folder, no conversation. */
+  terminal?: boolean;
 }
 
 export interface ThreadWorktree {
@@ -418,6 +422,7 @@ export interface PtyExit {
 /** Menu item ids emitted on the `menu` app event (src-tauri/src/menu.rs). */
 export type MenuAction =
   | "new_thread"
+  | "new_terminal_thread"
   | "close_thread"
   | "toggle_terminal"
   | "maximize_terminal"

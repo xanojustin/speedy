@@ -89,6 +89,8 @@ pub struct NewThread {
     pub worktree: Option<ThreadWorktree>,
     /// A rewind fork: the new thread resumes this session, truncated, as a new session.
     pub fork: Option<ForkFrom>,
+    /// A terminal-only thread: shells in the folder, never a `claude`.
+    pub terminal: bool,
 }
 
 /// Thread fields a client may change; `None` leaves a field as it is.
@@ -217,6 +219,14 @@ impl Host {
         self.state.lock().thread(id).map(|(_, t)| t.clone())
     }
 
+    /// Terminal threads never run `claude`.
+    fn not_terminal(&self, id: &str) -> Result<(), String> {
+        match self.state.lock().thread(id) {
+            Some((_, t)) if t.terminal => Err(format!("thread {id} is a terminal, not a conversation")),
+            _ => Ok(()),
+        }
+    }
+
     pub fn thread_status(&self, id: &str) -> Option<ThreadStatus> {
         if let Some(rt) = self.threads.lock().get(id) {
             return Some(rt.status());
@@ -269,6 +279,7 @@ impl Host {
             session_id: new.session_id,
             worktree: new.worktree,
             fork: new.fork,
+            terminal: new.terminal,
             ..HostThread::default()
         };
         let event = json!({"kind": "thread_upserted", "projectId": project_id, "thread": thread});
@@ -326,6 +337,7 @@ impl Host {
     /// worktree first, or relaunches a Stopped one. Returns the current status.
     pub async fn ensure_started(&self, id: &str) -> Result<ThreadStatus, String> {
         let _admitted = self.admit()?;
+        self.not_terminal(id)?;
         let rt = self.runtime(id)?;
         let _starting = rt.starting.lock().await;
         if let Some(actor) = rt.actor() {
@@ -354,6 +366,7 @@ impl Host {
     /// current turn (and anything queued before it). A start failure keeps it queued for a retry.
     pub async fn send(&self, id: &str, content: Value) -> Result<(), String> {
         let _admitted = self.admit()?;
+        self.not_terminal(id)?;
         self.title_from(id, &content);
         let started = self.ensure_started(id).await.is_ok();
         let rt = self.runtime(id)?;

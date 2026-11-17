@@ -252,6 +252,27 @@ async fn a_worktree_request_creates_the_worktree_before_the_first_start() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_thread_is_kept_across_restarts_and_never_runs_claude() {
+    let fx = Fixture::new(&[&format!("{INIT}\nidle")]);
+    let host = fx.open();
+    host.add_project(NewProject { id: "p1".into(), path: fx.project.to_string_lossy().into_owned(), name: "proj".into() })
+        .unwrap();
+    host.create_thread("p1", NewThread { id: "t1".into(), title: Some("Terminal".into()), terminal: true, ..Default::default() })
+        .unwrap();
+
+    assert!(host.ensure_started("t1").await.is_err());
+    assert!(host.send("t1", text("hello")).await.is_err());
+    assert!(host.thread("t1").unwrap().queue.is_empty(), "a refused message isn't queued");
+    assert!(fx.read("cwd.1").is_empty(), "claude never launched");
+
+    host.flush();
+    drop(host);
+    let thread = fx.open().thread("t1").unwrap();
+    assert!(thread.terminal);
+    assert_eq!(thread.title, "Terminal");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_thread_starting_or_mid_turn_is_busy_and_a_drain_waits_for_it() {
     let fx = Fixture::new(&[&format!(
         "sleep 0.5\n{INIT}\nexpect \"one\"\nsleep 0.5\nemit {{\"type\":\"result\",\"subtype\":\"success\"}}\nidle"

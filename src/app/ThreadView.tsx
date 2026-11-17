@@ -1,4 +1,5 @@
 // The selected thread: chat on top, its terminals docked below like VS Code's panel (R16).
+// A terminal thread is just the panel, filling the view, with no chat mounted.
 import { useRef, useState } from "react";
 import { ChatPane } from "../chat/ChatPane";
 import type { Project, Thread } from "../ipc/types";
@@ -22,8 +23,9 @@ export function ThreadView({ project, thread }: { project: Project; thread: Thre
   const setActiveTerminal = useTerminalTabs((s) => s.setActive);
   const label = (id: string) => titles[id] || terminalLabel(thread.id, id);
 
-  const terminalShown = thread.terminalVisible;
-  const maximized = terminalShown && thread.terminalMaximized;
+  const terminalOnly = !!thread.terminal;
+  const terminalShown = terminalOnly || thread.terminalVisible;
+  const maximized = terminalOnly || (terminalShown && thread.terminalMaximized);
   const ratio = dragRatio ?? thread.splitRatio;
 
   const onSashPointerDown = (e: React.PointerEvent) => {
@@ -56,9 +58,11 @@ export function ThreadView({ project, thread }: { project: Project; thread: Thre
 
   return (
     <div ref={splitRef} className={`thread-split${dragRatio !== null ? " resizing" : ""}`}>
-      <section className="chat-region" data-thread-id={thread.id} hidden={maximized} style={chatStyle} aria-label="Chat">
-        <ChatPane threadId={thread.id} />
-      </section>
+      {!terminalOnly && (
+        <section className="chat-region" data-thread-id={thread.id} hidden={maximized} style={chatStyle} aria-label="Chat">
+          <ChatPane threadId={thread.id} />
+        </section>
+      )}
       {terminalShown && !maximized && (
         <div
           role="separator"
@@ -71,7 +75,9 @@ export function ThreadView({ project, thread }: { project: Project; thread: Thre
       )}
       <section className="terminal-region" data-thread-id={thread.id} hidden={!terminalShown} aria-label="Terminal">
         <div className="panel-header">
-          <span className="panel-title">Terminal</span>
+          <span className="panel-title" title={terminalOnly ? threadCwd(project, thread) : undefined}>
+            {terminalOnly ? `Terminal: ${project.name}` : "Terminal"}
+          </span>
           <span className="panel-actions">
             <button type="button" className="icon-button" aria-label="New Terminal" title="New Terminal (⌃⇧`)" onClick={() => newTerminal(thread.id)}>
               <span className="codicon codicon-add" aria-hidden />
@@ -85,18 +91,22 @@ export function ThreadView({ project, thread }: { project: Project; thread: Thre
             >
               <span className="codicon codicon-trash" aria-hidden />
             </button>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={maximized ? "Restore Panel Size" : "Maximize Panel Size"}
-              title={`${maximized ? "Restore" : "Maximize"} Panel Size (⇧⌘J)`}
-              onClick={() => toggleMaximizeTerminal(thread.id)}
-            >
-              <span className={`codicon codicon-chevron-${maximized ? "down" : "up"}`} aria-hidden />
-            </button>
-            <button type="button" className="icon-button" aria-label="Hide Panel" title="Hide Panel (⌘J)" onClick={() => toggleTerminal(thread.id)}>
-              <span className="codicon codicon-close" aria-hidden />
-            </button>
+            {!terminalOnly && (
+              <>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label={maximized ? "Restore Panel Size" : "Maximize Panel Size"}
+                  title={`${maximized ? "Restore" : "Maximize"} Panel Size (⇧⌘J)`}
+                  onClick={() => toggleMaximizeTerminal(thread.id)}
+                >
+                  <span className={`codicon codicon-chevron-${maximized ? "down" : "up"}`} aria-hidden />
+                </button>
+                <button type="button" className="icon-button" aria-label="Hide Panel" title="Hide Panel (⌘J)" onClick={() => toggleTerminal(thread.id)}>
+                  <span className="codicon codicon-close" aria-hidden />
+                </button>
+              </>
+            )}
           </span>
         </div>
         <div className="terminal-body">
@@ -107,7 +117,7 @@ export function ThreadView({ project, thread }: { project: Project; thread: Thre
                 terminalId={id}
                 cwd={threadCwd(project, thread)}
                 visible={terminalShown && id === terminals.active}
-                onAddToChat={(text) => addToChat(thread.id, text, label(id))}
+                onAddToChat={terminalOnly ? undefined : (text) => addToChat(thread.id, text, label(id))}
               />
             ))}
           </div>

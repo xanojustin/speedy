@@ -79,7 +79,7 @@ export interface AppStore extends AppState {
   setGroupColor(groupId: string, color: GroupColor): void;
   setHostCollapsed(hostKey: string, collapsed: boolean): void;
 
-  createThread(projectId: string, init?: Partial<Pick<Thread, "title" | "sessionId" | "worktree" | "fork">>): string;
+  createThread(projectId: string, init?: Partial<Pick<Thread, "title" | "sessionId" | "worktree" | "fork" | "terminal">>): string;
   updateThread(threadId: string, patch: Partial<Omit<Thread, "id">>): void;
   archiveThread(threadId: string): void;
   restoreThread(threadId: string): void;
@@ -172,6 +172,7 @@ function mergeThread(host: HostThread, prev: Thread | undefined, client?: Client
     worktree: host.worktree,
     worktreeRequested: host.worktreeRequested,
     fork: host.fork,
+    terminal: host.terminal ?? false,
     splitRatio: layout.splitRatio,
     terminalVisible: layout.terminalVisible,
     terminalMaximized: layout.terminalMaximized,
@@ -228,6 +229,7 @@ function toHostThread(t: Thread): HostThread {
     worktreeRequested: t.worktreeRequested ?? false,
     fork: t.fork ?? null,
     queue: [],
+    terminal: t.terminal ?? false,
   };
 }
 
@@ -491,6 +493,7 @@ export const useAppStore = create<AppStore>((set, get) => {
           sessionId: thread.sessionId,
           worktree: thread.worktree ?? null,
           fork: thread.fork ?? null,
+          terminal: thread.terminal ?? false,
         };
         void threadCreate(project.hostKey, projectId, created).catch(report("creating the thread"));
       }

@@ -60,6 +60,8 @@ pub struct HostThread {
     pub fork: Option<ForkFrom>,
     /// Messages waiting for the current turn to finish, sent in order.
     pub queue: Vec<QueueItem>,
+    /// A terminal-only thread: shells in the folder, never a `claude`.
+    pub terminal: bool,
 }
 
 pub const DEFAULT_TITLE: &str = "New thread";
@@ -78,6 +80,7 @@ impl Default for HostThread {
             worktree_requested: false,
             fork: None,
             queue: vec![],
+            terminal: false,
         }
     }
 }

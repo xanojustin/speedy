@@ -6,21 +6,21 @@ import { onMenu } from "../ipc/commands";
 import type { MenuAction } from "../ipc/types";
 import { findThread, useAppStore, visibleThreads } from "../store/appStore";
 import { ADD_TO_COMPOSER_EVENT, FOCUS_COMPOSER_EVENT, type AddToComposerDetail, type FocusComposerDetail } from "../composer/focusEvent";
-import { addProjectViaPicker, closeThread, newThread } from "./actions";
+import { addProjectViaPicker, closeThread, newTerminalThread, newThread } from "./actions";
 import { disposeTerminal, focusTerminal } from "../terminal/registry";
 import { terminalsOf, useTerminalTabs } from "../terminal/tabs";
 
 /** Shows or hides the panel; hiding it hands focus back to the chat. */
 export function toggleTerminal(threadId: string) {
   const t = findThread(useAppStore.getState(), threadId)?.thread;
-  if (!t) return;
+  if (!t || t.terminal) return; // a terminal thread is all terminal
   useAppStore.getState().updateThread(threadId, { terminalVisible: !t.terminalVisible });
   if (t.terminalVisible) focusComposer(threadId);
 }
 
 export function toggleMaximizeTerminal(threadId: string) {
   const t = findThread(useAppStore.getState(), threadId)?.thread;
-  if (!t) return;
+  if (!t || t.terminal) return;
   // Maximizing a hidden terminal shows it maximized.
   const maximize = !t.terminalVisible || !t.terminalMaximized;
   useAppStore.getState().updateThread(threadId, { terminalVisible: true, terminalMaximized: maximize });
@@ -42,7 +42,9 @@ export function killTerminal(threadId: string, terminalId: string) {
   const tabs = useTerminalTabs.getState();
   const last = tabs.remove(threadId, terminalId);
   disposeTerminal(terminalId);
-  if (last) {
+  // A terminal thread has no chat to fall back to: its fresh tab takes the place of the last one.
+  const terminalOnly = findThread(useAppStore.getState(), threadId)?.thread.terminal;
+  if (last && !terminalOnly) {
     useAppStore.getState().updateThread(threadId, { terminalVisible: false, terminalMaximized: false });
     focusComposer(threadId);
     return;
@@ -57,6 +59,7 @@ function focusComposer(threadId: string) {
 
 function focusChat(threadId: string) {
   const t = findThread(useAppStore.getState(), threadId)?.thread;
+  if (t?.terminal) return;
   if (t?.terminalMaximized) useAppStore.getState().updateThread(threadId, { terminalMaximized: false });
   focusComposer(threadId);
 }
@@ -74,6 +77,8 @@ function handleMenuAction(action: MenuAction) {
   switch (action) {
     case "new_thread":
       return newThread();
+    case "new_terminal_thread":
+      return newTerminalThread();
     case "add_project":
       return void addProjectViaPicker();
     case "close_thread":

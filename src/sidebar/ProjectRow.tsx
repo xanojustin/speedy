@@ -23,6 +23,7 @@ interface Props {
   onThreadMenu: (e: MouseEvent, threadId: string) => void;
   onProjectPointerDown: (e: PointerEvent, projectId: string) => void;
   onNewThread: (projectId: string) => void;
+  onNewTerminal: (projectId: string) => void;
 }
 
 /** The sidebar title of the built-in project for threads that don't belong to a folder. */
@@ -83,6 +84,26 @@ export function ProjectRow(props: Props) {
       </button>
     </>
   );
+  // Chats has no folder to open a shell in.
+  const headerActions = project.scratch ? (
+    actions
+  ) : (
+    <>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label="New Terminal"
+        title="New Terminal in This Folder"
+        onClick={(e) => {
+          e.stopPropagation();
+          props.onNewTerminal(project.id);
+        }}
+      >
+        <span className="codicon codicon-terminal" aria-hidden />
+      </button>
+      {actions}
+    </>
+  );
 
   return (
     <div className="project" data-project-id={project.id} data-drag-id={project.id} role="group" aria-label={project.scratch ? CHATS_LABEL : project.name}>
@@ -116,7 +137,7 @@ export function ProjectRow(props: Props) {
               missing
             </span>
           )}
-          <span className="row-actions">{actions}</span>
+          <span className="row-actions">{headerActions}</span>
         </div>
       )}
 

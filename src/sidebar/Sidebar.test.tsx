@@ -318,6 +318,38 @@ describe("Sidebar", () => {
     expect(useAppStore.getState().selectedThreadId).toBe(threads[2].id);
   });
 
+  it("opens a terminal thread in a project's folder: just a shell, no chat, removed when closed", async () => {
+    resetBackend(stateWith([project("app")]));
+    await renderApp();
+    fireEvent.click(within(projectHeader("app")).getByRole("button", { name: "New Terminal" }));
+    const terminal = useAppStore.getState().projects[0].threads[1];
+    expect(terminal).toMatchObject({ title: "Terminal", terminal: true });
+    expect(useAppStore.getState().selectedThreadId).toBe(terminal.id);
+    expect(callsTo("thread_create").at(-1)!.args).toMatchObject({ thread: { terminal: true } });
+    expect(within(threadRow("Terminal")).getByRole("img", { name: "Terminal" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Chat" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Terminal" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Hide Panel" })).toBeNull();
+
+    fireEvent.contextMenu(threadRow("Terminal"));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Rename", "Close Terminal"]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close Terminal" }));
+    await waitFor(() => expect(useAppStore.getState().projects[0].threads).toHaveLength(1));
+    expect(callsTo("thread_remove")).toHaveLength(1);
+    expect(callsTo("claude_stop")).toHaveLength(0);
+    expect(callsTo("claude_start")).toHaveLength(0);
+  });
+
+  it("offers New Terminal from a project's context menu but not for No Project", async () => {
+    resetBackend(stateWith([project("app"), project("chats", [{}], { scratch: true, name: "No Project" })]));
+    await renderApp();
+    fireEvent.contextMenu(projectHeader("app"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "New Terminal" }));
+    expect(useAppStore.getState().projects.find((p) => p.id === "p-app")!.threads.at(-1)!.terminal).toBe(true);
+    const chats = within(sidebar()).getByRole("tree", { name: "No Project" });
+    expect(within(chats).queryByRole("button", { name: "New Terminal" })).toBeNull();
+  });
+
   it("opens past conversations in a popover from the history button and the context menu", async () => {
     resetBackend(stateWith([project("app")]));
     await renderApp();
