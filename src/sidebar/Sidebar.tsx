@@ -1,6 +1,6 @@
 // Projects and their threads, with a live status glyph per thread (R2, R3, R5).
 import { useCallback, useEffect, useState, type MouseEvent, type PointerEvent } from "react";
-import { addProjectViaPicker, cleanUpWorktrees, closeThread, deleteThread, newTerminalThread, newThread, removeProject } from "../app/actions";
+import { addProjectViaPicker, cleanUpWorktrees, closeThread, deleteThread, newTerminalThread, newThread, reloadThread, removeProject } from "../app/actions";
 import { FolderBrowser } from "../hosts/FolderBrowser";
 import { HostHeader } from "../hosts/HostHeader";
 import { openInVscode, pathsExist } from "../ipc/commands";
@@ -136,6 +136,8 @@ export function Sidebar({ unread }: SidebarProps) {
           ]
         : [
             { label: "Rename", onSelect: () => setRenamingId(threadId) },
+            { label: "Reload", onSelect: () => void reloadThread(threadId) },
+            "separator",
             { label: "Archive", onSelect: () => void closeThread(threadId) },
             { label: "Delete…", onSelect: () => void deleteThread(threadId) },
           ],

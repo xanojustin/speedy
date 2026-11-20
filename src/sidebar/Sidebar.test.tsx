@@ -213,6 +213,26 @@ describe("Sidebar", () => {
     expect(within(sidebar()).getByText("app thread 1")).toBeInTheDocument();
   });
 
+  it("reloads a thread's claude from the context menu, asking first when it's mid-turn", async () => {
+    resetBackend(stateWith([project("app", [{}, {}])]));
+    await renderApp();
+    useThreadStore.setState({ threads: { "app-t2": runtime("idle") } });
+    const before = callsTo("claude_start").length;
+    fireEvent.contextMenu(threadRow("app thread 2"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reload" }));
+    await waitFor(() => expect(callsTo("claude_start").length).toBe(before + 1));
+    expect(callsTo("claude_stop").map((c) => c.args)).toEqual([{ threadId: "app-t2" }]);
+    expect(callsTo("claude_start").at(-1)!.args).toEqual({ threadId: "app-t2" });
+    expect(dialog.ask).not.toHaveBeenCalled();
+
+    useThreadStore.setState({ threads: { "app-t2": runtime("working") } });
+    vi.mocked(dialog.ask).mockResolvedValueOnce(false);
+    fireEvent.contextMenu(threadRow("app thread 2"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reload" }));
+    await waitFor(() => expect(dialog.ask).toHaveBeenCalledTimes(1));
+    expect(callsTo("claude_stop")).toHaveLength(1);
+  });
+
   it("archives a thread from the context menu", async () => {
     resetBackend(stateWith([project("app", [{}, {}])]));
     await renderApp();

@@ -3,7 +3,7 @@ import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { claudeStop, openFoldersTake, pathsExist, ptyHasForegroundChild, worktreeClean, worktreeUnused } from "../ipc/commands";
 import type { Project, UnusedWorktree } from "../ipc/types";
 import { findThread, useAppStore } from "../store/appStore";
-import { forgetStarted } from "../store/runtime";
+import { ensureStarted, forgetStarted } from "../store/runtime";
 import { getRuntime } from "../store/threadStore";
 import { disposeThreadTerminals } from "../terminal/TerminalPane";
 import { focusTerminal } from "../terminal/registry";
@@ -86,6 +86,34 @@ async function stopThread(threadId: string): Promise<void> {
   } catch (err) {
     console.warn(`disposeThreadTerminals(${threadId}) failed`, err);
   }
+}
+
+/**
+ * Restarts the thread's `claude`, resuming its session, so it reloads what it only reads at startup:
+ * MCP servers and their connections, settings, CLAUDE.md. Asks first when that would cut off a turn.
+ */
+export async function reloadThread(threadId: string): Promise<void> {
+  const found = findThread(useAppStore.getState(), threadId);
+  if (!found || found.thread.terminal) return;
+  const { status } = getRuntime(threadId);
+  if (status === "working" || status === "awaiting_user") {
+    const ok = await ask(`"${found.thread.title}" is still running. Reloading stops the current turn.`, {
+      title: "Reload thread?",
+      kind: "warning",
+      okLabel: "Reload",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+  }
+  if (status !== "not_started") {
+    try {
+      await claudeStop(threadId);
+    } catch (err) {
+      console.warn(`claude_stop(${threadId}) failed`, err);
+    }
+  }
+  forgetStarted(threadId);
+  await ensureStarted(threadId).catch(() => {}); // a failed start shows on the thread as Errored
 }
 
 /**
